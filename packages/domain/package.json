@@ -20,7 +20,9 @@
   "scripts": {
     "build": "tsc --build"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@koinonia/crypto": "workspace:*"
+  },
   "engines": {
     "node": ">=22.0.0"
   }

@@ -44,7 +44,11 @@ importers:
 
   packages/crypto: {}
 
-  packages/domain: {}
+  packages/domain:
+    dependencies:
+      '@koinonia/crypto':
+        specifier: workspace:*
+        version: link:../crypto
 
 packages:
 
