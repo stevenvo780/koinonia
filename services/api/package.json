@@ -1,0 +1,33 @@
+{
+  "name": "@koinonia/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Adaptadores de Koinonía: persistencia del ledger sobre PostgreSQL. Lo único que hace I/O",
+  "license": "AGPL-3.0-or-later",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@koinonia/contracts": "workspace:*",
+    "@koinonia/crypto": "workspace:*",
+    "@koinonia/domain": "workspace:*",
+    "pg": "^8.16.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -4,6 +4,7 @@
   "references": [
     { "path": "packages/crypto" },
     { "path": "packages/domain" },
-    { "path": "packages/contracts" }
+    { "path": "packages/contracts" },
+    { "path": "services/api" }
   ]
 }

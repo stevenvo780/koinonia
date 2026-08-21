@@ -16,6 +16,7 @@ import { assertHash, bytesEqual, hashEvent, toHex, zeroHash } from './hash.js';
 
 /** El objeto que se hashea. No incluye `prevHash`, `eventHash`, `leafIndex` ni `recordedAt` (§1.1). */
 export interface CanonicalEvent {
+  /** 128 bits en 32 hex minúsculas, **sin guiones**: `^[0-9a-f]{32}$` (§1.1). */
   readonly aggregateId: string;
   readonly aggregateType: string;
   readonly seq: number;
@@ -28,18 +29,24 @@ export interface CanonicalEvent {
   readonly payload: JsonObject;
 }
 
-/** UUID del agregado singleton que sirve de raíz de confianza (§2.3). */
-export const SPINE_AGGREGATE_ID = '00000000-0000-0000-0000-00000000ffff';
+/**
+ * Identificador del agregado singleton que sirve de raíz de confianza (§2.3).
+ *
+ * Es 32 hex sin guiones, como todo identificador del ledger. La forma anterior
+ * —`00000000-0000-0000-0000-00000000ffff`— quedó eliminada del documento: no era un UUID v4 (el
+ * nibble de versión era `0`) y por tanto un validador estricto habría rechazado el único agregado
+ * que la spec declara axiomático. Al pasar los identificadores a 32 hex (§1.1-bis) el problema se
+ * disuelve por construcción: ya no hay campo de versión que respetar.
+ */
+export const SPINE_AGGREGATE_ID = '00000000000000000000000000000001';
 export const SPINE_AGGREGATE_TYPE = '#ledger';
 
 /**
- * DECISIÓN: la spec dice en §1.1 que `aggregateId` es un "UUID v4", pero en §2.3 fija el de la
- * espina en `00000000-0000-0000-0000-00000000ffff`, que **no es un UUID v4** (el nibble de versión
- * es 0). Validar la versión rechazaría el único agregado que la spec declara axiomático. Se valida
- * la **forma** textual —36 caracteres, minúsculas, con guiones— y no la versión.
+ * `MemberId` y `aggregateId` comparten forma léxica: 128 bits en 32 hex minúsculas, **sin guiones**
+ * (§1.1). No son UUID, no llevan nibble de versión, no admiten mayúsculas y no se almacenan nunca
+ * en una columna `uuid`, que devuelve siempre la forma con guiones y cambiaría la preimagen al
+ * rehidratar el evento desde la base (§1.1-bis).
  */
-const UUID_TEXTUAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-/** `MemberId`: 128 bits aleatorios en hex minúscula, sin guiones (ADR-0006, §1.1). */
 const MEMBER_ID = /^[0-9a-f]{32}$/u;
 /** `#` inicial reservado a los agregados de sistema: `#ledger`, `#anclaje`. */
 const AGGREGATE_TYPE = /^#?[a-z][a-z0-9_]*$/u;
@@ -89,10 +96,10 @@ export function assertCanonicalEvent(value: unknown): asserts value is Canonical
   }
 
   const aggregateId = value['aggregateId'];
-  if (typeof aggregateId !== 'string' || !UUID_TEXTUAL.test(aggregateId)) {
+  if (typeof aggregateId !== 'string' || !MEMBER_ID.test(aggregateId)) {
     throw new InvalidEventError(
       'aggregateId',
-      'debe ser un UUID textual en minúsculas con guiones',
+      'debe ser un identificador de 32 hex minúsculas, sin guiones',
     );
   }
 

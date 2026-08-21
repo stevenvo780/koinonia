@@ -1,0 +1,147 @@
+/**
+ * Persistencia y rehidratación de un `DecisionLog`.
+ *
+ * El dominio produce logs; esta capa los escribe en el ledger y los vuelve a leer. La propiedad que
+ * tiene que sostener es exigente y se comprueba en `tests/integration/flujo-decision.test.ts`:
+ *
+ *     verifyLog(loadDecisionLog(persist(log))) === verifyLog(log)   bit a bit, incluido el resultHash
+ *
+ * Que la igualdad sea *bit a bit* y no *equivalente* es el punto entero. El `resultHash` de una
+ * decisión es lo que la asamblea publica; si la copia leída de la base produjera otro, no habría
+ * forma de saber cuál de los dos es el bueno.
+ */
+
+import { toHex } from '@koinonia/crypto';
+import {
+  appendEvent,
+  type DecisionEvent,
+  type DecisionLog,
+  type DecisionState,
+  replay,
+  verifyLog,
+} from '@koinonia/domain';
+
+import type { PgClient, PgPool } from '../db/client.js';
+import { append, readHead, readStream } from '../ledger/event-store.js';
+import type { AggregateHead, ExpectedHead } from '../ledger/types.js';
+import { DECISION_AGGREGATE_TYPE, decodeDecisionEvent, encodeDecisionEvent } from './codec.js';
+
+export class DecisionPersistenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DecisionPersistenceError';
+  }
+}
+
+export interface PersistResult {
+  readonly decisionId: string;
+  readonly appended: number;
+  readonly head: AggregateHead | undefined;
+  readonly idempotentReplay: boolean;
+}
+
+/**
+ * Escribe en el ledger los eventos del log que todavía no están.
+ *
+ * El `seq` del dominio es denso desde 1 y el del ledger desde 0 (el ledger exige que el génesis sea
+ * `seq = 0`). La correspondencia es `ledgerSeq = domainSeq - 1`, y se **comprueba**: si el log que
+ * llega no continúa exactamente donde el ledger se quedó, se rechaza en vez de escribir un tramo que
+ * dejaría un hueco o un solape.
+ */
+export async function persistDecisionLog(
+  pool: PgPool,
+  log: DecisionLog,
+  options: { readonly requestId: string },
+): Promise<PersistResult> {
+  const first = log[0];
+  if (first === undefined) throw new DecisionPersistenceError('un log vacío no identifica nada');
+  const decisionId: string = first.decisionId;
+
+  const client = await pool.connect();
+  let current: AggregateHead | undefined;
+  try {
+    current = await readHead(client, decisionId);
+  } finally {
+    client.release();
+  }
+
+  const persisted = current === undefined ? 0 : current.seq + 1;
+  if (persisted > log.length) {
+    throw new DecisionPersistenceError(
+      `el ledger tiene ${String(persisted)} eventos de ${decisionId} y el log trae ${String(log.length)}: ` +
+        'el log recibido es más corto que la historia ya escrita',
+    );
+  }
+  const pending: readonly DecisionEvent[] = log.slice(persisted);
+  if (pending.length === 0) {
+    return { decisionId, appended: 0, head: current, idempotentReplay: false };
+  }
+
+  for (const [offset, event] of pending.entries()) {
+    const expectedDomainSeq = persisted + offset + 1;
+    if (event.seq !== expectedDomainSeq) {
+      throw new DecisionPersistenceError(
+        `el evento ${String(offset)} del tramo pendiente dice seq=${String(event.seq)} y le toca ` +
+          `${String(expectedDomainSeq)}: el log no continúa donde el ledger se quedó`,
+      );
+    }
+    if (event.decisionId !== decisionId) {
+      throw new DecisionPersistenceError('el log mezcla eventos de dos decisiones');
+    }
+  }
+
+  const expectedHead: ExpectedHead =
+    current === undefined ? { kind: 'new' } : { kind: 'at', seq: current.seq, hash: current.hash };
+
+  const result = await append(pool, {
+    aggregateId: decisionId,
+    aggregateType: DECISION_AGGREGATE_TYPE,
+    events: pending.map(encodeDecisionEvent),
+    expectedHead,
+    requestId: options.requestId,
+  });
+
+  return {
+    decisionId,
+    appended: result.idempotentReplay ? 0 : pending.length,
+    head: result.head,
+    idempotentReplay: result.idempotentReplay,
+  };
+}
+
+/**
+ * Rehidrata el log completo desde el ledger.
+ *
+ * `seq`, `prevHash` y `hash` NO se leen: los recomputa `appendEvent`, exactamente igual que cuando
+ * el log se creó. Si el contenido rehidratado difiere en un byte del original, la cadena de hashes
+ * del dominio deja de cuadrar y `verifyLog` lo denuncia. Es decir: la reconstrucción no se
+ * *supone* correcta, se *comprueba*.
+ */
+export async function loadDecisionLog(client: PgClient, decisionId: string): Promise<DecisionLog> {
+  const stored = await readStream(client, decisionId);
+  let log: DecisionLog = [];
+  for (const row of stored) {
+    if (row.event.seq !== log.length) {
+      throw new DecisionPersistenceError(
+        `hueco en el ledger de ${decisionId}: se esperaba seq=${String(log.length)} y llegó ` +
+          `${String(row.event.seq)} (leaf_index=${row.leafIndex.toString()}, ` +
+          `event_hash=${toHex(row.eventHash)})`,
+      );
+    }
+    log = [...log, await appendEvent(log, decodeDecisionEvent(row))];
+  }
+  return log;
+}
+
+/** Rehidrata y pliega, verificando la cadena de hashes del dominio por el camino (INV-19). */
+export async function loadDecisionState(
+  client: PgClient,
+  decisionId: string,
+): Promise<DecisionState> {
+  return verifyLog(await loadDecisionLog(client, decisionId));
+}
+
+/** Pliega sin criptografía. Útil cuando ya se verificó la cadena. */
+export function replayDecision(log: DecisionLog): DecisionState {
+  return replay(log);
+}

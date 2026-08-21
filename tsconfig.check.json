@@ -11,12 +11,15 @@
     "paths": {
       "@koinonia/crypto": ["./packages/crypto/src/index.ts"],
       "@koinonia/domain": ["./packages/domain/src/index.ts"],
-      "@koinonia/contracts": ["./packages/contracts/src/index.ts"]
+      "@koinonia/contracts": ["./packages/contracts/src/index.ts"],
+      "@koinonia/api": ["./services/api/src/index.ts"]
     }
   },
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
+    "services/*/src/**/*.ts",
+    "services/*/test/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts"
   ]

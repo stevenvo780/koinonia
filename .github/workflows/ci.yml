@@ -30,5 +30,15 @@ jobs:
 
       - run: pnpm run typecheck
       - run: pnpm run lint
+
+      # Las pruebas de integración del ledger corren contra PostgreSQL REAL con Testcontainers.
+      # `KOINONIA_REQUIRE_DOCKER=1` hace que la ausencia de Docker sea un FALLO y no un salto
+      # silencioso: un build verde que no probó nada del ledger es peor que un build rojo.
+      - name: Comprobar que Docker está disponible
+        run: docker info
+
       - run: pnpm run test
+        env:
+          KOINONIA_REQUIRE_DOCKER: '1'
+
       - run: pnpm run build

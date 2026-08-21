@@ -1,0 +1,57 @@
+# PostgreSQL para desarrollo y para correr las pruebas de integración a mano.
+#
+# Las pruebas de `tests/integration/` levantan su propio contenedor con Testcontainers y no
+# necesitan este fichero. Existe para dos casos concretos:
+#
+#   1. **Docker no está disponible para Testcontainers** (sin socket, sin permisos, CI restringido).
+#      Entonces las suites se SALTAN con el motivo escrito en el nombre del bloque, y la base se
+#      levanta a mano con:
+#
+#        docker compose -f infra/docker/docker-compose.yml up -d
+#        export DATABASE_URL='postgresql://postgres:koinonia@localhost:55432/koinonia'
+#
+#   2. Desarrollo local, para tener el ledger delante y mirarlo con `psql`.
+#
+# El puerto es 55432 y no 5432 a propósito: chocar con el PostgreSQL del sistema es la forma más
+# rápida de correr las pruebas contra la base equivocada.
+
+name: koinonia-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: koinonia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: koinonia
+      POSTGRES_DB: koinonia
+      # Determinista y sin sorpresas de intercalación: el ledger no ordena por locale en ningún
+      # sitio, pero un `ORDER BY aggregate_id` que dependiera de ICU sería exactamente la clase de
+      # dependencia del entorno que ADR-0004 proscribe.
+      LANG: C
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    command:
+      - postgres
+      # Las pruebas de concurrencia abren varias decenas de conexiones a la vez.
+      - '-c'
+      - 'max_connections=200'
+      # Deja rastro de lo que §4.3 dice que no se puede impedir: un `ALTER TABLE … DISABLE TRIGGER`
+      # o un cambio de privilegios queda en el log del servidor. No detiene a nadie; añade testigos.
+      - '-c'
+      - 'log_statement=ddl'
+      - '-c'
+      - 'log_connections=on'
+    ports:
+      - '55432:5432'
+    volumes:
+      - koinonia-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d koinonia']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  koinonia-pgdata:
+    name: koinonia-pgdata

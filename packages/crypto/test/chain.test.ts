@@ -14,7 +14,7 @@ import {
 } from '../src/chain.js';
 import { bytesEqual, hashEvent, toHex, zeroHash } from '../src/hash.js';
 
-const AGREGADO = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+const AGREGADO = 'f47ac10b58cc4372a5670e02b2c3d479';
 const ACTOR = '9f1c2d3e4a5b60718293a4b5c6d7e8f0';
 
 function instante(seq: number): string {
@@ -65,8 +65,13 @@ describe('validación del evento canónico', () => {
     ['actor en null', { ...evento(0, 'x'), actor: null }, 'actor'],
     ['actor en mayúsculas', { ...evento(0, 'x'), actor: ACTOR.toUpperCase() }, 'actor'],
     [
-      'aggregateId sin guiones',
-      { ...evento(0, 'x'), aggregateId: AGREGADO.replaceAll('-', '') },
+      'aggregateId con guiones (la forma que devuelve una columna `uuid`)',
+      { ...evento(0, 'x'), aggregateId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479' },
+      'aggregateId',
+    ],
+    [
+      'aggregateId en mayúsculas',
+      { ...evento(0, 'x'), aggregateId: AGREGADO.toUpperCase() },
       'aggregateId',
     ],
     ['seq negativo', { ...evento(0, 'x'), seq: -1 }, 'seq'],
@@ -111,6 +116,14 @@ describe('validación del evento canónico', () => {
 });
 
 describe('cadena de hashes por agregado', () => {
+  it('la espina #ledger usa la forma léxica de todo identificador del ledger (§2.3)', () => {
+    // El valor anterior era `00000000-0000-0000-0000-00000000ffff`, que la spec exigía que fuera un
+    // UUID v4 y no lo era (nibble de versión `0`): un validador estricto habría rechazado el único
+    // agregado declarado axiomático, es decir, la raíz de confianza del sistema entero.
+    expect(SPINE_AGGREGATE_ID).toBe('00000000000000000000000000000001');
+    expect(SPINE_AGGREGATE_ID).toMatch(/^[0-9a-f]{32}$/u);
+  });
+
   it('el génesis de la espina #ledger es el único que cuelga de 32 ceros (§2.3)', async () => {
     const genesis: CanonicalEvent = {
       aggregateId: SPINE_AGGREGATE_ID,
@@ -168,7 +181,7 @@ describe('cadena de hashes por agregado', () => {
     const cadena = await buildChain([evento(0, 'a'), evento(1, 'b')]);
     const intruso: ChainLink = {
       ...(cadena[1] as ChainLink),
-      event: { ...evento(1, 'b'), aggregateId: '00000000-0000-4000-8000-000000000001' },
+      event: { ...evento(1, 'b'), aggregateId: '00000000000040008000000000000001' },
     };
     await expect(verifyChain([cadena[0] as ChainLink, intruso])).resolves.toMatchObject({
       ok: false,

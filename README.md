@@ -11,9 +11,10 @@ Estado: en construcción. Ver `docs/` para producto, gobernanza, arquitectura, m
 | `packages/crypto`    | Canonicalización JCS, SHA-256, cadena de eventos y árbol Merkle. Sin dependencias de runtime. |
 | `packages/domain`    | Dominio puro: sin I/O, sin reloj, sin aleatoriedad (ADR-0001).                                |
 | `packages/contracts` | Tipos y textos de frontera.                                                                   |
-| `services/api`       | Adaptadores: persistencia, HTTP, correo. Lo único que hace I/O.                               |
+| `services/api`       | Adaptadores: ledger sobre PostgreSQL, proyecciones. Lo único que hace I/O.                    |
 | `apps/web`           | Interfaz.                                                                                     |
 | `tests/`             | Integración y extremo a extremo, fuera de los paquetes.                                       |
+| `infra/docker`       | PostgreSQL de desarrollo, para levantar la base a mano.                                       |
 | `docs/`              | Investigación, ADR, producto y gobernanza.                                                    |
 
 La dirección de dependencia se verifica en CI (`scripts/check-domain-purity.mjs`), no en revisión de
@@ -34,6 +35,25 @@ pnpm run test:watch
 pnpm run build       # tsc --build con project references
 pnpm run verify      # typecheck + lint + test
 ```
+
+## Pruebas de integración del ledger
+
+`tests/integration/` corre contra **PostgreSQL real**, levantado con Testcontainers. No hay ni un
+doble de la base: todo lo que esas pruebas comprueban es comportamiento de PostgreSQL —que `uuid`
+devuelve la forma con guiones, que `jsonb` reordena las claves, que un trigger `ENABLE ALWAYS`
+sobrevive a `session_replication_role`—, y un mock reproduciría exactamente aquello en lo que ya
+creíamos.
+
+Si Docker no está disponible, las suites se **saltan** con el motivo escrito en el nombre del bloque,
+para que quede en la salida y nadie confunda «no corrió» con «pasó». Para que eso sea un fallo y no
+un salto —en CI lo es— se usa `KOINONIA_REQUIRE_DOCKER=1`. Para levantar la base a mano:
+
+```sh
+docker compose -f infra/docker/docker-compose.yml up -d
+```
+
+Las migraciones son SQL plano numerado en `services/api/migrations/`, aplicadas por un runner propio
+que registra el hash de cada fichero: editar una migración ya aplicada deja de ser invisible.
 
 ## Licencia
 

@@ -2,5 +2,14 @@ packages:
   - 'packages/*'
   - 'services/*'
   - 'apps/*'
+# Scripts de instalación de dependencias transitivas de `testcontainers` (vía `dockerode`).
+# Los tres se deniegan a propósito: `cpu-features` y `ssh2` compilan un addon nativo opcional para
+# el transporte SSH de Docker, que aquí no se usa (se habla con el socket local), y el `postinstall`
+# de `protobufjs` sólo regenera tipos. Ninguno hace falta, y ejecutar código de instalación de un
+# paquete transitivo es superficie de ataque gratuita en la cadena de suministro.
+allowBuilds:
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
 minimumReleaseAgeExclude:
   - eslint@10.9.0

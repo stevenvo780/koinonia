@@ -115,7 +115,7 @@ describe('utilidades de bytes', () => {
 
 describe('hashEvent', () => {
   const evento: CanonicalEvent = {
-    aggregateId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    aggregateId: 'f47ac10b58cc4372a5670e02b2c3d479',
     aggregateType: 'propuesta',
     seq: 0,
     eventType: 'PropuestaAbierta',

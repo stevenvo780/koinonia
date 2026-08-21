@@ -22,10 +22,13 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "eslint": "^10.9.0",
     "eslint-config-prettier": "^10.0.0",
     "fast-check": "^4.9.0",
+    "pg": "^8.23.0",
     "prettier": "^3.9.6",
+    "testcontainers": "^11.14.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.11"
