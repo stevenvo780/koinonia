@@ -59,6 +59,8 @@ Eventos: `EspacioCreado` · `FaseActivada{fase_id, cierra_componentes[], abre_co
 
 Invariante operativo: `PropuestaPublicada` sin `PropuestaRespondida` en N días emite `RespuestaVencida{dias}`. La *deuda de respuesta* es una métrica pública del órgano, no un recordatorio privado.
 
+> **Corregido tras la implementación (2026-08-21):** el `ajustes jsonb` de `Componente` es admisible en la tabla de lectura, pero **`ComponenteHabilitado{tipo, ajustes}` y `FaseActivada{…, abre_componentes[]}` son eventos del ledger**: ese mismo valor entra al `payload` canónico y por tanto a la preimagen del `eventHash`. Ahí `jsonb` está **prohibido** por la **regla de tipos del ledger** (`10-ledger-inmutable.md` §1.1-bis): reordena las claves del objeto y destruye la canonicalización JCS, de modo que el evento dejaría de verificar en cuanto se releyera desde PostgreSQL. La forma autoritativa del `payload` es `text` con los bytes canónicos exactos; el `jsonb` es copia derivada y no autoritativa. Lo mismo vale para todo identificador de esta lista (`espacio_id`, `componente_id`, `autoria_id`, `recurso_id`…) que llegue a un evento: **32 hex minúsculas en `char(32)`, nunca `uuid`**. Ver también ADR-0035.
+
 ---
 
 ## 2. Loomio

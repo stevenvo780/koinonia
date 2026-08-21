@@ -137,7 +137,9 @@ La DSK es aleatoria por el mismo motivo que ADR-111: si fuera derivable, destrui
 /** El material de clave NUNCA está en este tipo: sólo la referencia envuelta. */
 export interface SubjectKeyRecord {
   readonly memberId: MemberId;
-  readonly keyId: string;                 // uuid v4
+  readonly keyId: string;                 // uuid v4 — INTERNO del vault: no es identificador del
+                                          // ledger ni entra a preimagen alguna, así que la regla
+                                          // de tipos de `10-...` §1.1-bis no lo alcanza.
   readonly wrappedDsk: Uint8Array;        // wrap(KEK_activa, DSK)
   readonly kekVersion: number;
   readonly createdAt: Instant;
@@ -496,23 +498,41 @@ con permisos distintos:
 ```sql
 -- Esquema 'roll': quién votó. NO contiene el voto.
 CREATE TABLE roll.voter_marks (
-  decision_id uuid NOT NULL,
-  member_id   text NOT NULL,                 -- seudónimo opaco (ADR-111)
-  voted_on    date NOT NULL,                 -- SÓLO fecha, jamás hora
+  decision_id char(32) NOT NULL CHECK (decision_id ~ '^[0-9a-f]{32}$'),  -- aggregateId (§1.1-bis)
+  member_id   char(32) NOT NULL CHECK (member_id   ~ '^[0-9a-f]{32}$'),  -- MemberId (ADR-0006)
+  voted_on    date     NOT NULL,             -- SÓLO fecha, jamás hora
   PRIMARY KEY (decision_id, member_id)       -- garantiza R2
 );
 
 -- Esquema 'urn': qué se votó. NO contiene al votante.
 CREATE TABLE urn.ballots (
-  decision_id uuid  NOT NULL,
-  tracker     text  NOT NULL,                -- recibo, p. ej. 'K7F2-9QMX-3B'
-  choice      jsonb NOT NULL,                -- papeleta canonicalizada (JCS, RFC 8785)
-  batch_seq   int   NOT NULL,                -- lote, NO orden de llegada
+  decision_id char(32) NOT NULL CHECK (decision_id ~ '^[0-9a-f]{32}$'),
+  tracker     text     NOT NULL,             -- recibo, p. ej. 'K7F2-9QMX-3B'
+  -- Papeleta canonicalizada (JCS, RFC 8785), como TEXTO EXACTO. NUNCA jsonb: entra al urnRoot.
+  choice      text     NOT NULL CHECK (octet_length(choice) > 0),
+  choice_idx  jsonb    GENERATED ALWAYS AS (choice::jsonb) STORED,  -- escrutinio; NO autoritativo
+  batch_seq   int      NOT NULL,             -- lote, NO orden de llegada
   PRIMARY KEY (decision_id, tracker)
 );
 -- Prohibido por lint: cualquier FK, columna común adicional, índice compuesto
 -- entre esquemas, o columna temporal con hora en urn.ballots.
 ```
+
+> **Corregido tras la implementación (2026-08-21):** `choice` era `jsonb` y el comentario decía, en la
+> misma línea, «papeleta canonicalizada (JCS, RFC 8785)». Las dos cosas son incompatibles: **`jsonb`
+> no almacena el texto, almacena un árbol descompuesto, y lo reemite con las claves reordenadas y los
+> números renormalizados**. Lo que se recuperara de esa columna no sería la papeleta canónica que se
+> hasheó. E importa aquí más que en cualquier otra tabla, porque el punto (c) de abajo construye el
+> árbol de Merkle de la urna sobre estas papeletas, publica `(tracker, choice)` para que cualquiera
+> recompute el escrutinio y mete `urnRoot` en la raíz diaria anclada: con `jsonb`, **el recibo del
+> votante deja de verificar** y el sistema acusa de fraude a una elección limpia. Es la **regla de
+> tipos del ledger** (`10-ledger-inmutable.md` §1.1-bis) aplicada a la urna, que estaba fuera del
+> radar por vivir en otro esquema.
+>
+> `decision_id` y `member_id` pasan de `uuid`/`text` a `char(32)` por la misma regla: `decision_id` es
+> el `aggregateId` de una decisión del ledger y `member_id` es un `MemberId`; ambos son 32 hex
+> minúsculas y una columna `uuid` los devolvería con guiones (36 caracteres), rompiendo tanto el
+> `rollRoot` como el cruce con el padrón congelado.
 
 La unicidad (R2) la da la clave primaria de `roll.voter_marks`, **no** una relación con la papeleta. La
 elegibilidad (R1) se comprueba contra el padrón congelado al admitir, sin dejar rastro en la urna.
@@ -525,7 +545,10 @@ significa que también sirve para que alguien le exija mostrarlo.
 
 **(c) Firma y anclaje.** Al cerrar se construye un árbol de Merkle sobre las papeletas ordenadas por
 `tracker`, se emite `TallySigned { urnRoot, rollRoot, resultHash, censusSize, ballotCount }` firmado con la
-clave de la instancia, y `urnRoot` entra en la raíz Merkle diaria anclada externamente. Después del anclaje,
+clave de la instancia, y `urnRoot` entra en la raíz Merkle diaria anclada externamente. Las **entradas**
+de ese árbol son los bytes de `urn.ballots.choice` tal cual —no la relectura de `choice_idx`—, y el
+prefijo `0x00` de hoja lo aplica `merkleRoot` internamente, como en todo el sistema
+(`10-ledger-inmutable.md` §6.3). Después del anclaje,
 cambiar un voto exige romper SHA-256 o falsificar el ancla. El recibo de inclusión es una prueba Merkle de
 ~10 hashes, reutilizando el mecanismo de la DECISIÓN C.7.c.
 

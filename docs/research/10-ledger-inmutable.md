@@ -11,6 +11,17 @@
 > (RFC 8785); híbrido cadena-por-agregado + checkpoint Merkle global; `MemberId` aleatorio de 128
 > bits; commitments con nonce; separación `governance` / `pii_vault`; padrón hasheado sólo sobre
 > `MemberId` ordenados.
+>
+> **Revisión de 2026-08-21.** La implementación de `packages/crypto` contra este documento encontró
+> **seis errores reales** en él —`actor` incoherente con su columna, `SUBPROOF` roto para `m = 0`,
+> aritmética de 32 bits sobre un dominio de 64, dos convenciones de hoja mezcladas, una espina que no
+> era el UUID que la spec exigía, y el `checkpoint_hash` indefinido para el primer checkpoint—, más
+> **dos violaciones de tipos que nadie había mirado** (`occurred_at` e `issued_at` como `timestamptz`).
+> Todos están corregidos en el sitio donde vivían, con una nota **«Corregido tras la implementación»**
+> que explica qué estaba mal y por qué importaba. El registro consolidado y la lección metodológica
+> están en [`00-contradicciones-resueltas.md`](00-contradicciones-resueltas.md), sección «Errores
+> detectados por la implementación». La corrección de fondo no es ninguno de los seis parches: es la
+> **regla de tipos del ledger** de §1.1-bis.
 
 ---
 
@@ -32,9 +43,9 @@ firmar un objeto que contiene su propio hash, y evitar que un canonicalizador te
 32 bytes crudos.
 
 ```ts
-// packages/ledger/src/event.ts
+// packages/crypto/src/chain.ts
 export type CanonicalEvent = {
-  readonly aggregateId: string;    // UUID v4 textual, minúsculas, con guiones
+  readonly aggregateId: string;    // 128 bits en 32 hex minúsculas, SIN guiones: ^[0-9a-f]{32}$
   readonly aggregateType: string;  // p.ej. "propuesta", "circulo", "padron"
   readonly seq: number;            // entero >= 0, sin huecos dentro del agregado
   readonly eventType: string;      // p.ej. "ObjecionRegistrada"
@@ -48,6 +59,54 @@ export type CanonicalEvent = {
 `actor` es un `MemberId` (128 bits aleatorios). No es un hash de nada: no hay `sha256(cédula)`, ni
 `sha256(correo)`, ni derivación alguna de un identificador institucional. Esa prohibición ya está
 adoptada y CI la vigila; aquí sólo se hereda.
+
+**`MemberId` y `aggregateId` son la misma forma léxica: 128 bits en 32 caracteres hexadecimales
+minúsculos, sin guiones, validados por `^[0-9a-f]{32}$`.** No son UUID, no llevan nibble de versión,
+no admiten mayúsculas y **no se almacenan nunca en una columna `uuid`** (§1.1-bis).
+
+> **Corregido tras la implementación (2026-08-21):** esta línea decía «`MemberId`, 32 hex minúsculas»
+> mientras el DDL de §3.1 declaraba `actor uuid` y `aggregate_id uuid`. PostgreSQL **acepta** la
+> entrada de 32 hex en una columna `uuid`, pero **devuelve siempre** la forma con guiones (36
+> caracteres). Al rehidratar el evento desde la base, la preimagen cambia, el `eventHash` cambia y el
+> sistema declara «historia alterada» sin que nadie la haya alterado: exactamente el **falso positivo
+> de corrupción** que §1.2 describe como la peor falla posible, provocado por la propia
+> especificación. El tipo `uuid` queda proscrito para estos identificadores.
+
+### 1.1-bis Regla de tipos del ledger — norma transversal
+
+Esta regla es más importante que el parche puntual de §1.1: el error de `actor` fue una instancia de
+un problema general, y sólo una regla general lo cierra.
+
+> ### ⛔ Regla de tipos del ledger
+>
+> **Ningún valor que forme parte de la preimagen de un hash puede almacenarse en una columna cuyo
+> tipo normalice su representación.** Esto proscribe `uuid` (reescribe la forma), `timestamptz`
+> (normaliza la zona horaria), `numeric` (normaliza ceros a la derecha) y **muy especialmente
+> `jsonb`, que reordena las claves del objeto y destruiría la canonicalización JCS**. El `payload` se
+> almacena como `text` o `bytea` con la forma canónica exacta que se hasheó; si además se quiere
+> consultar, se guarda una copia derivada en `jsonb` marcada explícitamente como **NO autoritativa**.
+
+Corolarios operativos, para que la regla sea aplicable sin criterio:
+
+1. **La prueba es la ida y vuelta, no la lectura.** Un tipo es admisible si
+   `parse(render(x)) === x` **y** `render(parse(texto)) === texto` para todo valor del dominio. `uuid`,
+   `timestamptz`, `numeric` y `jsonb` fallan la segunda mitad: aceptan más formas de las que emiten.
+2. **La columna autoritativa es la que se hasheó.** Toda copia derivada (índice, `jsonb` de consulta,
+   columna generada, vista materializada) lleva el sufijo `_idx` o vive en `projection`, y el
+   verificador **nunca** la lee.
+3. **Lo que no entra a la preimagen queda libre.** `request_id`, `recorded_at` y `updated_at` son
+   sobre o caché derivada (§1.1): pueden usar `uuid` y `timestamptz` sin riesgo, y de hecho lo hacen.
+   La regla no es una fobia a los tipos ricos de PostgreSQL: es una condición sobre **participar del
+   hash**.
+4. **Se verifica en CI**, no en revisión de código: el mismo test que ya prohíbe columnas nuevas en
+   `governance.event` compara el DDL contra una lista de tipos permitidos para las columnas de la
+   preimagen (`char(n)`, `text`, `bytea`, `bigint`, `integer`, `boolean`).
+
+> **Corregido tras la implementación (2026-08-21):** la spec no tenía ninguna regla de tipos. Tenía
+> seis columnas escritas caso por caso y tres de ellas estaban mal —`aggregate_id`, `actor` y
+> `payload`—, más dos que nadie había mirado —`occurred_at` e `issued_at` (§3.1, §6.4)—. Sin una regla
+> explícita, la siguiente columna que alguien añada volverá a estar mal, porque el criterio vivía en
+> la cabeza de quien escribió el DDL y no en el documento.
 
 ### 1.2 Por qué JCS es imprescindible
 
@@ -115,7 +174,7 @@ ambos "significan" que no hay actor. Dos capas del sistema elegirán distinto.
 ### 1.4 Implementación
 
 ```ts
-// packages/ledger/src/jcs.ts
+// packages/crypto/src/canonical.ts
 // Implementación de RFC 8785 vendorizada en el repo (no dependencia transitiva),
 // con la batería de vectores de prueba del propio RFC + los de Unicode fuera del BMP
 // corriendo en CI contra Node y contra un navegador headless.
@@ -194,8 +253,8 @@ pueda borrar sin romper otra cosa.
 
 ### 2.3 Solución: espina dorsal `#ledger` con doble vínculo
 
-Se introduce un **agregado singleton**, la *espina dorsal*, con UUID fijo
-`00000000-0000-0000-0000-00000000ffff` y `aggregateType = "#ledger"`. Es el único agregado cuya
+Se introduce un **agregado singleton**, la *espina dorsal*, con `aggregateId` fijo
+`00000000000000000000000000000001` y `aggregateType = "#ledger"`. Es el único agregado cuya
 existencia es axiomática: su evento génesis (`LedgerAbierto`, `seq = 0`) es el único del sistema con
 `prevHash = 0x00…00` (32 ceros), y su hash se publica y se ancla externamente el día de la puesta en
 marcha. Es la raíz de confianza, y cabe en un tuit.
@@ -212,6 +271,15 @@ dos escrituras, en una sola transacción:
 
 No hay circularidad: ambos eventos comparten el mismo padre `H_espina`, y sólo el de la espina
 menciona al otro. El orden de cálculo es determinista.
+
+> **Corregido tras la implementación (2026-08-21):** la espina se definía como «UUID fijo
+> `00000000-0000-0000-0000-00000000ffff`», y §1.1 exigía **UUID v4** para los identificadores. Ese
+> valor **no es un UUID v4**: el nibble de versión es `0`, no `4`. Un validador estricto —el nuestro,
+> en cuanto alguien lo escribiera bien— habría **rechazado el único agregado que la spec declara
+> axiomático**, es decir, la raíz de confianza de todo el sistema. Al pasar los identificadores a 32
+> hex (§1.1-bis), el problema se disuelve por construcción: no hay campo de versión que respetar. La
+> espina es `00000000000000000000000000000001` y toda mención a «UUID v4» como identificador del
+> ledger queda eliminada del documento.
 
 El resultado es un **doble vínculo**. Ahora, borrar la propuesta incómoda exige:
 
@@ -279,19 +347,27 @@ CREATE SCHEMA governance;
 -- Propietario: koinonia_ddl (NO el rol de la aplicación). Ver §4.
 CREATE TABLE governance.event (
   leaf_index     bigint       NOT NULL PRIMARY KEY,
-  aggregate_id   uuid         NOT NULL,
+  -- PREIMAGEN (§1.1-bis): tipos que NO normalizan la representación.
+  aggregate_id   char(32)     NOT NULL CHECK (aggregate_id ~ '^[0-9a-f]{32}$'),
   aggregate_type text         NOT NULL,
   seq            integer      NOT NULL CHECK (seq >= 0),
   event_type     text         NOT NULL,
   event_version  integer      NOT NULL CHECK (event_version >= 1),
-  occurred_at    timestamptz  NOT NULL,
-  actor          uuid,                                  -- MemberId; NULL = sistema
-  payload        jsonb        NOT NULL,
+  -- RFC 3339 UTC exacto: "YYYY-MM-DDTHH:MM:SS.sssZ", 24 caracteres, milisegundos SIEMPRE presentes.
+  occurred_at    char(24)     NOT NULL
+                 CHECK (occurred_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
+                 CHECK (occurred_at::timestamptz IS NOT NULL),   -- que además sea una fecha real
+  actor          char(32)     CHECK (actor ~ '^[0-9a-f]{32}$'),  -- MemberId; NULL = sistema
+  -- Texto canónico JCS EXACTO que se hasheó. NUNCA jsonb: reordenaría las claves.
+  payload        text         NOT NULL CHECK (octet_length(payload) > 0),
+  -- Copia derivada y NO AUTORITATIVA, sólo para consulta. El verificador no la lee jamás.
+  payload_idx    jsonb        GENERATED ALWAYS AS (payload::jsonb) STORED,
+  -- FIN DE LA PREIMAGEN. Lo de abajo es sobre y no entra a ningún hash.
   prev_hash      bytea        NOT NULL CHECK (octet_length(prev_hash) = 32),
   event_hash     bytea        NOT NULL CHECK (octet_length(event_hash) = 32),
   spine_hash     bytea        CHECK (spine_hash IS NULL OR octet_length(spine_hash) = 32),
-  request_id     uuid         NOT NULL,
-  recorded_at    timestamptz  NOT NULL DEFAULT clock_timestamp(),
+  request_id     uuid         NOT NULL,   -- uuid PERMITIDO: es sobre, no entra a la preimagen (§3.5)
+  recorded_at    timestamptz  NOT NULL DEFAULT clock_timestamp(),  -- ídem: sobre
   CONSTRAINT event_agg_seq_uk   UNIQUE (aggregate_id, seq),
   CONSTRAINT event_hash_uk      UNIQUE (event_hash),
   CONSTRAINT event_request_uk   UNIQUE (request_id),
@@ -302,14 +378,15 @@ CREATE TABLE governance.event (
 
 CREATE INDEX event_agg_idx  ON governance.event (aggregate_id, seq);
 CREATE INDEX event_type_idx ON governance.event (aggregate_type, event_type);
+CREATE INDEX event_payload_idx ON governance.event USING gin (payload_idx);  -- consulta, no verdad
 
 -- Cabeza de cadena por agregado: la única fila mutable del subsistema.
 CREATE TABLE governance.aggregate_head (
-  aggregate_id   uuid        NOT NULL PRIMARY KEY,
+  aggregate_id   char(32)    NOT NULL PRIMARY KEY CHECK (aggregate_id ~ '^[0-9a-f]{32}$'),
   aggregate_type text        NOT NULL,
   seq            integer     NOT NULL CHECK (seq >= 0),
   head_hash      bytea       NOT NULL CHECK (octet_length(head_hash) = 32),
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp()
+  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp()   -- caché derivada: permitido
 );
 
 -- Contador global DENSO. Deliberadamente NO es una secuencia (§3.2).
@@ -319,6 +396,32 @@ CREATE TABLE governance.ledger_cursor (
 );
 INSERT INTO governance.ledger_cursor (id) VALUES (TRUE);
 ```
+
+Dos precisiones sobre el mapeo entre la fila y el objeto canónico, que son fuente de error silencioso:
+
+- **`actor IS NULL` significa «clave `actor` ausente»**, nunca `"actor": null`. El `NULL` de SQL y el
+  `null` de JSON no son el mismo valor y §1.3.d prohíbe el segundo. La capa de acceso a datos omite la
+  clave; no la emite vacía.
+- **`payload` es la única fuente de verdad**; `payload_idx` es una columna generada, existe para que
+  los `GIN` y los `->>` sigan funcionando, y **no se lee jamás al recomputar un hash**. Si un día
+  divergen, la que está mal es `payload_idx`, por definición.
+
+> **Corregido tras la implementación (2026-08-21):** este DDL contenía **cinco** violaciones de la
+> regla de tipos de §1.1-bis, tres señaladas y dos que nadie había mirado:
+>
+> | Columna | Estaba | Está | Qué rompía |
+> |---|---|---|---|
+> | `aggregate_id` | `uuid` | `char(32)` | Devuelve la forma con guiones ⇒ preimagen distinta al rehidratar |
+> | `actor` | `uuid` | `char(32)` | Ídem, y era la incoherencia directa con §1.1 |
+> | `payload` | `jsonb` | `text` (+ `payload_idx` derivado) | **`jsonb` reordena las claves y normaliza los números: destruye JCS entero** |
+> | `occurred_at` | `timestamptz` | `char(24)` | Devuelve `2026-08-21 03:14:00.1+00`, no `2026-08-21T03:14:00.100Z`: cambia el separador, la zona **y trunca los ceros de los milisegundos** |
+> | `issued_at` (§6.4) | `timestamptz` | `char(24)` | Lo mismo, sobre la preimagen del `checkpoint_hash` |
+>
+> Las dos últimas no estaban en el informe de implementación: aparecieron al aplicar la regla general
+> a todo el DDL en vez de parchear caso por caso. `payload` era la peor de las cinco por alcance:
+> `jsonb` no guarda el texto, guarda un árbol descompuesto, y lo reemite con las claves ordenadas por
+> longitud-y-luego-bytes —criterio que **no** es el de JCS— y con los números renormalizados. Con
+> `jsonb`, la primera restauración de `pg_dump` habría invalidado la historia completa.
 
 ### 3.2 Por qué `BIGSERIAL` está prohibido aquí
 
@@ -383,7 +486,7 @@ COMMIT;
 ```
 
 ```ts
-// packages/ledger/src/append.ts
+// services/api/src/ledger/append.ts — hace I/O, luego NO es packages/crypto (ADR-0001)
 const REINTENTABLES = new Set([
   '40001', // serialization_failure
   '40P01', // deadlock_detected
@@ -436,7 +539,10 @@ contigüidad, descartada por ser más código para la misma garantía.
 
 ### 3.5 Idempotencia
 
-Cada comando entrante trae un `requestId` (UUID) generado por el cliente. `UNIQUE (request_id)` lo
+Cada comando entrante trae un `requestId` (UUID v4, generado por el cliente). Es el **único**
+identificador del subsistema que sigue siendo un UUID, y puede serlo precisamente porque pertenece al
+sobre y **no entra a ninguna preimagen** (§1.1, §1.1-bis): que PostgreSQL lo reescriba con guiones no
+afecta a ningún hash. `UNIQUE (request_id)` lo
 convierte en clave de idempotencia: un reintento de red tras un timeout no duplica el voto, choca
 con `23505` sobre `event_request_uk` y la capa devuelve el resultado ya registrado. Sin esto, la red
 móvil del campus produce eventos duplicados que son indistinguibles de fraude y ensucian una historia
@@ -687,10 +793,22 @@ Ventana máxima en el peor caso: 24 h; en los momentos sensibles, minutos.
 
 ### 6.2 Hojas: qué, en qué orden, y el nodo impar
 
-La hoja `i` es el **`event_hash` del evento con `leaf_index = i`**, y el orden de las hojas es el
-orden del `leaf_index` ascendente. No por hash, no por `occurred_at`, no por agregado: el árbol es
-un *log*, y el orden **es** la afirmación histórica. Ordenar por hash produciría un conjunto y
-perdería exactamente la información que queremos fijar.
+La **entrada** `i` del log es el `event_hash` del evento con `leaf_index = i`, y el orden de las
+entradas es el del `leaf_index` ascendente. No por hash, no por `occurred_at`, no por agregado: el
+árbol es un *log*, y el orden **es** la afirmación histórica. Ordenar por hash produciría un conjunto
+y perdería exactamente la información que queremos fijar.
+
+**Entrada no es hoja.** La distinción parece pedante y es el centro de §6.3: la *entrada* `d_i` es el
+dato del log (aquí, un `event_hash` de 32 bytes); la *hoja* es `SHA256(0x00 ‖ d_i)`. El árbol se
+construye sobre hojas, nunca sobre entradas. Quien confunda una cosa con la otra construye un árbol
+sin prefijo de hoja y reabre el ataque de segunda preimagen que §6.3 dedica media página a cerrar.
+
+> **Corregido tras la implementación (2026-08-21):** esta sección decía que la hoja «es el
+> `event_hash`», mientras la fórmula de §6.3 decía `MTH({d0}) = SHA256(0x00 ‖ d0)` —dato crudo— y el
+> código de ejemplo de §6.3 asumía hojas **ya hasheadas** (`return leaves[0]; // ya vienen hasheadas`).
+> Tres convenciones en dos páginas. Quien leyera esta prosa y llamara a ese código obtenía un árbol
+> **sin prefijo de hoja**: el ataque de segunda preimagen, servido por la propia especificación. El
+> contrato queda ahora explícito y en un solo sentido (§6.3).
 
 Con número impar de nodos en un nivel, **no se duplica nada**. RFC 6962 no razona por niveles sino
 por partición recursiva: se corta en `k`, la mayor potencia de dos estrictamente menor que `n`. Un
@@ -701,9 +819,12 @@ checkpoint: fatal.
 
 ```
 MTH({})      = SHA256("")                                   // 32 bytes de la cadena vacía
-MTH({d0})    = SHA256(0x00 ‖ d0)                            // HOJA
+MTH({d0})    = SHA256(0x00 ‖ d0)                            // HOJA, sobre la ENTRADA CRUDA d0
 MTH(D[n])    = SHA256(0x01 ‖ MTH(D[0:k]) ‖ MTH(D[k:n]))     // NODO, k = 2^⌊log2(n-1)⌋
 ```
+
+`D[n]` es la lista de **entradas crudas**, no de hojas. `MTH` aplica `0x00` él mismo. Es la
+convención literal de RFC 6962 y es la que fija §6.3 para toda la API pública.
 
 ### 6.3 Segunda preimagen: por qué `0x00` y `0x01`
 
@@ -726,43 +847,107 @@ de nodo sirviera como hash de hoja habría que encontrar `d` con
 doble, porque las hojas son a su vez `event_hash` calculados con prefijo `0x02` (§2.1): los tres
 dominios —eslabón de cadena, hoja, nodo interno— son mutuamente disjuntos.
 
+**Contrato de la API pública (normativo):** toda función exportada del módulo Merkle recibe
+**entradas crudas** (`event_hash` de 32 bytes) y aplica `leafHash` **internamente**. Ninguna función
+pública acepta hojas ya hasheadas. `leafHash` y `nodeHash` se exportan sólo para que el verificador
+independiente reproduzca el algoritmo paso a paso, nunca para preprocesar la lista antes de llamar a
+`merkleRoot`. Con este contrato, el error de pasar hojas ya hasheadas es **imposible de cometer**: no
+existe la firma que lo permita.
+
 ```ts
-// packages/ledger/src/merkle.ts
+// packages/crypto/src/merkle.ts
 const H = async (...p: Uint8Array[]) =>
   new Uint8Array(await crypto.subtle.digest('SHA-256', concat(...p)));
 
-export const hashLeaf = (eventHash: Uint8Array) => H(Uint8Array.of(0x00), eventHash);
-export const hashNode = (l: Uint8Array, r: Uint8Array) => H(Uint8Array.of(0x01), l, r);
+export const leafHash = (entry: Uint8Array) => H(Uint8Array.of(0x00), entry);
+export const nodeHash = (l: Uint8Array, r: Uint8Array) => H(Uint8Array.of(0x01), l, r);
 
-export async function merkleRoot(leaves: Uint8Array[]): Promise<Uint8Array> {
-  if (leaves.length === 0) return H();                 // SHA256("")
-  if (leaves.length === 1) return leaves[0];           // ya vienen hasheadas con 0x00
-  const k = 1 << (31 - Math.clz32(leaves.length - 1)); // mayor potencia de 2 < n
-  return hashNode(await merkleRoot(leaves.slice(0, k)), await merkleRoot(leaves.slice(k)));
+/** Mayor potencia de dos ESTRICTAMENTE menor que n, para n >= 2. Dominio: bigint de 64 bits. */
+export function largestPowerOfTwoLessThan(n: bigint): bigint {
+  if (n < 2n) throw new RangeError('n debe ser >= 2');
+  let k = 1n;
+  while (k * 2n < n) k *= 2n;   // O(log n): 63 vueltas en el peor caso de un bigint de 64 bits
+  return k;
+}
+
+/** Recibe ENTRADAS CRUDAS. Aplica 0x00 internamente. Nunca recibe hojas ya hasheadas. */
+export async function merkleRoot(entries: readonly Uint8Array[]): Promise<Uint8Array> {
+  if (entries.length === 0) return H();                // SHA256("")
+  if (entries.length === 1) return leafHash(entries[0]!);
+  const k = Number(largestPowerOfTwoLessThan(BigInt(entries.length)));
+  return nodeHash(await merkleRoot(entries.slice(0, k)), await merkleRoot(entries.slice(k)));
 }
 ```
+
+> **Corregido tras la implementación (2026-08-21):** dos defectos distintos en cuatro líneas.
+>
+> **(a) Convención de hoja.** `merkleRoot` devolvía `leaves[0]` sin hashear («ya vienen hasheadas con
+> `0x00`»), lo que contradecía la fórmula `MTH({d0}) = SHA256(0x00 ‖ d0)` de esta misma sección y la
+> prosa de §6.2. La API pública recibe ahora entradas crudas, como en el RFC.
+>
+> **(b) Aritmética de 32 bits en un dominio de 64.** `1 << (31 - Math.clz32(n - 1))` sólo es correcto
+> para `2 ≤ n < 2³¹`: `Math.clz32` **trunca su argumento a 32 bits** y `Number(n)` pierde exactitud por
+> encima de `2⁵³`, mientras el DDL declara `leaf_index` y `tree_size` como `bigint`. El tipo decía una
+> cosa y la aritmética hacía otra. Con `n = 2³¹` el desplazamiento se sale del rango de un entero con
+> signo de 32 bits y `k` sale **negativo**, con lo que `slice()` empieza a cortar desde el final y
+> devuelve basura sin lanzar ningún error. Se sustituye por un bucle explícito sobre `bigint`: 63
+> iteraciones en el peor caso, coste irrelevante frente a un solo SHA-256, y correcto en todo el
+> dominio declarado. **Nada de trucos de bits de 32 bits en un dominio de 64.**
 
 ### 6.4 El checkpoint
 
 ```sql
 CREATE TABLE governance.checkpoint (
-  tree_size        bigint      NOT NULL PRIMARY KEY,   -- nº de hojas cubiertas
+  tree_size        bigint      NOT NULL PRIMARY KEY,   -- nº de entradas cubiertas
   root_hash        bytea       NOT NULL CHECK (octet_length(root_hash) = 32),
   heads_root       bytea       NOT NULL CHECK (octet_length(heads_root) = 32),
   prev_checkpoint  bytea       CHECK (prev_checkpoint IS NULL OR octet_length(prev_checkpoint) = 32),
-  issued_at        timestamptz NOT NULL,
+  -- PREIMAGEN (§1.1-bis): mismo formato exacto que event.occurred_at. NUNCA timestamptz.
+  issued_at        char(24)    NOT NULL
+                   CHECK (issued_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'),
   checkpoint_hash  bytea       NOT NULL UNIQUE CHECK (octet_length(checkpoint_hash) = 32),
   firm             boolean     NOT NULL DEFAULT FALSE
 );
 ```
 
-`checkpoint_hash = SHA256(0x04 ‖ JCS_utf8({treeSize, rootHash, headsRoot, prevCheckpoint, issuedAt}))`,
-con hashes en hex minúscula dentro del objeto. Los checkpoints forman **su propia cadena**
-(`prev_checkpoint`), de modo que la serie publicada tampoco se puede podar por el medio.
+El objeto canónico del checkpoint es
 
-`heads_root` es un segundo árbol de Merkle, con las mismas reglas de dominio, sobre las hojas
-`SHA256(0x00 ‖ aggregate_id(16B) ‖ seq(int64 BE) ‖ head_hash(32B))`, **ordenadas por
-`aggregate_id`**. Aquí el orden por identificador sí corresponde: es un conjunto, no una historia.
+```
+checkpoint_hash = SHA256( 0x04 ‖ JCS_utf8( {treeSize, rootHash, headsRoot, prevCheckpoint?, issuedAt} ) )
+```
+
+con `rootHash`, `headsRoot` y `prevCheckpoint` en **hex minúscula** dentro del objeto, `treeSize` como
+entero y `issuedAt` como la cadena RFC 3339 de 24 caracteres, literalmente la que está en la columna.
+Los checkpoints forman **su propia cadena** (`prev_checkpoint`), de modo que la serie publicada
+tampoco se puede podar por el medio.
+
+> ### Regla del primer checkpoint
+>
+> **Si no hay checkpoint previo, la clave `prevCheckpoint` se OMITE del objeto canónico.** No se
+> emite `null`, no se emite cadena vacía, no se emite un centinela de 64 ceros. El objeto canónico del
+> primer checkpoint tiene **cuatro** claves; el de todos los demás tiene cinco.
+>
+> Es decir, para `tree_size` inicial:
+> `SHA256(0x04 ‖ JCS_utf8({headsRoot, issuedAt, rootHash, treeSize}))` — cuatro claves, ordenadas por
+> JCS.
+
+> **Corregido tras la implementación (2026-08-21):** el `checkpoint_hash` estaba **indefinido para el
+> primer checkpoint**. `prevCheckpoint` es `NULL` ahí, pero §1.3.d prohíbe `null` en los objetos
+> canónicos y la spec no decía si la clave se omite, se pone en cadena vacía o se usa un centinela.
+> Dos implementaciones honestas producían **dos hashes distintos para el mismo checkpoint**, y
+> justamente para el checkpoint que ancla el origen de la vigencia. Se fija la omisión, que es lo que
+> §1.3.d ya manda para el resto del sistema («la ausencia se expresa omitiendo la clave»): la regla
+> existía, sólo faltaba aplicarla aquí. `issued_at` pasó además de `timestamptz` a `char(24)` por
+> §1.1-bis, porque participa de esta preimagen.
+
+`heads_root` es un segundo árbol de Merkle, con las mismas reglas de dominio, sobre las **entradas**
+`aggregate_id(16B) ‖ seq(int64 BE) ‖ head_hash(32B)` —a las que `MTH` aplica su `0x00` de hoja como a
+cualquier otra entrada (§6.3)—, **ordenadas por `aggregate_id`**. Los 16 bytes son la decodificación
+de los 32 hex del identificador; y como el hexadecimal en minúscula es monótono respecto de los bytes
+que representa (`0`–`9` y `a`–`f` son crecientes en ASCII y no se solapan), ordenar por la cadena de
+32 hex y ordenar por los 16 bytes dan **el mismo orden**: el `ORDER BY aggregate_id` de SQL y el
+ordenamiento binario del verificador no pueden divergir. Aquí el orden por identificador sí
+corresponde: es un conjunto, no una historia.
 Su función es dar un compromiso explícito al *censo de agregados*: cualquiera que guarde un
 checkpoint de ayer y vea que el de hoy tiene un `heads_root` incompatible con la propuesta que él
 mismo abrió, tiene evidencia de la desaparición sin necesidad de recorrer todo el log.
@@ -780,9 +965,9 @@ algoritmo de RFC 6962, que trabaja con el índice de la hoja y el tamaño del á
 necesita saber la forma del árbol de antemano.
 
 ```ts
-// packages/ledger/src/inclusion.ts — corre igual en navegador y en Node
+// packages/crypto/src/merkle.ts — corre igual en navegador y en Node
 export async function verifyInclusion(
-  eventHash: Uint8Array,   // hash del evento que el estudiante quiere comprobar
+  entry: Uint8Array,       // ENTRADA CRUDA: el event_hash que el estudiante quiere comprobar
   leafIndex: bigint,       // su posición global en el log
   treeSize: bigint,        // tamaño del árbol del checkpoint
   proof: Uint8Array[],     // audit path entregado por el servidor
@@ -790,14 +975,14 @@ export async function verifyInclusion(
 ): Promise<boolean> {
   if (leafIndex >= treeSize) return false;
   let fn = leafIndex, sn = treeSize - 1n;
-  let r = await hashLeaf(eventHash);
+  let r = await leafHash(entry);   // el 0x00 lo aplica la función, no quien la llama (§6.3)
   for (const sibling of proof) {
     if (sn === 0n) return false;                       // sobran nodos: prueba mal formada
     if ((fn & 1n) === 1n || fn === sn) {
-      r = await hashNode(sibling, r);                  // somos hijo derecho (o cola promovida)
+      r = await nodeHash(sibling, r);                  // somos hijo derecho (o cola promovida)
       while (fn !== 0n && (fn & 1n) === 0n) { fn >>= 1n; sn >>= 1n; }
     } else {
-      r = await hashNode(r, sibling);                  // somos hijo izquierdo
+      r = await nodeHash(r, sibling);                  // somos hijo izquierdo
     }
     fn >>= 1n; sn >>= 1n;
   }
@@ -849,11 +1034,13 @@ compatible con lo de ayer.
 
 ```ts
 // PROOF(m, D[n]) = SUBPROOF(m, D[n], true)
-async function subproof(m: bigint, leaves: Uint8Array[], b: boolean): Promise<Uint8Array[]> {
-  const n = BigInt(leaves.length);
-  if (m === n) return b ? [] : [await merkleRoot(leaves)];
-  const k = BigInt(1 << (31 - Math.clz32(Number(n) - 1)));  // mayor potencia de 2 < n
-  const izq = leaves.slice(0, Number(k)), der = leaves.slice(Number(k));
+// `entries` son ENTRADAS CRUDAS (§6.3), no hojas ya hasheadas.
+async function subproof(m: bigint, entries: readonly Uint8Array[], b: boolean): Promise<Uint8Array[]> {
+  if (m === 0n) return [];                       // CASO BASE: el árbol vacío es prefijo de todo
+  const n = BigInt(entries.length);
+  if (m === n) return b ? [] : [await merkleRoot(entries)];
+  const k = largestPowerOfTwoLessThan(n);        // bigint, §6.3 — sin trucos de 32 bits
+  const izq = entries.slice(0, Number(k)), der = entries.slice(Number(k));
   return m <= k
     ? [...(await subproof(m, izq, b)), await merkleRoot(der)]
     : [...(await subproof(m - k, der, false)), await merkleRoot(izq)];
@@ -864,6 +1051,24 @@ La intuición del parámetro `b`: mientras el prefijo antiguo coincide exactamen
 completo del árbol nuevo, el verificador ya puede recomponerlo por sí mismo y no hace falta
 enviárselo (`b = true`, no se emite nada). En cuanto deja de coincidir, se emite el hash del subárbol
 para que pueda reconstruir ambas raíces.
+
+El caso base `m = 0` es el mismo que fija RFC 6962: un árbol de cero entradas es prefijo de cualquier
+árbol, y demostrarlo no requiere ningún nodo. **La prueba vacía es la prueba.** El verificador de
+§7.3 ya lo contemplaba (`if (m === 0n) return proof.length === 0`); ahora el generador coincide.
+
+> **Corregido tras la implementación (2026-08-21):** `subproof` **no tenía caso base para `m = 0`** y
+> se rompía de la peor manera posible: en silencio. Con `m = 0` la recursión bajaba siempre por la
+> rama `m <= k` hasta `n = 1`; ahí `m !== n`, así que calculaba `1 << (31 - Math.clz32(0))`. Como
+> `Math.clz32(0) = 32`, eso es `1 << -1`, y JavaScript enmascara el desplazamiento a 5 bits: `1 << 31`
+> = `-2147483648`. Con `k` negativo, `slice(0, k)` y `slice(k)` reinterpretan el índice desde el final
+> y devuelven segmentos arbitrarios; la función **no lanzaba, devolvía basura**.
+>
+> El verificador de §7.3 **sí** contemplaba `m = 0`. Generador y verificador discrepaban, por tanto,
+> justo en el **primer checkpoint de cada vigencia** —el único con `m = 0`—, que es precisamente la
+> prueba que §7.4 declara «la que importa políticamente»: la que permite comprobar de un tirón que
+> toda la historia del semestre sigue siendo la misma. Cada semestre habría fallado la primera
+> verificación, y el modo de fallo (basura, no excepción) habría hecho que el diagnóstico costara
+> días.
 
 ### 7.3 Verificación
 
@@ -894,11 +1099,11 @@ export async function verifyConsistency(
     const c = proof[i];
     if (sn === 0n) return false;
     if ((fn & 1n) === 1n || fn === sn) {
-      fr = await hashNode(c, fr);
-      sr = await hashNode(c, sr);
+      fr = await nodeHash(c, fr);
+      sr = await nodeHash(c, sr);
       while (fn !== 0n && (fn & 1n) === 0n) { fn >>= 1n; sn >>= 1n; }
     } else {
-      sr = await hashNode(sr, c);  // rama que sólo existe en el árbol nuevo
+      sr = await nodeHash(sr, c);  // rama que sólo existe en el árbol nuevo
     }
     fn >>= 1n; sn >>= 1n;
   }
@@ -1022,12 +1227,22 @@ CREATE TABLE governance.anchor_attempt (
   state         text        NOT NULL CHECK (state IN ('PENDIENTE','CONFIRMADO','FALLIDO')),
   attempt_no    integer     NOT NULL DEFAULT 1,
   external_ref  text,
-  receipt       jsonb,
+  -- Respuesta cruda del proveedor, TAL CUAL llegó. `text`, no `jsonb`: algunos recibos
+  -- (Rekor, DKIM del correo) llevan firma sobre los bytes exactos, y jsonb los reordenaría.
+  receipt       text,
+  receipt_idx   jsonb GENERATED ALWAYS AS (receipt::jsonb) STORED,   -- consulta; NO autoritativo
   error         text,
   created_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at    timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 ```
+
+> **Corregido tras la implementación (2026-08-21):** `receipt` era `jsonb`. Esta tabla no es el
+> ledger y sus huecos dan igual (`bigserial`), pero el recibo **sí** puede ser la preimagen de una
+> verificación ajena: `AnchorProvider.verify` debe funcionar **offline** (§8.3) y los recibos de Rekor
+> y las cabeceras DKIM del correo firmado se verifican sobre **los bytes exactos** que emitió el
+> tercero. Guardarlos en `jsonb` los reordena y deja el anclaje inverificable justo cuando alguien
+> quiere comprobarlo a mano. Es la misma regla de §1.1-bis aplicada a una preimagen que no es nuestra.
 
 1. **Reintento** con backoff (1 min, 5, 25, 2 h, 12 h) hasta 24 h.
 2. **Registro en el ledger**: cada transición se escribe como evento del agregado `#anclaje`

@@ -349,7 +349,11 @@ Roles: **ANÓN** · **MIEM** (miembro del padrón) · **FACIL** (facilitación d
 
 1. **La propiedad se comprueba en el dominio, en la misma operación que devuelve el dato**, nunca en un `guard` previo ni por filtrado en la interfaz.
 2. **Nada se recupera por identificador sin ámbito:** `findReceipt(receiptId, actorId)`, jamás `findReceipt(id)` seguido de comprobación.
-3. **Identificadores opacos** (UUIDv4 o base32 de 128 bits) para recibo, borrador, objeción y registro del vault. Nunca enteros secuenciales: T-21 se repite en cada recurso enumerable.
+3. **Identificadores opacos de 128 bits aleatorios de CSPRNG** para recibo, borrador, objeción y registro del vault. Nunca enteros secuenciales: T-21 se repite en cada recurso enumerable. **Nunca UUIDv7 ni ULID:** llevan la hora de creación dentro y convierten el identificador en una marca temporal fina (ver `20-normativa-datos-colombia.md` §7). Forma según dónde viva el identificador:
+   - **Identificadores del ledger** (agregado, evento, decisión, objeción, `MemberId`): **32 hex minúsculas**, `^[0-9a-f]{32}$`, en columna `char(32)`. **Prohibido el tipo `uuid`**: normaliza la representación y rompe la preimagen del hash — regla de tipos del ledger, `10-ledger-inmutable.md` §1.1-bis.
+   - **Identificadores que no entran a ninguna preimagen** (`request_id`, `keyId` del vault, tokens de sesión): la forma es libre; UUIDv4 vale.
+
+   > **Corregido tras la implementación (2026-08-21):** este punto decía «UUIDv4 o base32 de 128 bits» y mezclaba en una sola línea dos cosas con requisitos incompatibles. La **objeción** es un agregado del ledger: su identificador entra a la preimagen del `eventHash` y no puede ser un `uuid`, porque PostgreSQL lo devuelve con guiones y el evento deja de verificar al rehidratarse. El **registro del vault**, en cambio, nunca se hashea y puede ser lo que sea. La distinción no es de estilo: es la diferencia entre un ledger que verifica y uno que grita corrupción sin motivo.
 4. **Respuesta idéntica para «no existe» y «no es tuyo»** (404 en ambos): la autorización no debe filtrar existencia.
 5. **`FACIL` está acotado a su espacio:** `facilitaEste(actor, espacio)`, jamás `esFacilitador(actor)` a secas.
 6. **Prueba sistemática:** por cada endpoint con identificador de recurso existe `::actor_B_no_accede_al_recurso_de_actor_A`. `tests/integration/authz-horizontal.spec.ts` **enumera las rutas registradas y falla si alguna carece de ese caso** — la cobertura no depende de que alguien se acuerde.

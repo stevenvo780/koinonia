@@ -31,7 +31,7 @@ Reglas asociadas:
 ## Alternativas consideradas
 
 - **Punto flotante con épsilon de tolerancia.** Traslada el problema a elegir el épsilon, que es una decisión política disfrazada de constante: con `1e-9`, alguien puede ganar por redondeo.
-- **Decimales de precisión fija** (tipo `numeric` de SQL). Mejor que el flotante, pero el redondeo sigue existiendo y depende del motor de base de datos, no del dominio puro.
+- **Decimales de precisión fija** (tipo `numeric` de SQL). Mejor que el flotante, pero el redondeo sigue existiendo y depende del motor de base de datos, no del dominio puro. **Además está proscrito por una segunda razón independiente**, descubierta al implementar `packages/crypto`: la **regla de tipos del ledger** (`10-ledger-inmutable.md` §1.1-bis) prohíbe almacenar en `numeric` cualquier valor que entre a la preimagen de un hash, porque `numeric` **normaliza los ceros a la derecha** —`1.50` y `1.5` son el mismo valor almacenado y se reemiten igual—, lo que cambiaría la preimagen al rehidratar el dato desde PostgreSQL. Aunque el redondeo no fuera un problema, `numeric` seguiría estando prohibido en toda columna hasheada.
 - **Racionalizar todo a un denominador común** al inicio del escrutinio. Funciona, pero oscurece la `Proof`: el auditor humano deja de reconocer «2 de 3».
 
 ## Consecuencias

@@ -5,12 +5,14 @@
 > Es **memoria del proceso**, no documentación de producto. Si dentro de dos años alguien se pregunta por qué el `MemberId` es aleatorio, o por qué no apostamos al borrado criptográfico, la respuesta está aquí y no hay que reconstruirla.
 >
 > **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones **R1, R2 y R3** las tomó el arquitecto y son firmes. Las contradicciones **C4 en adelante** las detectó la revisión editorial del corpus; las que R1–R3 adjudican de forma derivada se marcan como **resueltas**, y las que exigen una decisión nueva quedan **pendientes** con la recomendación del editor, que no tiene autoridad para cerrarlas.
+>
+> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E8) la produjo **implementar el código**: `packages/crypto` escrito contra `10-ledger-inmutable.md`. Las tres encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
 
 ## Orden de precedencia normativa
 
 Ninguno de los documentos declaraba una precedencia global, y los tres que se corrigen mutuamente lo hacían con criterios incompatibles (ver **C19**). Queda fijado:
 
-1. **Resoluciones del arquitecto** (R1, R2, R3) — este archivo.
+1. **Resoluciones del arquitecto** (R1, R2, R3 y **E1–E8**) — este archivo. La **regla de tipos del ledger** (E1) es de obligado cumplimiento en todo DDL del repositorio, esté en el documento que esté.
 2. **ADR** de `docs/adr/`.
 3. `30-decision-engine-spec.md` — contrato de implementación del motor.
 4. `20-normativa-datos-colombia.md` y `21-normativa-udea.md` — vinculantes en lo que afirmen **sobre la ley**, no sobre el diseño.
@@ -333,6 +335,720 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 
 ---
 
+# PARTE 3 — Errores detectados por la implementación
+
+> **Qué es esta parte, y por qué está separada de la anterior.** Las contradicciones C4–C20 las
+> encontró una **revisión editorial**: alguien leyendo el corpus con atención y comparando documentos
+> entre sí. Los errores E1–E23 de abajo los encontró otra cosa: **alguien escribiendo el código**.
+>
+> Hay dos rondas, contra dos especificaciones distintas:
+>
+> | Ronda | Paquete | Spec | Errores | Pruebas en verde al terminar |
+> |---|---|---|---|---|
+> | 1ª | `packages/crypto` | `10-ledger-inmutable.md` | **E1–E9** — seis en la spec, dos incoherencias entre ADR, una divergencia elevada sin cerrar | 116 |
+> | 2ª | `packages/domain` | `30-decision-engine-spec.md` | **E10–E23** — catorce, todos dentro de la spec | 229 |
+>
+> **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones las tomó el arquitecto y son firmes. Cada
+> una está aplicada en el punto exacto del documento donde vivía el error, con una nota
+> **«Corregido tras la implementación (2026-08-21)»** que explica qué decía antes y qué rompía.
+>
+> **El dato acumulado, que es el hallazgo principal de esta parte: entre las dos especificaciones la
+> implementación ha encontrado ya unos 20 errores que ninguna revisión por lectura detectó** —seis en
+> la spec 10 y catorce en la spec 30—, y las dos habían pasado por la revisión editorial que produjo
+> C4–C20 de la parte 2. No es un accidente de un documento flojo: es lo que se puede esperar de
+> cualquier especificación no ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su
+> confirmación en la segunda ronda.
+
+## El hecho metodológico, que importa más que los ocho errores
+
+**Ninguno de estos seis errores lo encontró una revisión leyendo la especificación. Los encontró
+alguien implementándola.**
+
+Conviene decir con precisión cuánta revisión había pasado antes. El documento 10 se escribió con
+cuidado, cita RFC 6962 y RFC 8785 correctamente, dedica media página a explicar el ataque de segunda
+preimagen y por qué hacen falta los octetos `0x00`/`0x01`, razona el CVE-2012-2459 de Bitcoin,
+justifica por qué `BIGSERIAL` está prohibido y contiene una sección entera —«Lo que este diseño NO
+garantiza»— dedicada a enumerar sus propias limitaciones con una honestidad poco común. Pasó por la
+revisión editorial que produjo C4–C20 de la parte 2. **Y aun así**:
+
+- La sección que dedica media página a cerrar el ataque de segunda preimagen (§6.3) contenía, en el
+  código de ejemplo de esa misma sección, la línea que lo reabre (**E4**).
+- La sección que declara el falso positivo de corrupción como la peor falla posible (§1.2) convivía
+  con un DDL que lo garantizaba en la primera restauración de `pg_dump` (**E1**).
+- El documento que exige pruebas de consistencia contra el primer checkpoint de la vigencia por ser
+  «la que importa políticamente» (§7.4) traía un generador que devolvía basura exactamente en ese
+  caso (**E2**).
+
+El patrón se repite: **el error no está en lo que el documento ignora, está dentro de la sección que
+demuestra dominar el tema.** Leer no lo detecta, porque al leer se verifica el argumento y el
+argumento era correcto. Lo que fallaba era la correspondencia entre el argumento y las cuatro líneas
+de código o las once líneas de DDL que había debajo. Esa correspondencia sólo se comprueba
+ejecutándola.
+
+Cuatro consecuencias prácticas, que valen más que los parches:
+
+1. **Implementar temprano es una técnica de revisión, no una fase posterior.** Un documento de diseño
+   sin código que lo ejercite es una hipótesis. La spec 10 tenía seis defectos y el más grave habría
+   aparecido, en producción, como una acusación falsa de manipulación de la historia de la asamblea
+   —el peor modo de fallo posible para este proyecto, y el que el propio documento identifica como
+   tal—. El coste de encontrarlo implementando fue una tarde; el de encontrarlo en la primera
+   restauración de un backup, la credibilidad del sistema.
+2. **El fallo silencioso es la clase peligrosa.** Cinco de los seis (E1, E2, E3, E4, E6) **no lanzan
+   ninguna excepción**: devuelven un hash distinto, un `slice` con índices negativos, un árbol sin
+   prefijo o dos hashes honestos e incompatibles. Ninguna prueba de humo los ve. Sólo los ve una
+   prueba que compare **contra vectores externos** —los del RFC, los de
+   `certificate-transparency-go`— o contra una segunda implementación.
+3. **Los casos límite del dominio son el `0`, el `1` y el `2⁵³`.** E2 es `m = 0`, E3 es `n ≥ 2³¹`, E6
+   es «el primero de la serie». Los tres son el mismo error de método: la spec razonó el caso general
+   y no escribió el degenerado. La regla que queda es que toda recursión declare su caso base en el
+   texto, y todo tipo declarado `bigint` se ejercite por encima de `2³²`.
+4. **Un parche puntual no cierra una clase de error.** E1 se presentó como «`actor` está mal tipado» y
+   resultó ser una instancia de algo mucho mayor, que además afectaba a documentos que nadie estaba
+   mirando (la urna del documento 11, la tabla de identificadores del documento 20). La corrección de
+   fondo no es cambiar tres columnas: es la **regla de tipos del ledger** de §1.1-bis, que da un
+   criterio para la columna que alguien añada dentro de dos años.
+
+## E1 — `actor` incoherente entre §1.1 y el DDL: el falso positivo de corrupción, servido por la spec
+
+| Documento | Qué decía |
+|---|---|
+| `10-...` §1.1 | `actor` es un «`MemberId`, 32 hex minúsculas»; `aggregateId`, «UUID v4 textual, minúsculas, con guiones» |
+| `10-...` §3.1 (DDL) | `actor uuid`, `aggregate_id uuid` |
+
+**El conflicto.** PostgreSQL **acepta** la entrada de 32 hex en una columna `uuid` —normaliza en
+silencio— pero **devuelve siempre** la forma canónica con guiones, de 36 caracteres. Al rehidratar el
+evento desde la base para reverificarlo, el `actor` ya no es el que se hasheó, la preimagen cambia, el
+`eventHash` cambia, y el sistema declara **«historia alterada» sin que nadie la haya alterado**.
+
+Es exactamente el **falso positivo de corrupción** que §1.2 describe como la primera y peor de las
+tres fallas de la no-canonicalización, con el agravante de que ahí se atribuía a una restauración de
+`pg_dump` o a un cambio de librería, y aquí lo causaba la propia especificación. Y su efecto social es
+el que §1.2 anticipa: *«un verificador que grita corrupción cuando no la hay es peor que no tener
+verificador: entrena a la asamblea a ignorarlo»*.
+
+**Resolución.** `MemberId` y `aggregateId` son `CHAR(32)` con `CHECK (valor ~ '^[0-9a-f]{32}$')`. **Se
+prohíbe el tipo `uuid` para ellos.** Aplicado en `10-...` §1.1 y §3.1, y propagado a `11-...` §2.4,
+`20-...` §7, `THREAT_MODEL.md` §7 y `01-...`.
+
+**Y, sobre todo, la regla general** —que es la resolución de verdad, porque el parche puntual habría
+dejado vivas las otras cuatro columnas mal tipadas:
+
+> **Regla de tipos del ledger.** Ningún valor que forme parte de la preimagen de un hash puede
+> almacenarse en una columna cuyo tipo normalice su representación. Esto proscribe `uuid` (reescribe
+> la forma), `timestamptz` (normaliza la zona horaria), `numeric` (normaliza ceros a la derecha) y
+> **muy especialmente `jsonb`, que reordena las claves del objeto y destruiría la canonicalización
+> JCS**. El `payload` se almacena como `text` o `bytea` con la forma canónica exacta que se hasheó; si
+> además se quiere consultar, se guarda una copia derivada en `jsonb` marcada explícitamente como NO
+> autoritativa.
+
+Queda en `10-ledger-inmutable.md` **§1.1-bis**, con corolarios operativos y verificación en CI, y
+replicada como norma de obligado cumplimiento en `ARCHITECTURE.md`.
+
+**Al aplicarla al DDL completo aparecieron dos columnas más que nadie había señalado**, ambas en
+preimágenes de hash:
+
+| Columna | Estaba | Está | Qué rompía |
+|---|---|---|---|
+| `event.payload` | `jsonb` | `text` (+ `payload_idx` derivado) | `jsonb` no guarda texto: guarda un árbol descompuesto y lo reemite con las claves reordenadas por un criterio que **no** es el de JCS. **Destruye la canonicalización entera.** |
+| `event.occurred_at` | `timestamptz` | `char(24)` | Devuelve `2026-08-21 03:14:00.1+00`, no `2026-08-21T03:14:00.100Z`: cambia el separador, cambia la zona **y trunca los ceros de los milisegundos** |
+| `checkpoint.issued_at` | `timestamptz` | `char(24)` | Lo mismo, sobre la preimagen del `checkpoint_hash` |
+| `urn.ballots.choice` (`11-...`) | `jsonb` | `text` (+ `choice_idx` derivado) | La papeleta **canonicalizada** guardada en un tipo que la descanonicaliza; rompe el `urnRoot` anclado y el recibo del votante |
+| `anchor_attempt.receipt` | `jsonb` | `text` (+ `receipt_idx`) | Recibos de Rekor y DKIM se verifican sobre los bytes exactos del tercero; `jsonb` los reordena y deja el anclaje inverificable a mano |
+
+`request_id`, `recorded_at` y `updated_at` **siguen** siendo `uuid` y `timestamptz`, y está bien: son
+sobre o caché derivada, no entran a ninguna preimagen. La regla no es una fobia a los tipos ricos de
+PostgreSQL; es una condición sobre **participar del hash**.
+
+## E2 — `SUBPROOF` roto para `m = 0`: generador y verificador discrepaban en el primer checkpoint de cada vigencia
+
+**El error.** `subproof` (§7.2) no tenía caso base para `m = 0`. Con `m = 0` la recursión bajaba
+siempre por la rama `m <= k` hasta `n = 1`; ahí `m !== n`, así que calculaba
+`1 << (31 - Math.clz32(0))`. Como `Math.clz32(0) = 32`, eso es `1 << -1`; JavaScript enmascara el
+desplazamiento a 5 bits, con lo que `1 << -1 === 1 << 31 === -2147483648`. Con `k` negativo,
+`slice(0, k)` y `slice(k)` reinterpretan el índice desde el final del arreglo y devuelven segmentos
+arbitrarios. **La función no lanzaba: devolvía basura.**
+
+**Por qué importaba.** El verificador de §7.3 **sí** contemplaba `m = 0`
+(`if (m === 0n) return proof.length === 0`). Generador y verificador discrepaban, por tanto,
+exactamente en el **primer checkpoint de cada vigencia** —el único con `m = 0`—, que es justo la
+prueba que §7.4 declara «la que importa políticamente»: la que permite a cualquiera comprobar de un
+tirón que toda la historia del semestre en curso sigue siendo la misma. Cada semestre habría fallado
+su primera verificación, y con un modo de fallo (basura silenciosa, no excepción) que habría costado
+días diagnosticar.
+
+**Resolución.** Caso base explícito `m = 0 →` **prueba vacía**: el árbol vacío es prefijo de todo,
+igual que en RFC 6962. Aplicado en `10-...` §7.2.
+
+## E3 — `1 << (31 - Math.clz32(n - 1))`: aritmética de 32 bits en un dominio declarado de 64
+
+**El error.** La fórmula para «la mayor potencia de dos estrictamente menor que `n`» sólo es correcta
+para `2 ≤ n < 2³¹`. `Math.clz32` **trunca su argumento a 32 bits**, y `Number(n)` pierde exactitud por
+encima de `2⁵³`. Mientras tanto, el DDL de §3.1 y §6.4 declara `leaf_index` y `tree_size` como
+`bigint`. **El tipo decía una cosa y la aritmética hacía otra.**
+
+**Por qué importaba.** No es una objeción teórica sobre un límite inalcanzable: es que el documento
+afirmaba un dominio y lo implementaba en otro, sin decirlo. Un lector razonable que confiara en la
+declaración `bigint` habría reusado esa línea en el verificador independiente, donde el `treeSize` sí
+llega como `bigint` desde el checkpoint publicado. Y el modo de fallo vuelve a ser silencioso: `k`
+negativo, `slice()` cortando desde el final, ninguna excepción.
+
+**Resolución.** Bucle explícito sobre `bigint`
+(`largestPowerOfTwoLessThan(n: bigint): bigint`, ≤ 63 iteraciones, coste irrelevante frente a un solo
+SHA-256). **Nada de trucos de bits de 32 bits en un dominio de 64.** Aplicado en `10-...` §6.3 y §7.2.
+
+## E4 — Dos convenciones de hoja en la misma sección: la spec reabría el ataque que la spec cierra
+
+| Lugar | Qué decía |
+|---|---|
+| `10-...` §6.2 (prosa) | «La hoja `i` **es el `event_hash`** del evento con `leaf_index = i`» |
+| `10-...` §6.3 (fórmula) | `MTH({d0}) = SHA256(0x00 ‖ d0)` — la hoja se calcula sobre el **dato crudo** |
+| `10-...` §6.3 (código) | `if (leaves.length === 1) return leaves[0]; // ya vienen hasheadas con 0x00` |
+
+**El conflicto.** Tres convenciones en dos páginas. Quien leyera la prosa de §6.2 —«la hoja es el
+`event_hash`»— y llamara al código de §6.3 construía un árbol **sin prefijo de hoja**: precisamente el
+ataque de **segunda preimagen** al que esa misma sección §6.3 dedica media página, con su ejemplo de
+cuatro hojas, su `d'0 = h0‖h1` y su conclusión de que permite «negar dos eventos» y «producir pruebas
+de inclusión para eventos que nunca se insertaron».
+
+Es el caso más claro del patrón descrito arriba: el argumento de §6.3 es impecable y el código que
+está debajo del argumento lo contradice.
+
+**Resolución.** El contrato queda **explícito y normativo** en la spec: **la API pública recibe
+entradas crudas y aplica `leafHash` internamente.** Ninguna función exportada acepta hojas ya
+hasheadas; `leafHash` y `nodeHash` se exportan sólo para que el verificador independiente reproduzca
+el algoritmo paso a paso. Es la convención literal del RFC y **hace imposible el error de pasar hojas
+ya hasheadas**: no existe la firma que lo permita. Se introduce además el vocabulario que faltaba
+—*entrada* (el dato del log) frente a *hoja* (`SHA256(0x00 ‖ entrada)`)— porque el error empezó siendo
+una imprecisión de nombres. Aplicado en `10-...` §6.2, §6.3, §6.4, §6.5 y §7.2.
+
+## E5 — La espina dorsal no era un UUID v4, y §1.1 exigía UUID v4
+
+**El conflicto.** §1.1 exigía «UUID v4» para los identificadores del ledger. §2.3 definía la espina
+dorsal como `00000000-0000-0000-0000-00000000ffff`. **Ese valor no es un UUID v4**: el nibble de
+versión es `0`, no `4`, y los bits de variante tampoco corresponden.
+
+**Por qué importaba.** Un validador estricto —el nuestro, en cuanto alguien lo escribiera bien—
+habría **rechazado el único agregado que la spec declara axiomático**: la espina es la raíz de
+confianza de todo el sistema, el único agregado con génesis en 32 ceros, el único cuyo hash se ancla
+el día de la puesta en marcha, y aquel del que cuelga criptográficamente el nacimiento de todos los
+demás. La spec exigía una forma y luego definía, como caso axiomático, el contraejemplo.
+
+**Resolución.** Por E1 los identificadores del ledger ya no son UUID sino 32 hex, con lo que el
+problema se disuelve por construcción: no hay campo de versión que respetar. La espina dorsal pasa a
+ser **`00000000000000000000000000000001`** y **toda mención a «UUID v4» como identificador del ledger
+queda eliminada del corpus**. Aplicado en `10-...` §1.1 y §2.3, y propagado a `20-...` §7,
+`THREAT_MODEL.md` §7 y `01-...`.
+
+> **Pendiente de código, no de documento:** `packages/crypto/src/chain.ts` exporta todavía
+> `SPINE_AGGREGATE_ID = '00000000-0000-0000-0000-00000000ffff'`. La constante hay que cambiarla junto
+> con el validador de `aggregateId`. No se toca aquí porque esta ronda es de especificación.
+
+## E6 — `checkpoint_hash` indefinido para el primer checkpoint
+
+**El conflicto.** `checkpoint_hash = SHA256(0x04 ‖ JCS_utf8({treeSize, rootHash, headsRoot,
+prevCheckpoint, issuedAt}))`. En el **primer** checkpoint, `prevCheckpoint` es `NULL`. Pero §1.3.d
+prohíbe `null` en los objetos canónicos, y la spec **no decía** si la clave se omite, se pone en
+cadena vacía o se usa un centinela de 64 ceros.
+
+**Por qué importaba.** Es el error más barato de cometer y el más caro de diagnosticar: **dos
+implementaciones honestas producen dos hashes distintos para el mismo checkpoint**, ambas convencidas
+de estar en lo cierto, y la discrepancia aparece como una acusación mutua de falsedad sobre el
+checkpoint que ancla el origen de la vigencia. Es el mismo modo de fallo que E2, en la otra punta de
+la misma cadena.
+
+**Resolución.** **Si no hay checkpoint previo, la clave `prevCheckpoint` se OMITE del objeto
+canónico.** No se emite `null`, ni cadena vacía, ni centinela. El objeto canónico del primer
+checkpoint tiene cuatro claves; el de todos los demás, cinco. La regla ya existía en §1.3.d para el
+resto del sistema —«la ausencia se expresa omitiendo la clave»—; sólo faltaba escribir que también se
+aplicaba aquí. Aplicado en `10-...` §6.4, con la fórmula reescrita como `prevCheckpoint?`.
+
+## E7 — ADR-0004 y la spec 10 mandaban órdenes de comparación distintos
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0004`, regla 1 | ordenar «**byte a byte el UTF-8** (`<` sobre code points)» |
+| `10-...` §1.3.c | «JCS ordena por **unidades de código UTF-16**, no por bytes UTF-8» |
+| `30-...` §A.1.1 | «comparación **byte a byte del UTF-8** (`<` sobre code points)» |
+
+**El conflicto.** La redacción de ADR-0004 era incorrecta por partida doble. Primero se contradice a
+sí misma: el `<` de JavaScript **no** compara code points, compara unidades de código UTF-16.
+Segundo, y peor, contradecía a un documento que decía lo correcto, y **ADR-0004 tiene precedencia
+sobre la spec 10** según la tabla del inicio de este archivo — de modo que un implementador que
+siguiera la regla de precedencia habría implementado la versión equivocada.
+
+**No son la misma función fuera del plano básico.** Los sustitutos UTF-16 caen en `D800`–`DFFF`, así
+que todo carácter suplementario se ordena *antes* que `U+E000`–`U+FFFF` en UTF-16 y *después* en bytes
+UTF-8. El caso que lo demuestra:
+
+```js
+'😂' < '\ufb33'                //  true  — UTF-16: 0xD83D < 0xFB33   ← lo que manda JCS
+utf8('😂') < utf8('\ufb33')    //  false — UTF-8:  F0 9F 98 82 > EF AC B3
+```
+
+Con dos claves así en un mismo objeto, los dos canonicalizadores emiten objetos distintos y por tanto
+**hashes distintos**, y el falso positivo resultante es indistinguible de una alteración real.
+
+**Resolución.** **Manda JCS (RFC 8785): orden por unidades de código UTF-16.** Corregido en ADR-0004
+—con el contraejemplo del emoji incorporado al propio ADR, para que la próxima lectura no reabra la
+duda—, en `30-...` §A.1.1 y en el resumen de `adr/README.md`. Se añade como consecuencia que los
+property-based tests **deben** generar caracteres fuera del BMP: una batería de sólo-ASCII habría dado
+verde sobre la regla equivocada indefinidamente, que es exactamente lo que pasó.
+
+## E8 — ADR-0001 declaraba invertida la dirección de dependencia entre `crypto` y `domain`
+
+**El conflicto.** ADR-0001 decía «`packages/crypto` — canonicalización, hashing, cadena de eventos,
+Merkle. **Depende sólo de `domain`**». La implementación es al revés, y lo demuestra de la única forma
+que cuenta: `packages/crypto/package.json` tiene `"dependencies": {}`.
+
+**Por qué importaba, más allá de la exactitud.** `crypto` implementa piezas cuyo comportamiento debe
+quedar **congelado durante décadas**, porque cambiarlas invalida toda la historia anclada (`10-...`
+§1.4 lo dice del módulo JCS: «el artefacto más estable del repo»). `domain` cambia cada vez que la
+asamblea reforma su reglamento. Hacer que la pieza congelada dependa de la que cambia es
+estructuralmente al revés: cada reforma del reglamento habría arrastrado un rebuild de `crypto`. Y
+`crypto` es lo que se publica como verificador independiente (`@koinonia/verificar`, §9.2): si
+dependiera de `domain`, un tercero que quiera comprobar hashes tendría que arrastrar el motor de
+decisiones entero —con las reglas de gobernanza vigentes hoy— para verificar una historia de hace
+tres años, y las «~600 líneas auditables» que promete §9.2 serían falsas.
+
+**Resolución.** **`packages/crypto` NO depende de nadie**; es la hoja del grafo. **`packages/domain`
+puede depender de `@koinonia/crypto` y de nada más.** El orden total queda
+`crypto ← domain ← contracts ← {services/api, apps/web}`, verificado en CI por
+`scripts/check-domain-purity.mjs`. Corregido en ADR-0001 y documentado en `ARCHITECTURE.md`.
+
+## Hallazgo adicional — tres representaciones del `MemberId` en el corpus
+
+No venía en el informe de implementación; apareció al propagar E1 a todo el repositorio. El mismo
+valor de 128 bits estaba descrito de **tres** formas incompatibles:
+
+| Documento | Forma |
+|---|---|
+| `ADR-0006` (resolución **R1**) y `30-...` §A.0 | base32, 26 caracteres |
+| `10-...` §1.1 | 32 hex minúsculas |
+| `10-...` §3.1 (DDL) | columna `uuid` ⇒ 36 caracteres con guiones |
+
+La tercera es E1 y ya está resuelta. Las dos primeras seguían en conflicto después de E1, porque la
+resolución del arquitecto fija `CHAR(32)` con `CHECK (~ '^[0-9a-f]{32}$')` y base32 de 128 bits son 26
+caracteres. **Queda una sola forma: hex de 32, minúsculas.** El cambio es de codificación, no de
+sustancia —los mismos 128 bits del mismo CSPRNG— y se elige hex porque es la forma en que ya se expone
+todo hash en el borde HTTP, porque el `CHECK` es una expresión regular trivial, y porque el orden
+lexicográfico del hex minúsculo **coincide con el orden binario** de los 16 bytes que representa, de
+modo que el `ORDER BY aggregate_id` de PostgreSQL y el ordenamiento del verificador independiente no
+pueden divergir al construir el `heads_root` (`10-...` §6.4). Corregido en ADR-0006, `30-...` §A.0 y su
+tabla de generadores.
+
+> **Para el arquitecto:** si la intención era conservar base32, lo que hay que cambiar es la regla de
+> §1.1-bis y no ADR-0006 — pero una de las dos tiene que ceder, porque hoy se contradicen.
+
+## E9 — **PENDIENTE** · `prevHash` dentro del objeto (spec 30) contra prefijo binario (spec 10)
+
+No es una resolución: es una divergencia que el implementador **declaró en el propio código** y elevó
+sin cerrarla. Se registra aquí porque un documento puede señalar una contradicción con otro de rango
+superior pero **no puede resolverla** (regla operativa de C19).
+
+| Documento | Qué manda |
+|---|---|
+| `30-...` §A.7 | `hash = hash({eventId, decisionId, seq, occurredAt, actor, payload, prevHash})` — `prevHash` **como campo dentro del objeto JCS** |
+| `10-...` §2.1 y ADR-0005 | `eventHash = SHA256(0x02 ‖ prevHash(32 B) ‖ JCS_utf8(evento))` — `prevHash` como **prefijo binario de longitud fija**, y el objeto canónico **no lo incluye** |
+
+Los dos producen hashes distintos para el mismo evento. `packages/crypto` implementó la construcción
+de la spec 10 (`hashEvent` en `hash.ts`), y `packages/domain/src/events.ts` documenta la divergencia
+en su cabecera en vez de disimularla.
+
+**Recomendación del editor, sin autoridad para cerrarla:** manda la spec 10. Sus dos argumentos son
+técnicos y verificables —el octeto `0x02` de separación de dominio impide que un `eventHash` sea
+simultáneamente un nodo del árbol de Merkle, y un primer operando de 32 bytes exactos hace única la
+partición de la concatenación—, mientras que meter `prevHash` en el objeto obliga a decidir su
+encoding textual y a excluirlo del hash que él mismo forma. Además `packages/crypto` ya está
+congelado con esa construcción. **Decide el arquitecto**; hasta entonces, la spec 30 §A.7 sigue
+diciendo lo contrario y no se ha tocado.
+
+---
+
+# Segunda ronda — `packages/domain` contra la spec 30 (2026-08-21)
+
+`packages/domain` se implementó contra `30-decision-engine-spec.md` inmediatamente después de
+`crypto`, con el mismo método: escribir el motor y los property-based tests contra el documento y
+elevar cada punto donde el documento no permite escribir código. **Catorce errores.** El resultado
+son 229 pruebas en verde (345 con las 116 de `crypto`), 40 de ellas invariantes de la PARTE E.
+
+**Lo que confirma la segunda ronda.** La spec 30 es un documento mejor que la spec 10: 2 600 líneas,
+sesenta invariantes formalizados, siete anti-invariantes, una sección entera dedicada a las
+patologías conocidas de cada método de escrutinio y un apéndice con las 60 decisiones normativas
+numeradas. Razona la no monotonía de IRV con un contraejemplo numérico y advierte, textualmente, del
+peligro de «arreglar» el motor para satisfacer una propiedad que el método no tiene. Es, con
+diferencia, el documento más cuidado del corpus. **Y produjo más del doble de errores que la spec
+10.** La correlación entre calidad de un documento y número de errores que sobreviven a leerlo es,
+por lo visto, débil o inexistente; lo que predice los errores es la **cantidad de correspondencias**
+que el documento establece entre partes distintas de sí mismo, y la spec 30 establece muchísimas
+(catálogo de eventos ↔ máquina de estados ↔ métodos ↔ invariantes). Nueve de los catorce son
+exactamente eso: dos pasajes correctos por separado que no se sostienen juntos.
+
+**Cuatro patrones nuevos**, que no aparecían en la primera ronda:
+
+1. **El campo inerte** (E10). Un campo de configuración que existe, se documenta, se muestra en la
+   interfaz y **no puede cambiar ningún resultado**, porque otra parte de la misma fórmula lo anula.
+   No falla: hace nada, en silencio, para siempre. Sólo lo ve quien intenta escribir el test que
+   distingue las dos ramas y descubre que no hay dos ramas.
+2. **La regla que el motor no puede verificar** (E21, y en el fondo E17, E19 y E13). El documento
+   enuncia una condición —«sólo para actos constituyentes», «firmado por quien objetó», «con dos
+   firmas», «con registro de asistencia»— y no define el campo donde esa condición constaría. El
+   implementador honesto la escribe como comentario y sigue; el apurado la olvida. En ningún caso
+   la condición existe. **Una regla que el motor no puede verificar no es una regla, es un
+   comentario.**
+3. **El invariante insatisfacible** (E11, y su reverso E14). El documento exige a la vez `A` y `¬A`
+   en dos secciones que nunca se leen juntas. La salida barata es debilitar el invariante hasta que
+   pase, y esa salida no deja rastro: la suite queda verde y la comprobación desactivada.
+4. **El tipo que no compila** (E15). La spec 30 contiene unas cuarenta declaraciones TypeScript que
+   nadie ha pasado nunca por `tsc`. Son prosa con sintaxis de TypeScript. La corrección de fondo no
+   es arreglar una línea: es extraer los bloques normativos y typecheckearlos en CI.
+
+**La consecuencia operativa** es la misma de la primera ronda, reforzada: implementar temprano es
+una técnica de revisión, no una fase posterior. Y una segunda, específica de esta ronda: **escribir
+los invariantes es tan revelador como escribir el motor.** E11 y E14 los encontró el arnés de
+property-based testing, no el código de producción; E10 lo encontró la pregunta «¿qué generador
+distingue estas dos ramas?».
+
+## E10 — `abstentionBlocks: false`: un campo de configuración que no podía hacer nada
+
+**El conflicto.** B.4 definía `Aprueba ⟺ R = 0 ∧ (abstentionBlocks ? Ab = 0 : true) ∧ A = D` con
+`D = A + R + Ab`. Sustituyendo `R = 0` en `A = D` se obtiene `A = A + Ab`, es decir **`Ab = 0`
+siempre**, independientemente de `abstentionBlocks`.
+
+**Por qué importaba.** No es una imprecisión de redacción: es una **opción de gobernanza que la
+interfaz ofrece y el motor no entrega**. Un círculo que configurara «la abstención no rompe la
+unanimidad» —la lectura razonable cuando se pide unanimidad para un compromiso personal, donde
+abstenerse significa «no me sumo pero no bloqueo»— vería su decisión rechazada por una abstención,
+sin ningún mensaje que explicara por qué, y con el documento de su lado. Además el código de
+ejemplo reforzaba la ilusión: la línea `if (m.abstentionBlocks && abstain > 0) return false`
+sugiere que la rama importa, cuando la línea siguiente ya lo garantizaba por aritmética.
+
+**Resolución.** **Con `abstentionBlocks: false` el denominador pasa a `A + R`**: las abstenciones
+salen del denominador y el campo adquiere el efecto que su nombre promete. La comprobación
+explícita se elimina por subsumida. Queda alineado con `abstentionPolicy:'exclude'` de B.0.4 —mismo
+denominador, misma doctrina— y el caso degenerado sigue cerrado por B.0.d (`A=R=0, Ab=3 ⇒ D=0 ⇒` no
+aprueba). Con `base:'census'` el campo sigue siendo inerte, pero ahora como consecuencia declarada
+de lo que significa «unanimidad del censo entero», y la validación debe advertirlo.
+Aplicado en `30-...` §B.4 y en el apéndice.
+
+## E11 — `resultHash` imposible: A.6 e INV-01 no podían ser ciertos a la vez
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §A.6 | «hash del resultado completo **salvo este campo**» ⇒ la preimagen incluye `computedFromSeq` |
+| `30-...` §E.1, INV-01 | un voto inválido no cambia `outcome`, `turnout` ni `resultHash` «**salvo** `computedFromSeq`» |
+
+**El conflicto.** Añadir una papeleta inválida hace avanzar `computedFromSeq`. Si `computedFromSeq`
+entra en la preimagen, el `resultHash` cambia **siempre** que llega basura — y INV-01 exige que no
+cambie. El invariante era insatisfacible por construcción.
+
+**Por qué importaba.** Es el patrón peligroso: la salida barata es reescribir el test para que
+compare todo *menos* el `resultHash`, la suite queda verde y **nadie vuelve a mirar**. Pero el
+`resultHash` es la pieza sobre la que descansa A.8: «cualquier auditor puede recomputar desde los
+eventos y comparar; si difiere, `Annulled` automático». Con `computedFromSeq` dentro, dos
+recomputaciones honestas de la misma urna hechas en momentos distintos —una antes y otra después de
+que llegara un voto inválido, que por definición no cambia nada— dan hashes distintos, y el sistema
+se acusa a sí mismo de inconsistencia de escrutinio. Es, otra vez, **el falso positivo de
+manipulación**: el mismo modo de fallo que E1, en otro documento y por otra vía.
+
+**Resolución.** **`resultHash` excluye `resultHash` y `computedFromSeq`.** Es la única exclusión que
+hace ciertas las dos secciones. `resultHash` identifica el resultado, no el punto del log desde el
+que se calculó; `computedFromSeq` sigue en el objeto y sigue firmado dentro del `eventHash` de
+`ResultComputed`, así que no se pierde trazabilidad. Aplicado en `30-...` §A.6 e INV-01.
+
+## E12 — Dos semillas incompatibles: A.7 servía el sorteo que B.0.3 declara teatro
+
+| Documento | Qué manda |
+|---|---|
+| `30-...` §A.7 | `SeedRevealed { seed: string; commitment: Hash }` — semilla **única**, generada por el sistema |
+| `30-...` §B.0.3 y ADR-0024 | `seed = sha256(seedAdmin ‖ "|" ‖ beaconValue)` — semilla **compuesta**, con faro externo posterior al cierre |
+
+**El conflicto.** Los dos pasajes describen el mismo evento y son incompatibles.
+
+**Por qué importaba, y por qué manda B.0.3.** Una semilla que genera el servidor la elige de hecho
+quien opera el servidor. Como el padrón y las opciones son públicos, puede **moler** (*grinding*)
+millones de candidatas offline hasta encontrar la que produce el sorteo o el desempate que le
+conviene, y comprometerse a esa. El commit–reveal simple certifica que no cambió de opinión
+**después**; no certifica que no eligiera **antes**. La propia B.0.3 lo dice con todas las letras:
+sin la mezcla con un valor imposible de conocer en el instante del commit, «sorteo verificable» es
+**teatro criptográfico**. Lo grave es que un implementador que siguiera A.7 habría construido un
+sistema que *parece* verificable —hay commit, hay reveal, el `sha256` cuadra— y que no lo es, y
+habría pasado todos sus tests, incluido INV-57 tal como estaba redactado.
+
+**Resolución.** **Manda B.0.3.** `SeedRevealed` publica **ambas partes**: `seedAdmin` y
+`beaconValue`, más el `commitment` para que el verificador no tenga que ir a buscar el `configHash`.
+Corregido `30-...` §A.7; nota recíproca en §B.0.3 para que la resolución sea visible desde los dos
+lados (lección de C4 y E7).
+
+## E13 — `base:'present'` invocaba un evento inexistente, y no debía existir
+
+**El conflicto.** B.2.b exigía que `base:'present'` viniera con «un registro de asistencia con
+evento propio (`AttendanceRecorded`) cerrado ANTES de abrir la votación». **`AttendanceRecorded` no
+está en el catálogo de A.7.** El denominador `|asistentes registrados|` no era calculable: el
+escrutador tenía que dividir por un conjunto que el log no registra.
+
+**Por qué la resolución no es añadir el evento.** Un quórum basado en quién está físicamente
+presente en una sala **contradice el primer principio del proyecto**, *asynchronous-first*. La
+ventana de 72 h, el padrón congelado, la delegación con resolución al cierre y la regla «delegar es
+participar» (D.1.a) existen precisamente para que la voz de alguien no dependa de que pueda estar en
+un aula un martes a las 4 p.m. El evento que faltaba habría reintroducido por la puerta del
+denominador la desigualdad que toda la arquitectura desactiva, y con ventaja retórica: «2/3 de los
+presentes» suena a asamblea legítima mientras significa «2/3 de quienes tuvieron el privilegio de
+poder ir». Que el evento faltara es, visto así, la señal de que la opción nunca perteneció a este
+diseño — el catálogo de A.7 se escribió entero desde el modelo asincrónico y no tenía dónde poner la
+asistencia porque no hay sesión que atender.
+
+**Resolución.** **`base:'present'` se ELIMINA del MVP.** `ThresholdBase` queda en `'cast' | 'census'`.
+La opción se marca como **retirada**, con esa razón escrita, y queda anotado que si alguna vez vuelve
+deberá venir con (1) su evento en A.7, con régimen de congelación, actor y fila en A.8.1, y (2) una
+**justificación de gobernanza, no técnica** — un argumento sobre por qué la presencia física debe
+conferir un peso que la ausencia no confiere, en un instituto donde hay estudiantes que trabajan,
+que tienen personas a cargo o que no viven en Medellín. «Se puede implementar» no es esa
+justificación, y la decisión la toma la asamblea, no quien escribe el escrutador. Aplicado en
+`30-...` §A.3, §B.2, §B.2.b y en el apéndice.
+
+## E14 — INV-34 contaba mal el producto cartesiano: «6 × 17 = 102»
+
+**El conflicto.** INV-34 fija los generadores en «producto cartesiano completo `Estado × TipoEvento`
+(6 × 17 = 102 casos, exhaustivo, no aleatorio)». **A.7 lista 19 tipos de evento**, no 17.
+
+**Por qué importaba.** El número **es la condición de exhaustividad del test**. Una suite que
+declara «102 casos, exhaustivo» y recorre las constantes reales pasaría con 114 sin que nadie lo
+note; peor, alguien podría «cuadrar» el conteo excluyendo dos tipos del recorrido para que diera
+102. Y los dos tipos que faltaban en la cuenta de 17 son **justamente los dos que A.8.1 no ubicaba
+en ninguna fila** (`BallotVoided` y `DecisionDrafted`, ver E20), lo que indica que el 17 se contó
+sobre la tabla de transiciones en vez de sobre el catálogo: el error de conteo y el error de la
+tabla son el mismo error visto dos veces.
+
+**Resolución.** **6 × 19 = 114**, y **133** contando el estado previo a `Draft` —el del agregado que
+aún no existe, desde el cual `DecisionDrafted` es el único evento legal—. El invariante se prueba
+con `DECISION_EVENT_TYPES.length` y `LIFECYCLE_STATUSES.length` del propio motor, nunca con un
+literal escrito a mano, para que el conteo no pueda volver a divergir. Aplicado en `30-...` INV-34.
+
+## E15 — `ProofTable.rows` no compila: `readonly` sobre una unión de primitivos
+
+**El conflicto.** A.6 declaraba `readonly rows: readonly (readonly (string | number))[][]`. El
+modificador `readonly` de TypeScript **sólo se aplica a tipos de arreglo y tupla**;
+`readonly (string | number)` es una unión de primitivos y produce `error TS1354`.
+
+**Por qué importaba, más allá de la línea.** La spec 30 contiene unas **cuarenta** declaraciones
+TypeScript y ninguna ha pasado nunca por `tsc`. Son prosa con sintaxis de TypeScript, y el lector
+las lee como si fueran código verificado. Esta errata es benigna —falla al compilar, ruidosa,
+imposible de ignorar—; las peligrosas de esa misma clase son las que **sí** compilan y significan
+otra cosa.
+
+**Resolución.** `readonly (readonly (string | number)[])[]`: los paréntesis deben encerrar el `[]`
+que el `readonly` modifica, no la unión. **Corrección de fondo, pendiente de trabajo:** extraer los
+bloques `ts` normativos de la spec y typecheckearlos en CI, como ya se hace con la pureza del
+dominio. Aplicado en `30-...` §A.6.
+
+## E16 — La frontera del alta: la prosa decía una cosa y el invariante otra
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §A.2.1, DECISIÓN A.1 | «quien se matricula **después** del instante `frozenAt` no vota» ⇒ el alta simultánea queda **dentro** |
+| `30-...` §E.1, INV-03 | `enrolledAt ≥ frozenAt ⇒ m ∉ members` ⇒ el alta simultánea queda **fuera** |
+
+**El conflicto.** Un milisegundo, el de `enrolledAt === frozenAt`, en el que las dos reglas dan
+respuestas opuestas sobre si una persona vota.
+
+**Por qué no es un caso de laboratorio.** `frozenAt === DecisionOpened.occurredAt` (A.2) y las altas
+llevan el mismo reloj de servidor; en una jornada de matrícula la colisión de milisegundo tiene
+probabilidad nada despreciable. Y si el instante perteneciera a los dos lados, `censusSize`
+dependería del orden en que dos escrituras del mismo milisegundo llegan al store — exactamente el
+indeterminismo que A.9 cierra al prohibir ordenar por `occurredAt`. `N` es el denominador de todos
+los quórums: un `N` que depende de una carrera es un resultado que depende de una carrera.
+
+**Resolución.** **Manda el invariante: frontera semiabierta `enrolledAt < frozenAt ≤ withdrawnAt`.**
+Es además la convención que el documento ya usaba para la ventana de voto (D.3.b, `castAt <
+closesAt`), de modo que el motor queda con **una sola** regla de frontera. El extremo superior es
+simétrico: quien se retira **en** `frozenAt` sigue en el padrón, coherente con A.3. Los generadores
+deben producir `enrolledAt ∈ {frozenAt − 1, frozenAt, frozenAt + 1}` explícitamente, no esperar a
+que salga por azar. Corregida la prosa de A.1.
+
+## E17 — `ObjectionIntegrated` no tenía dónde constar la firma que B.3.b exige
+
+**El conflicto.** B.3.b define «integrar una objeción» con tres condiciones, y la tercera es que el
+evento esté **firmado por quien objetó**: «sin la firma del objetante, no hay integración: hay
+*modificación unilateral*». El payload de A.7 era `{ objectionId, newProposalVersionHash }`.
+**Ningún campo para la firma.**
+
+**Por qué importaba.** La condición más importante de la sección era, en el log, indistinguible de
+su ausencia. El motor no podía separar una integración legítima de aquello que la propia B.3.b
+identifica como «el abuso documentado más frecuente en implementaciones de sociocracia»: cambiarle
+una coma a la propuesta y declarar la objeción resuelta. INV-53 ya exigía exactamente esto —«ni
+considerar integrada una objeción sin la firma del objetante»— contra un tipo que lo hacía
+imposible de comprobar: un invariante que sólo podía escribirse como comentario.
+
+**Resolución.** Se añade **`signedBy: MemberId`** a `ObjectionIntegrated`, con precondición
+`signedBy === objeción.by`; sin ella el evento se rechaza y la objeción sigue viva. La válvula de
+escape de B.3.b (retirada tácita si el objetante no responde en `panelDeadline`) no se toca: sigue
+impidiendo el bloqueo por ausentismo. Aplicado en `30-...` §A.7 y §B.3.b.
+
+## E18 — `votes` en el evento equivocado: A.7 hacía votar la admisión
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §A.7 | `ObjectionAdmitted { objectionId, panel, votes }` · `ObjectionDismissed { objectionId, panel, motivation }` |
+| `30-...` §B.3.a | toda objeción **nace admitida**; sólo puede **desestimarse** por 2/3 del panel con motivación escrita |
+
+**Por qué importaba, más de lo que parece.** No es un campo mal colocado: es **la doctrina contraria
+escrita en el tipo**. B.3.a construye una presunción de validez y explica durante un párrafo por qué
+—la alternativa concentra en una persona el poder de anular disensos, y «en un instituto de
+filosofía, donde el prestigio académico es asimétrico, sería capturado en un semestre»—. Un
+implementador que leyera sólo A.7 habría construido un panel que **vota la admisión**, invirtiendo
+la carga de la prueba y devolviéndole al panel exactamente el poder que B.3.a le quita. Además el
+campo era incoherente consigo mismo: la admisión también se produce por **silencio** del panel
+vencido `panelDeadline`, caso en el que no hay votos que contar y `votes` no tendría valor posible.
+
+**Resolución.** **`votes` va en `ObjectionDismissed`.** La admisión es la presunción y no vota
+nadie; desestimar es lo que exige 2/3 del panel. Aplicado en `30-...` §A.7, con nota recíproca en
+§B.3.a.
+
+## E19 — `cause:'manual'` sin firmas: una puerta trasera que esquiva la PARTE D entera
+
+**El conflicto.** A.8.1 exige, para cerrar desde `Open`, «`now ≥ closesAt` ∨ cierre anticipado
+válido (D.4) ∨ **cierre manual con 2 firmas**». El payload de `DecisionClosed` era `{ at, cause }`.
+**No hay `signers`.**
+
+**Por qué esto no es una errata de tipos, sino un agujero de gobernanza.** `cause:'manual'` sin
+firmas permite cerrar la urna cuando alguien quiera, sin más autor que el `actor` del envelope, sin
+motivación y sin quórum de firmas. Es decir: **esquiva la PARTE D completa**. La ventana exclusiva
+de D.3, el régimen de prórrogas de D.2, y sobre todo las condiciones estrictas del cierre anticipado
+de D.4 —piso de 24 h, sólo `public-roll-call`, sólo métodos de umbral, sólo con irreversibilidad
+matemática demostrada, protegidas por INV-58 e INV-59— son cuatro páginas de razonamiento cuidadoso
+que un `cause:'manual'` sin requisitos vuelve opcionales. Cerrar a mano con el marcador a la vista
+es el ataque de «votación hasta que gane mi lado» ejecutado desde el otro extremo: en vez de
+reabrir hasta ganar, cerrar cuando vas ganando. A.8.2.1 prohíbe la reapertura con un párrafo
+explícito; la simétrica estaba abierta y era legal según los tipos.
+
+**Resolución.** Se añade **`signers?: readonly MemberId[]`** a `DecisionClosed`, **obligatorio ⟺
+`cause === 'manual'`**, con `signers.length ≥ 2`, sin repetidos, todos del círculo de garantías y
+ninguno igual al `actor` del evento. Aplicado en `30-...` §A.7 y §A.8.1. *(La prueba correspondiente
+ya existe: `packages/domain/test/props/log-invariants.test.ts`, «el cierre manual exige dos firmas;
+sin ellas sería la vía para esquivar D.4».)*
+
+## E20 — Dos de los 19 eventos no aparecían en la máquina de estados, y `DraftConfig` no existía
+
+**El conflicto.** A.8.1 lista las transiciones legales y A.8.2 establece que lo no listado es ilegal.
+`BallotVoided` y `DecisionDrafted` están en el catálogo de A.7 y **en ninguna fila** de A.8.1.
+Además `DecisionDrafted.draft: DraftConfig` referenciaba un tipo que el documento no define en
+ninguna parte.
+
+**Por qué importaba.** Por la regla de A.8.2, `DecisionDrafted` era **ilegal en todo estado**,
+incluido el único en que puede ocurrir: **ninguna decisión podía nacer**. Y `BallotVoided` quedaba
+sin estados permitidos, cuando A.2 lo describe con detalle como el acto excepcional que anula un
+voto —de modo que la spec definía cuidadosamente un evento que su propia máquina de estados
+rechazaba siempre.
+
+**Resolución.**
+- **`DecisionDrafted` crea el agregado.** Es el único evento sin estado de origen:
+  `apply(undefined, DecisionDrafted) = Draft`, con `seq === 1`, `prevHash` de 64 ceros y ningún
+  evento previo para ese `decisionId`; con cualquier estado definido, `IllegalTransitionError`. De
+  aquí sale el séptimo estado del conteo de E14.
+- **`BallotVoided` sólo es legal en `Open`.** Después del cierre no puede anularse una papeleta:
+  INV-35 exige que `effectiveBallots` sea idéntico antes y después de `DecisionClosed`, y anular una
+  papeleta con el marcador ya conocido **es escoger el resultado**. Si el vicio se descubre tras el
+  cierre, la vía es `DecisionAnnulled` —acto político visible y recurrible—, no la anulación
+  quirúrgica del voto que estorba. Los tres requisitos que A.2 ya exigía (motivación escrita, dos
+  firmas del círculo de garantías, constancia en el log) se trasladan tal cual a la precondición.
+- **`DraftConfig` queda definido** como la configuración **aún mutable** previa a la congelación:
+  `DecisionConfig` con todo opcional salvo `decisionId` y `proposalId`, y **sin** `electorate`,
+  `configHash` ni `engineVersion`. No lleva `configHash` porque hashear un borrador mutable sería
+  prometer inmutabilidad sobre algo que cambia: la identidad criptográfica de las reglas nace en
+  `DecisionOpened`, no antes.
+
+Aplicado en `30-...` §A.7 y §A.8.1.
+
+## E21 — Dos reglas inverificables: «sólo para actos constituyentes» y «con autorización previa»
+
+| Documento | Qué enunciaba | Campo donde constaría |
+|---|---|---|
+| `30-...` §B.2.a | `base:'census'` **sólo** para reformar el reglamento, revocar un mandato o disolver un círculo; «el motor rechaza» lo demás | ninguno |
+| `30-...` §B.4.a | `unanimity` deshabilitada por defecto, exige **decisión previa del círculo** que la autorice para un caso concreto | ninguno |
+
+**El conflicto.** «El motor rechaza» era falso, porque el motor no tenía **cómo**. `DecisionMethod`
+no distinguía qué acto era ni si había autorización, y la única lectura implementable de «sólo se
+permite para X» sobre un tipo que no distingue X es «se permite siempre».
+
+**Por qué importaba.** Los dos frenos protegen las dos configuraciones más peligrosas del documento.
+`base:'census'` es, en palabras de la propia B.2, «un derecho de veto por inasistencia»: quien
+quiere bloquear no tiene que hacer nada. `unanimity` tiene la patología que B.4 enumera en tres
+puntos, empezando por el poder dictatorial de la última persona en votar. Que ambos quedaran
+disponibles para cualquier configuración —con una advertencia en la interfaz como única barrera— es
+justo lo contrario de lo que las dos decisiones dicen establecer. Y «deshabilitada por defecto» se
+degradaba a una casilla, es decir, a nada.
+
+**Resolución.** Se añaden los campos:
+- **`constituentAct?: ConstituentAct`** en `supermajority`, **obligatorio ⟺ `base === 'census'`**,
+  con exactamente los tres valores de B.2.a y ninguno más.
+- **`unanimityAuthorizedBy: UnanimityAuthorization`** en `unanimity`, **obligatorio**, con
+  `authorizingDecisionId`, `authorizingConfigHash` y `scope`. La validación exige que la decisión
+  autorizante esté ratificada, que su método sea `supermajority` y que su `scope` coincida con el
+  `proposalId` de la decisión actual. Se ata al `configHash` y no sólo al id porque el id permitiría
+  autorizar una unanimidad con unas reglas y ejercerla bajo otras; y se exige `scope` porque una
+  autorización sin alcance sería una llave maestra permanente, que es lo contrario de «autorizada
+  para un caso concreto».
+
+Ambos entran en `configHash`, de modo que la justificación queda anclada criptográficamente y es
+recurrible en la ventana de impugnación. **La regla general que deja este error: una regla que el
+motor no puede verificar no es una regla, es un comentario.** Aplicado en `30-...` §A.3, §B.2.a y
+§B.4.a.
+
+## E22 — El milisegundo del cierre: D.2 contra A.8.2.5
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §D.2 | el tick emite exactamente uno de `{WindowExtended, DecisionClosed}` y «**ambos pueden llevar `occurredAt === closesAt`**» |
+| `30-...` §A.8.2.5 | prohibido `WindowExtended` «emitido **después** de `closesAt`» ⇒ en `closesAt` exacto, permitido |
+| `30-...` §A.8.1 | `WindowExtended` exige ser emitido «**antes** de `closesAt`» ⇒ en `closesAt` exacto, prohibido |
+
+**El conflicto.** Tres pasajes y tres respuestas distintas para el mismo instante — el único instante
+que importa en toda la PARTE D.
+
+**Por qué la regla anterior no servía.** Si en `closesAt` fueran legales los dos eventos, lo único
+que impediría una decisión simultáneamente cerrada y prorrogada sería la **serialización del
+store**: una propiedad del runtime (`UNIQUE(decision_id, seq)` más reintento optimista), no del
+dominio. Pero `replay` es una **función pura sobre el log**: recibe eventos, no transacciones. Un
+log con ambos eventos en `closesAt` es un log que el motor tendría que aceptar o rechazar por sí
+mismo, y con la regla anterior no tenía criterio. INV-38 («el tick emite exactamente uno») era, tal
+como estaba, un invariante sobre la base de datos disfrazado de invariante del dominio — y por tanto
+no comprobable por un auditor externo que sólo tiene el log.
+
+**Resolución.** **El tick de cierre lleva `occurredAt = closesAt` exactamente, y `WindowExtended` es
+ilegal a partir de ese instante inclusive** (legal ⟺ `occurredAt < closesAt`).
+
+*El costo, declarado:* D.2 tenía un argumento real —evaluar el quórum antes de `closesAt` es
+evaluarlo antes de que lleguen los últimos votos—. Se acepta, y es menor de lo que parece: si el
+tick de prórroga se dispara en `closesAt − δ` y en esos `δ` milisegundos llegan los votos que
+faltaban, la consecuencia es una ventana más larga de lo necesario y una segunda evaluación del
+quórum que la cumplirá — **más participación, no un resultado distinto**. La prórroga no puede
+tumbar nada, sólo alargar. La asimetría es deliberada: prorrogar de más cuesta 24 h; cerrar y
+prorrogar a la vez cuesta la reproducibilidad del log. Queda además una sola frontera en todo el
+documento —`closesAt` pertenece siempre al después, igual que en D.3.b— y `δ` es un parámetro de
+operación, no del dominio. Aplicado en `30-...` §D.2, §A.8.1 y §A.8.2.5.
+
+## E23 — `turnout.fraction`: ¿`C/N` o `|E|/N`? Con delegación no es lo mismo
+
+**El conflicto.** A.6 declara `turnout: { cast, census, fraction }` sin decir **de qué** es
+`fraction`. Con `cast` al lado, la lectura natural es `C/N`; D.1.1 define la participación como
+`|E|/N` (miembros representados sobre censo). Sin delegación las dos coinciden y la ambigüedad es
+invisible.
+
+**Por qué importaba.** Con delegación divergen, y divergen justo donde más duele: **12 papeletas que
+representan a 280 personas dan 4 % por una fórmula y 93 % por la otra**. Si `turnout.fraction` fuera
+`C/N`, el resultado publicaría una participación distinta de la que decidió la validez de esa misma
+decisión, y nadie sabría cuál de las dos citar en el acta. Es el material exacto de una disputa
+post-electoral, que es lo que B.1.a dice que hay que eliminar fijando el denominador de antemano.
+
+**Resolución.** **`fraction = |E|/N`**, la misma cifra del quórum de D.1.1 — y el resultado publica
+**además `cast` y `represented` por separado**. «12 personas votaron» y «280 quedaron
+representadas» son dos hechos políticos distintos y los dos deben ser visibles; colapsarlos en una
+sola cifra, cualquiera de las dos, esconde exactamente el dato que la PARTE C obliga a vigilar —la
+concentración de voz— y lo esconde de forma que sólo lo recupera quien reprocese el log. La `Proof`
+debe enunciar los dos. Aplicado en `30-...` §A.6.
+
+---
+
 ## Resumen del estado
 
 | # | Contradicción | Estado |
@@ -357,3 +1073,70 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 | C18 | Modelos de amenaza incompatibles | **Pendiente** — el hueco más grande del corpus |
 | C19 | Sin regla de precedencia entre documentos | Resuelta (tabla de precedencia) |
 | C20 | Delegación contra desconcentración | Tensión declarada, no contradicción |
+
+**Parte 3, primera ronda — errores detectados por la implementación de `packages/crypto` contra la
+spec 10 (2026-08-21).** Los ocho son **resoluciones del arquitecto** y están aplicados en el punto
+exacto donde vivía el error.
+
+| # | Error | Dónde vivía | Estado |
+|---|---|---|---|
+| E1 | `actor`/`aggregateId` en columna `uuid` ⇒ falso positivo de corrupción | `10-...` §1.1 vs §3.1 | **Resuelta** — `char(32)` + **regla de tipos del ledger** (§1.1-bis) |
+| E2 | `SUBPROOF` sin caso base para `m = 0`; devolvía basura sin lanzar | `10-...` §7.2 | **Resuelta** — prueba vacía, como RFC 6962 |
+| E3 | `Math.clz32` de 32 bits sobre un dominio declarado `bigint` | `10-...` §6.3, §7.2 | **Resuelta** — bucle explícito sobre `bigint` |
+| E4 | Dos convenciones de hoja; el código reabría el ataque que la sección cierra | `10-...` §6.2 vs §6.3 | **Resuelta** — la API pública recibe entradas crudas |
+| E5 | La espina `…-00000000ffff` no es un UUID v4, y §1.1 exigía v4 | `10-...` §1.1 vs §2.3 | **Resuelta** — espina `000…001`, sin UUID en el ledger |
+| E6 | `checkpoint_hash` indefinido para el primer checkpoint | `10-...` §6.4 | **Resuelta** — `prevCheckpoint` se **omite** |
+| E7 | Orden UTF-8 (ADR) contra orden UTF-16 (spec) | ADR-0004 vs `10-...` §1.3.c | **Resuelta** — manda JCS: UTF-16 |
+| E8 | Dirección de dependencia `crypto`↔`domain` invertida | ADR-0001 | **Resuelta** — `crypto` no depende de nadie |
+| E1′ | Cinco columnas más violaban la regla de tipos (`payload`, `occurred_at`, `issued_at`, `choice`, `receipt`) | `10-...`, `11-...` | **Resuelta** — halladas al aplicar §1.1-bis al corpus |
+| E1″ | Tres representaciones del `MemberId`: base32 / hex / `uuid` | ADR-0006, `30-...`, `10-...` | **Resuelta** — hex de 32; **confirmar con el arquitecto** |
+| E9 | `prevHash` dentro del objeto contra prefijo binario de 32 B | `30-...` §A.7 vs `10-...` §2.1 | **Pendiente** — decide el arquitecto; `crypto` implementó la spec 10 |
+
+**Parte 3, segunda ronda — errores detectados por la implementación de `packages/domain` contra la
+spec 30 (2026-08-21).** Los catorce son **resoluciones del arquitecto**, todos dentro de la spec 30,
+todos aplicados en el pasaje exacto con su nota «Corregido tras la implementación».
+
+| # | Error | Dónde vivía | Estado |
+|---|---|---|---|
+| E10 | `abstentionBlocks:false` inerte: `D = A+R+Ab` con `A=D` fuerza `Ab=0` siempre | `30-...` §B.4 | **Resuelta** — con `false` el denominador pasa a `A+R` |
+| E11 | `resultHash` imposible: A.6 lo incluye `computedFromSeq`, INV-01 exige que no cambie | `30-...` §A.6 vs INV-01 | **Resuelta** — excluye `resultHash` **y** `computedFromSeq` |
+| E12 | Semilla única del sistema contra semilla compuesta con faro externo | `30-...` §A.7 vs §B.0.3 | **Resuelta** — manda B.0.3; `SeedRevealed` publica `seedAdmin` **y** `beaconValue` |
+| E13 | `base:'present'` invocaba `AttendanceRecorded`, evento inexistente | `30-...` §B.2.b vs §A.7 | **Resuelta** — `'present'` **retirado del MVP**: contradice *asynchronous-first* |
+| E14 | «6 × 17 = 102 casos» con 19 tipos de evento en el catálogo | `30-...` INV-34 | **Resuelta** — 6 × 19 = **114**; **133** con el estado previo a `Draft` |
+| E15 | `ProofTable.rows`: `readonly` sobre una unión de primitivos ⇒ TS1354 | `30-...` §A.6 | **Resuelta** — `readonly (readonly (string \| number)[])[]` |
+| E16 | Frontera del alta: «después de `frozenAt`» (prosa) contra `≥` (invariante) | `30-...` §A.1 vs INV-03 | **Resuelta** — manda el invariante: `enrolledAt < frozenAt ≤ withdrawnAt` |
+| E17 | B.3.b exige la firma del objetante; `ObjectionIntegrated` no tenía campo | `30-...` §A.7 vs §B.3.b | **Resuelta** — `signedBy: MemberId` |
+| E18 | `votes` en `ObjectionAdmitted` en vez de `ObjectionDismissed` | `30-...` §A.7 vs §B.3.a | **Resuelta** — `votes` va en `ObjectionDismissed`; la admisión no se vota |
+| E19 | Cierre manual «con 2 firmas» sin campo donde ponerlas | `30-...` §A.8.1 vs §A.7 | **Resuelta** — `signers` obligatorio ⟺ `cause:'manual'`; era **agujero de gobernanza**, no errata de tipos |
+| E20 | `BallotVoided` y `DecisionDrafted` sin fila en A.8.1; `DraftConfig` indefinido | `30-...` §A.8.1 vs §A.7 | **Resuelta** — `BallotVoided` sólo en `Open`; `DecisionDrafted` crea el agregado; `DraftConfig` definido |
+| E21 | «sólo actos constituyentes» y «autorización previa» sin campos que lo acrediten | `30-...` §B.2.a, §B.4.a | **Resuelta** — `constituentAct` y `unanimityAuthorizedBy`, dentro de `configHash` |
+| E22 | `WindowExtended` y el instante exacto del cierre: tres reglas distintas | `30-...` §D.2 vs §A.8.1 vs §A.8.2.5 | **Resuelta** — tick con `occurredAt = closesAt`; prórroga ilegal desde ese instante **inclusive** |
+| E23 | `turnout.fraction` sin definir: `C/N` o `\|E\|/N`; con delegación difieren | `30-...` §A.6 | **Resuelta** — `\|E\|/N`, y se publican `cast` y `represented` por separado |
+
+### El dato acumulado
+
+**Entre las dos especificaciones, la implementación ha encontrado ya unos 20 errores que ninguna
+revisión por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un
+eslogan:
+
+| | Spec 10 (`crypto`) | Spec 30 (`domain`) | Total |
+|---|---|---|---|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | **20** |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | 1 |
+| **Entradas de la parte 3** | 11 | 14 | **25** |
+
+Las dos especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
+Ninguno de los 20 salió de esa revisión: **los 20 salieron de escribir el código y los tests**. Y la
+segunda ronda invierte la intuición cómoda de que un documento mejor deja menos errores: la spec 30
+—2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes, apéndice de decisiones numeradas— es
+el documento más cuidado del corpus y produjo **más del doble** que la spec 10.
+
+Lo que predice los errores no es el descuido sino la **densidad de correspondencias internas**: la
+spec 30 ata catálogo de eventos ↔ máquina de estados ↔ métodos ↔ invariantes, y nueve de sus catorce
+errores son dos pasajes correctos por separado que no se sostienen juntos. Leer verifica argumentos;
+la correspondencia entre un argumento y las cuatro líneas de tipos que tiene debajo sólo se verifica
+ejecutándola. **Esa es la razón por la que la estrategia de pruebas de este proyecto
+(`docs/TESTING.md`) trata implementar y escribir invariantes como parte de la revisión, y no como
+una fase posterior a ella.**

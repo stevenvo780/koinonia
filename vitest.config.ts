@@ -7,6 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@koinonia/crypto': resolve('./packages/crypto/src/index.ts'),
+      '@koinonia/anchor': resolve('./packages/anchor/src/index.ts'),
+      '@koinonia/verificar': resolve('./packages/verifier-cli/src/index.ts'),
       '@koinonia/domain': resolve('./packages/domain/src/index.ts'),
       '@koinonia/contracts': resolve('./packages/contracts/src/index.ts'),
       '@koinonia/api': resolve('./services/api/src/index.ts'),

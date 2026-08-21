@@ -109,7 +109,7 @@ export function cmpFraction(a: Fraction, b: Fraction): -1 | 0 | 1 {
 ```
 
 > **DECISIÓN A.0:** `MemberId` es un **valor aleatorio de 128 bits** generado con CSPRNG
-> (`crypto.randomBytes(16)`, base32) en el alta, **sin ninguna relación derivable** con el
+> (`crypto.randomBytes(16)`, **32 hex minúsculas**, `^[0-9a-f]{32}$`) en el alta, **sin ninguna relación derivable** con el
 > documento de identidad, el correo ni ningún otro dato personal. Se genera y se guarda en el
 > PII Vault antes de emitir cualquier evento; el motor **nunca** ve datos personales.
 > *Razón:* permite publicar el padrón y el log completo sin violar la Ley 1581 de 2012 (habeas
@@ -123,6 +123,13 @@ export function cmpFraction(a: Fraction, b: Fraction): -1 | 0 | 1 {
 > > `docs/adr/0006-memberid-aleatorio-de-128-bits.md` y `docs/research/00-contradicciones-resueltas.md`.
 > > El HMAC sobre el documento sobrevive únicamente como `enrollmentTag` **dentro del PII Vault**,
 > > para detectar altas duplicadas, y se borra con el registro; nunca sale de la bóveda.
+>
+> > **Corregido tras la implementación (2026-08-21):** la codificación pasa de **base32 (26 chars)** a
+> > **32 hex minúsculas** (`^[0-9a-f]{32}$`), en columnas `char(32)`. Son los mismos 128 bits del mismo
+> > CSPRNG; cambia el alfabeto y nada más. El corpus tenía **tres** representaciones del mismo valor
+> > —base32 de 26, hex de 32 y una columna `uuid` de 36— y la de 36 rompía la preimagen del
+> > `eventHash` al rehidratar el evento desde PostgreSQL. Queda una sola forma, fijada por la **regla
+> > de tipos del ledger** (`10-ledger-inmutable.md` §1.1-bis) y por ADR-0006.
 
 ### A.1.1 Canonicalización y hashing
 
@@ -134,8 +141,16 @@ hash(x) = sha256Hex( utf8( jcs( x ) ) )   // jcs = JSON Canonicalization Scheme,
 
 Reglas adicionales obligatorias **antes** de aplicar JCS:
 1. Toda colección que represente un conjunto se serializa como **arreglo ordenado
-   ascendentemente por su clave**, con comparación **byte a byte del UTF-8** (`<` sobre code
-   points), no `localeCompare`.
+   ascendentemente por su clave**, con comparación **por unidades de código UTF-16** —el operador
+   `<` de JavaScript sobre cadenas, tal cual—, no `localeCompare`.
+
+   > **Corregido tras la implementación (2026-08-21):** decía «comparación **byte a byte del UTF-8**
+   > (`<` sobre code points)». Es incorrecto: el `<` de JavaScript compara unidades de código UTF-16,
+   > no code points ni bytes, y las tres cosas divergen fuera del plano básico. Contradecía además a
+   > `10-ledger-inmutable.md` §1.3.c y a ADR-0004, que mandan UTF-16. **Manda JCS (RFC 8785): orden
+   > por unidades de código UTF-16.** El caso que lo demuestra: `'😂' < '\ufb33'` es **verdadero** en
+   > UTF-16 (`0xD83D < 0xFB33`) y **falso** comparando bytes UTF-8 (`F0 9F 98 82` > `EF AC B3`). Con
+   > un emoji en una clave, las dos reglas producen hashes distintos. Ver ADR-0004.
 2. Ningún campo `undefined`; ausencia se representa omitiendo la clave.
 3. Ningún `number` con parte fraccionaria en estructuras hasheadas; las fracciones van como
    `{ num: "2", den: "3" }` (bigint serializado como string decimal).
@@ -165,7 +180,7 @@ export interface Electorate {
   readonly snapshotId: Hash;              // == rollHash, sirve de identidad
   /** Instante EXACTO de congelación. Coincide con DecisionOpened.occurredAt. */
   readonly frozenAt: Instant;
-  /** Ordenada ascendentemente por memberId (orden byte a byte). Sin duplicados. */
+  /** Ordenada ascendentemente por memberId (unidades de código UTF-16; el `<` de JS). Sin duplicados. */
   readonly members: readonly EligibleMember[];
   readonly censusSize: number;            // === members.length
   /** hash({ frozenAt, registryVersion, members }) */
@@ -180,8 +195,22 @@ export interface Electorate {
 ### A.2.1 Quién entra y quién sale
 
 > **DECISIÓN A.1 — El padrón se congela en la transición `Draft → Open` y es inmutable.**
-> Quien se matricula **después** del instante `frozenAt` **no vota** en esa decisión, aunque la
-> ventana siga abierta.
+> Quien se matricula **en el instante `frozenAt` o después** **no vota** en esa decisión, aunque la
+> ventana siga abierta. La frontera es **semiabierta**: se pertenece al padrón ⟺
+> `enrolledAt < frozenAt ≤ withdrawnAt`.
+>
+> > **Corregido tras la implementación (2026-08-21):** la prosa decía «quien se matricula **después**
+> > del instante `frozenAt`», que deja **dentro** el alta simultánea (`enrolledAt === frozenAt`),
+> > mientras INV-03 la formaliza con `enrolledAt ≥ frozenAt ⇒ fuera`, que la deja **fuera**. **Manda
+> > el invariante.** *Razones:* (a) `frozenAt === DecisionOpened.occurredAt` y las altas llevan el
+> > mismo reloj de servidor, así que la colisión de milisegundo es un caso real, no de laboratorio;
+> > (b) si el instante de congelación perteneciera a los dos lados, `censusSize` dependería del orden
+> > en que dos escrituras del mismo milisegundo llegan al store, que es exactamente el indeterminismo
+> > que A.9 cierra al prohibir ordenar por `occurredAt`; (c) el intervalo semiabierto es ya la
+> > convención del documento para la ventana de voto (D.3.b, `castAt < closesAt`) y para el cierre
+> > sin gracia (D.3.d), y tener **una sola** regla de frontera en todo el motor evita tener que
+> > recordar cuál aplica en cada sitio. El extremo superior es simétrico: quien se retira **en**
+> > `frozenAt` sigue en el padrón, coherente con A.3 (permanece en `N`).
 >
 > *Razón (tres, independientes):*
 > (a) **Denominadores estables.** Quórum, supermayoría sobre censo y el cap de concentración se
@@ -230,8 +259,24 @@ export type AbstentionPolicy =
 
 export type ThresholdBase =
   | 'cast'      // sobre papeletas computables (V)
-  | 'census'    // sobre el censo congelado (N)
-  | 'present';  // sobre quienes participaron de la deliberación sincrónica (requiere registro)
+  | 'census';   // sobre el censo congelado (N)
+  // 'present' — RETIRADO DEL MVP (ver B.2.b). No es una errata: contradice el primer principio.
+
+/** Los tres únicos actos constituyentes que habilitan `base:'census'` (B.2.a). */
+export type ConstituentAct =
+  | 'reform-student-charter'   // reformar el reglamento del estamento estudiantil
+  | 'revoke-representative'    // revocar el mandato de un representante
+  | 'dissolve-circle';         // disolver un círculo
+
+/** Autorización previa del círculo para habilitar `unanimity` en un caso concreto (B.4.a). */
+export interface UnanimityAuthorization {
+  /** Decisión —con método `supermajority`— que autorizó el uso de unanimidad. Ya ratificada. */
+  readonly authorizingDecisionId: DecisionId;
+  /** `configHash` de esa decisión: ata la autorización a unas reglas, no a un número de acta. */
+  readonly authorizingConfigHash: Hash;
+  /** Alcance declarado. Debe coincidir con el `proposalId` de ESTA decisión. */
+  readonly scope: ProposalId;
+}
 
 export interface TieBreakPolicy {
   /** Cascada ordenada. Se evalúa en orden; el primero que discrimina, decide. */
@@ -266,11 +311,16 @@ export type DecisionMethod =
       readonly strict: boolean;                   // true ⇒ '>' ; false ⇒ '≥'
       readonly base: ThresholdBase;
       readonly abstentionPolicy: AbstentionPolicy;
+      /** Obligatorio ⟺ `base === 'census'`. Cuál de los tres actos constituyentes es (B.2.a). */
+      readonly constituentAct?: ConstituentAct;
       readonly tieBreak: TieBreakPolicy; }
 
   | { readonly kind: 'unanimity';
       readonly base: Extract<ThresholdBase, 'cast' | 'census'>;
-      readonly abstentionBlocks: boolean; }       // ¿la abstención rompe la unanimidad?
+      /** ¿la abstención rompe la unanimidad? `false` ⇒ sale del denominador (B.4). */
+      readonly abstentionBlocks: boolean;
+      /** OBLIGATORIO. Sin autorización previa del círculo, la configuración se rechaza (B.4.a). */
+      readonly unanimityAuthorizedBy: UnanimityAuthorization; }
 
   | { readonly kind: 'sociocratic-consent';
       readonly maxRounds: number;                 // ≥1, default 3
@@ -307,6 +357,19 @@ export type DecisionMethod =
       readonly allocation: 'proportional' | 'equal';
       readonly seedCommitment: Hash; };           // commit publicado ANTES de abrir
 ```
+
+> **Corregido tras la implementación (2026-08-21):** tres cambios en este bloque.
+> (i) `ThresholdBase` pierde `'present'`, retirado del MVP por B.2.b (ver allí la razón, que es de
+> gobernanza y no de tipos).
+> (ii) `supermajority` gana `constituentAct?` y `unanimity` gana `unanimityAuthorizedBy`. B.2.a y
+> B.4.a **enunciaban** restricciones —«sólo para actos constituyentes», «con autorización previa del
+> círculo»— sobre campos que no existían: el motor no tenía dónde leer si el acto era constituyente
+> ni si el círculo había autorizado, de modo que la validación de configuración no podía hacer otra
+> cosa que aceptar. *Una regla que el motor no puede verificar no es una regla, es un comentario.*
+> Con los campos, `validateDecisionConfig` rechaza `base:'census'` sin `constituentAct` y
+> `unanimity` sin `unanimityAuthorizedBy`, y ambos entran en `configHash`, así que la justificación
+> queda anclada criptográficamente a las reglas del juego y es auditable después.
+> (iii) `abstentionBlocks` deja de ser un campo inerte: ver B.4.
 
 ## A.4 `Ballot` — papeleta polimórfica
 
@@ -487,7 +550,7 @@ export interface Proof {
 export interface ProofTable {
   readonly title: string;
   readonly columns: readonly string[];
-  readonly rows: readonly (readonly (string | number))[][];
+  readonly rows: readonly (readonly (string | number)[])[];
 }
 
 export interface DecisionResult {
@@ -497,14 +560,60 @@ export interface DecisionResult {
   readonly engineVersion: string;
   readonly computedFromSeq: number;          // último seq incluido
   readonly outcome: Outcome;
-  readonly turnout: { readonly cast: number; readonly census: number; readonly fraction: Fraction };
+  readonly turnout: {
+    /** Papeletas válidas emitidas (C). Personas que tocaron la aplicación. */
+    readonly cast: number;
+    /** Miembros REPRESENTADOS (|E|): votantes directos + delegantes con cadena terminada en voto. */
+    readonly represented: number;
+    readonly census: number;
+    /** SIEMPRE |E|/N (`represented / census`). Es la misma cifra del quórum de D.1.1. */
+    readonly fraction: Fraction;
+  };
   readonly weights: { readonly totalWeight: number; readonly hhi: Fraction; readonly gini: Fraction };
   readonly quorumCheck: { readonly passed: boolean; readonly detail: Readonly<Record<string, boolean>> };
   readonly proof: Proof;
-  /** hash del resultado completo salvo este campo. Se ancla en el evento ResultComputed. */
+  /** hash del resultado completo salvo `resultHash` y `computedFromSeq`. Se ancla en ResultComputed. */
   readonly resultHash: Hash;
 }
 ```
+
+> **Corregido tras la implementación (2026-08-21) — `ProofTable.rows` no compilaba.** Decía
+> `readonly (readonly (string | number))[][]`. El modificador `readonly` de TypeScript sólo se
+> aplica a tipos de **arreglo y tupla**, y `readonly (string | number)` es una unión de primitivos:
+> `error TS1354`. La forma correcta —arreglo de solo lectura de filas de solo lectura— es
+> **`readonly (readonly (string | number)[])[]`**: los paréntesis tienen que encerrar el `[]` que el
+> `readonly` modifica, no la unión. Es una errata mecánica, pero conviene registrar de dónde sale:
+> el tipo se escribió a mano en un bloque que nadie compiló, y este documento contiene ~40 bloques
+> `ts` en la misma condición. Todo bloque de código normativo debería extraerse y typecheckearse en
+> CI; mientras no se haga, los tipos de la spec son prosa con sintaxis de TypeScript.
+
+> **Corregido tras la implementación (2026-08-21) — `turnout.fraction` es `|E|/N`, y `cast` y
+> `represented` se publican por separado.** El documento no decía si `fraction` era `C/N`
+> (papeletas sobre censo) o `|E|/N` (representados sobre censo). Sin delegación las dos coinciden y
+> la ambigüedad es invisible; **con** delegación divergen, y divergen justo cuando más importa: 12
+> papeletas que representan a 280 personas dan 4 % por una fórmula y 93 % por la otra. **Manda
+> `|E|/N`**, que es la fórmula que D.1.1 ya usaba para el quórum: si `turnout.fraction` fuera `C/N`,
+> el resultado publicaría una participación distinta de la que decidió la validez de esa misma
+> decisión, y nadie sabría cuál de las dos citar en el acta.
+> El tipo gana además `represented`, porque `cast` por sí solo dejaba de ser recuperable desde el
+> resultado. *Razón:* «12 personas votaron; 280 quedaron representadas» son dos hechos políticos
+> distintos y ambos deben ser visibles. Colapsarlos en una sola cifra —cualquiera de las dos—
+> esconde exactamente el dato que la PARTE C obliga a vigilar (concentración de voz), y lo esconde
+> de forma que sólo lo puede recuperar quien reprocese el log. La `Proof` debe enunciar los dos.
+
+> **Corregido tras la implementación (2026-08-21) — qué excluye exactamente `resultHash`.** Decía
+> «hash del resultado completo salvo este campo», es decir, salvo `resultHash`. Pero
+> `computedFromSeq` está **dentro** del objeto, e INV-01 exige que un voto inválido no cambie el
+> resultado «salvo `computedFromSeq`»: al añadir el voto inválido, `computedFromSeq` avanza, y si
+> entrara en la preimagen el `resultHash` cambiaría **siempre**, con lo que INV-01 sería
+> insatisfacible por construcción y A.6 e INV-01 no podrían ser ciertos a la vez.
+> **`resultHash` excluye `resultHash` y `computedFromSeq`.** Es la única exclusión que hace ciertas
+> las dos cosas. *Consecuencia buscada:* `resultHash` identifica **el resultado**, no el punto del
+> log desde el que se calculó; dos escrutinios de la misma urna hechos en momentos distintos —uno
+> antes y otro después de que llegara basura rechazada— producen el mismo `resultHash`, que es
+> precisamente lo que hace verificable la recomputación de A.8. `computedFromSeq` sigue en el objeto
+> y sigue viajando firmado dentro del `eventHash` de `ResultComputed`, así que no se pierde
+> trazabilidad: se pierde sólo su capacidad de contaminar la identidad del resultado.
 
 > **DECISIÓN A.8 — El resultado es un dato derivado, no una fuente de verdad.** `ResultComputed`
 > almacena `resultHash`, y cualquier auditor puede recomputar desde los eventos y comparar. Si
@@ -535,19 +644,72 @@ export type DecisionEventPayload =
   | { readonly type: 'DelegationGranted'; readonly delegation: Delegation }
   | { readonly type: 'DelegationRevoked'; readonly delegationId: DelegationId; readonly at: Instant }
   | { readonly type: 'ObjectionRaised';   readonly objection: Objection; readonly by: MemberId }
-  | { readonly type: 'ObjectionAdmitted'; readonly objectionId: string; readonly panel: readonly MemberId[]; readonly votes: number }
-  | { readonly type: 'ObjectionDismissed';readonly objectionId: string; readonly panel: readonly MemberId[]; readonly motivation: string }
-  | { readonly type: 'ObjectionIntegrated'; readonly objectionId: string; readonly newProposalVersionHash: Hash }
+  | { readonly type: 'ObjectionAdmitted'; readonly objectionId: string; readonly panel: readonly MemberId[] }
+  | { readonly type: 'ObjectionDismissed';readonly objectionId: string; readonly panel: readonly MemberId[]; readonly votes: number; readonly motivation: string }
+  | { readonly type: 'ObjectionIntegrated'; readonly objectionId: string; readonly newProposalVersionHash: Hash; readonly signedBy: MemberId }
   | { readonly type: 'ObjectionWithdrawn'; readonly objectionId: string }
   | { readonly type: 'RoundOpened';       readonly round: number; readonly proposalVersionHash: Hash }
   | { readonly type: 'WindowExtended';    readonly newClosesAt: Instant; readonly reason: 'quorum' }
-  | { readonly type: 'SeedRevealed';      readonly seed: string; readonly commitment: Hash }
-  | { readonly type: 'DecisionClosed';    readonly at: Instant; readonly cause: 'window' | 'early-irreversible' | 'full-turnout' | 'manual' }
+  | { readonly type: 'SeedRevealed';      readonly seedAdmin: string; readonly beaconValue: string; readonly commitment: Hash }
+  | { readonly type: 'DecisionClosed';    readonly at: Instant; readonly cause: 'window' | 'early-irreversible' | 'full-turnout' | 'manual';
+                                          /** OBLIGATORIO ⟺ cause === 'manual'. Dos firmas del círculo de garantías. */
+                                          readonly signers?: readonly MemberId[] }
   | { readonly type: 'ResultComputed';    readonly resultHash: Hash; readonly outcomeKind: Outcome['kind'] }
   | { readonly type: 'DecisionRatified' }
   | { readonly type: 'DecisionRejected';  readonly reason: string }
   | { readonly type: 'DecisionAnnulled';  readonly motivation: string; readonly signers: readonly MemberId[] };
 ```
+
+`DecisionDrafted.draft` es lo único que el catálogo referenciaba sin definir:
+
+```ts
+/**
+ * Configuración TODAVÍA MUTABLE, previa a la congelación. Es `DecisionConfig` con todo opcional
+ * salvo la identidad, y SIN los tres campos que sólo existen al congelar:
+ * `electorate` (se toma del registro vivo en `frozenAt`), `configHash` y `engineVersion`.
+ * No tiene `configHash` porque hashear un borrador mutable sería prometer inmutabilidad sobre algo
+ * que cambia; la identidad criptográfica de las reglas nace en `DecisionOpened`, no antes.
+ */
+export type DraftConfig =
+  & Pick<DecisionConfig, 'decisionId' | 'proposalId'>
+  & Partial<Omit<DecisionConfig, 'decisionId' | 'proposalId' | 'electorate' | 'configHash' | 'engineVersion'>>;
+```
+
+> **Corregido tras la implementación (2026-08-21) — cinco erratas en este catálogo.**
+>
+> 1. **`SeedRevealed` publicaba una sola semilla.** Decía `{ seed, commitment }`: una semilla única,
+>    generada por el sistema. **Manda B.0.3, y B.0.3 gana por su propio argumento:** una semilla que
+>    genera el servidor la elige de hecho quien opera el servidor, que puede molerla offline
+>    (*grinding*) hasta dar con la que produce el sorteo o el desempate que le conviene —el padrón y
+>    las opciones son públicos, así que el cálculo es barato— y comprometerse **a esa**. El
+>    commit–reveal simple certifica que no cambió de opinión después, no que no eligiera antes. Sin
+>    el faro externo posterior al cierre, «sorteo verificable» es teatro criptográfico; lo dice la
+>    propia B.0.3 y tiene razón. El evento publica **ambas partes**: `seedAdmin` y `beaconValue`, y
+>    la semilla efectiva es `sha256(seedAdmin ‖ "|" ‖ beaconValue)`. `commitment` se conserva para
+>    que el verificador no tenga que ir a buscar el `configHash`.
+> 2. **`ObjectionIntegrated` no tenía dónde poner la firma que B.3.b exige.** B.3.b define
+>    «integrar» como un acto que está **firmado por quien objetó**, y sin ese campo la firma no
+>    existía en el log: el motor no podía distinguir una integración de una *modificación
+>    unilateral*, que es exactamente el abuso que B.3.b nombra («cambiarle una coma y declarar
+>    resuelto»). Se añade `signedBy: MemberId`, y la precondición es `signedBy === objeción.by`.
+> 3. **`votes` estaba en el evento equivocado.** A.7 ponía `votes: number` en `ObjectionAdmitted` y
+>    no en `ObjectionDismissed`, al revés que B.3.a. **Manda B.3.a:** por la presunción de validez,
+>    la admisión **no se vota** —una objeción nace admitida, y también queda admitida por silencio
+>    del panel vencido `panelDeadline`—, de modo que un contador de votos en `ObjectionAdmitted` no
+>    sólo sobra: sugiere que la admisión se decide, que es la doctrina contraria. Lo que sí exige un
+>    conteo es **desestimar**: 2/3 del panel con motivación escrita. `votes` pasa a
+>    `ObjectionDismissed`.
+> 4. **`DecisionClosed` no tenía dónde poner las dos firmas del cierre manual.** A.8.1 exige «cierre
+>    manual con 2 firmas» y el payload era `{at, cause}`. **Esto no es una errata de tipos: es un
+>    agujero de gobernanza.** `cause:'manual'` sin firmas es una puerta trasera que cierra la urna
+>    cuando alguien quiere, sin autor, sin motivación y sin quórum de firmas —es decir, **esquiva la
+>    PARTE D entera**: la ventana de D.3, el régimen de prórrogas de D.2 y las condiciones estrictas
+>    del cierre anticipado de D.4, que el documento razona durante cuatro páginas y protege con
+>    INV-58 e INV-59. Cerrar a mano con el marcador a la vista es el ataque de «votación hasta que
+>    gane mi lado» ejecutado desde el otro extremo, y era legal según los tipos. Se añade
+>    `signers?: readonly MemberId[]`, **obligatorio ⟺ `cause === 'manual'`**, con `signers.length
+>    ≥ 2`, sin repetidos, todos del círculo de garantías y ninguno igual al `actor` del evento.
+> 5. **`DecisionDrafted.draft: DraftConfig` referenciaba un tipo inexistente.** Definido arriba.
 
 > **DECISIÓN A.9 — El orden canónico de replay es por `seq`, NUNCA por `occurredAt`.**
 > *Razón:* dos eventos pueden compartir milisegundo. Un orden por timestamp no es total ⇒ el
@@ -592,20 +754,45 @@ export type DecisionEventPayload =
 
 | Desde | Evento | Hacia | Precondiciones |
 |---|---|---|---|
+| *(agregado inexistente)* | `DecisionDrafted` | `Draft` | **crea el agregado**: `seq === 1` ∧ `prevHash === 0×64` ∧ no existe ningún evento previo para ese `decisionId` ∧ actor con permiso de autoría en el círculo |
 | `Draft` | `DecisionOpened` | `Open` | config válida ∧ `censusSize ≥ 1` ∧ `opensAt ≤ now < closesAt` ∧ `seedCommitment` publicado ∧ `options.length ≥ 1` |
 | `Draft` | `DecisionAnnulled` | `Annulled` | actor con permiso de autoría |
 | `Open` | `BallotCast` | `Open` | ver D.3 |
+| `Open` | `BallotVoided` | `Open` | **sólo en `Open`** ∧ la papeleta existe y no está ya anulada ∧ `motivation` no vacía ∧ `signers.length ≥ 2` del círculo de garantías, sin repetidos y sin incluir al votante |
 | `Open` | `DelegationGranted/Revoked` | `Open` | ver PARTE C |
 | `Open` | `ObjectionRaised/…` | `Open` | método `sociocratic-consent` |
 | `Open` | `RoundOpened` | `Open` | `round ≤ maxRounds` ∧ hubo `ObjectionIntegrated` |
-| `Open` | `WindowExtended` | `Open` | `extensionsUsed < maxExtensions` ∧ evento emitido **antes** de `closesAt` |
-| `Open` | `DecisionClosed` | `Closed` | `now ≥ closesAt` ∨ cierre anticipado válido (D.4) ∨ cierre manual con 2 firmas |
+| `Open` | `WindowExtended` | `Open` | `extensionsUsed < maxExtensions` ∧ `newClosesAt > closesAt` ∧ **`occurredAt < closesAt` estrictamente** (ver D.2) |
+| `Open` | `DecisionClosed` | `Closed` | `now ≥ closesAt` ∨ cierre anticipado válido (D.4) ∨ cierre manual con `signers.length ≥ 2` (ver A.7) |
 | `Open` | `DecisionAnnulled` | `Annulled` | vicio grave motivado + 2 firmas del círculo de garantías |
 | `Closed` | `SeedRevealed` | `Closed` | `sha256(seed) === seedCommitment` |
 | `Closed` | `ResultComputed` | `Closed` | semilla revelada si el método o el desempate la requiere |
 | `Closed` | `DecisionRatified` | `Ratified` | `now ≥ closedAt + challengeWindow` ∧ outcome ∈ {approved, winner, sample} ∧ sin impugnación admitida |
 | `Closed` | `DecisionRejected` | `Rejected` | outcome ∈ {rejected, no-quorum(reject), objections-pending} |
 | `Closed` | `DecisionAnnulled` | `Annulled` | impugnación admitida ∨ `resultHash` recomputado ≠ almacenado |
+
+> **Corregido tras la implementación (2026-08-21) — la tabla no ubicaba dos de los 19 eventos del
+> catálogo.** `BallotVoided` y `DecisionDrafted` aparecían en A.7 y en ninguna fila de A.8.1, con lo
+> que el motor no tenía forma de saber en qué estados son legales. Peor: por la regla de A.8.2 —lo
+> no listado es ilegal— `DecisionDrafted` era **ilegal en todo estado**, incluido el único en que
+> puede ocurrir, y ninguna decisión podía nacer.
+>
+> - **`DecisionDrafted` crea el agregado.** Es el único evento sin estado de origen: no hay
+>   `Draft → Draft` ni `∅ → Draft` que aplicar sobre un estado previo, porque antes de él no hay
+>   nada sobre lo que aplicar. `apply(undefined, DecisionDrafted) = Draft`, y `apply(s, ...)` con
+>   cualquier `s` definido lanza `IllegalTransitionError` (una decisión no se redacta dos veces).
+> - **`BallotVoided` sólo es legal en `Open`.** Después del cierre no puede anularse una papeleta:
+>   INV-35 exige que `effectiveBallots` sea idéntico antes y después de `DecisionClosed`, y anular
+>   una papeleta con el marcador ya conocido es escoger el resultado —el mismo ataque que A.8.2.1
+>   cierra por el lado de la reapertura. Si el vicio se descubre después del cierre, la vía es
+>   `DecisionAnnulled` (acto político visible y recurrible), no la anulación quirúrgica del voto que
+>   estorba. Esto es consistente con A.2, que ya describe `BallotVoided` como un acto excepcional y
+>   público, y **no** amplía sus requisitos: los tres de A.2 (motivación escrita, dos firmas del
+>   círculo de garantías, constancia en el log) se trasladan tal cual a la precondición.
+>
+> El cierre manual pasa de «2 firmas» —una exigencia en prosa sin campo donde constar— a
+> `signers.length ≥ 2` sobre el campo `signers` añadido en A.7; ver allí por qué la ausencia de ese
+> campo era un agujero de gobernanza y no una errata de tipos.
 
 ### A.8.2 Transiciones PROHIBIDAS (deben lanzar `IllegalTransitionError`)
 
@@ -616,8 +803,14 @@ export type DecisionEventPayload =
    decisión que derogue la anterior.
 3. `Draft → Closed`, `Draft → Ratified`, `Open → Ratified` (saltarse el escrutinio).
 4. `BallotCast` en `Draft`, `Closed`, `Ratified`, `Rejected`, `Annulled`.
-5. `WindowExtended` con `newClosesAt ≤ closesAt` (retroceder el cierre) o emitido después de
-   `closesAt` (resucitar una urna cerrada).
+5. `WindowExtended` con `newClosesAt ≤ closesAt` (retroceder el cierre) o emitido **en `closesAt` o
+   después** (resucitar una urna cerrada). Es decir: legal ⟺ `occurredAt < closesAt`.
+
+   > **Corregido tras la implementación (2026-08-21):** decía «emitido después de `closesAt`», que
+   > deja legal el caso `occurredAt === closesAt` — y D.2 lo autorizaba expresamente («ambos pueden
+   > llevar `occurredAt === closesAt`»). Ver la corrección de D.2: la frontera es **inclusiva por
+   > abajo**, `WindowExtended` es ilegal desde `closesAt` inclusive, y el tick de cierre lleva
+   > `occurredAt = closesAt` exactamente.
 6. `DecisionOpened` dos veces (padrón recongelado).
 7. `ObjectionRaised` con `round > maxRounds`.
 8. `SeedRevealed` cuyo `sha256(seed) ≠ seedCommitment` ⇒ además dispara `Annulled` automático.
@@ -673,7 +866,7 @@ si la implementación está rota (y hay un invariante que lo prohíbe: INV-13).
 function lexicographicHashOrder(decisionId: DecisionId, opts: readonly OptionId[]): readonly OptionId[] {
   return [...opts]
     .map(o => ({ o, h: sha256Hex(`${decisionId}|${o}`) }))
-    .sort((a, b) => a.h < b.h ? -1 : a.h > b.h ? 1 : 0)   // comparación byte a byte
+    .sort((a, b) => a.h < b.h ? -1 : a.h > b.h ? 1 : 0)   // unidades de código UTF-16 (ADR-0004)
     .map(x => x.o);
 }
 ```
@@ -701,6 +894,15 @@ seed = sha256( seedAdmin || "|" || beaconValue )
   anunciado).
 - `SeedRevealed` publica `seedAdmin` y `beaconValue`; cualquiera verifica
   `sha256(seedAdmin) === seedCommitment`.
+
+> **Corregido tras la implementación (2026-08-21):** el catálogo de eventos de A.7 declaraba
+> `SeedRevealed { seed: string; commitment: Hash }` —una semilla única, generada por el sistema—,
+> incompatible con esta sección. **Manda B.0.3 y se corrigió A.7**, que ahora publica `seedAdmin` y
+> `beaconValue` por separado. La razón es la que da el párrafo siguiente y no se repite aquí; sí
+> conviene decir que la incompatibilidad era del tipo más peligroso: un implementador que hubiera
+> seguido A.7 habría construido un sorteo que *parece* verificable —hay commit, hay reveal, hay
+> `sha256` que cuadra— y que no lo es, porque nada impide elegir la semilla molida de antemano. El
+> sistema habría pasado todos sus tests.
 
 > **DECISIÓN B.0.c — La semilla es SIEMPRE compuesta (`seedAdmin` + faro externo posterior).**
 > *Razón:* el commit–reveal simple no basta. Como el padrón y las opciones son públicos, quien
@@ -827,7 +1029,7 @@ function tallySimpleMajority(cfg, bs: readonly EffectiveBallot[]): { input: Thre
 ```
 base 'cast'   : D = A + R (+Ab según policy)   — 2/3 de los que votaron
 base 'census' : D = N                          — 2/3 de TODOS los matriculados
-base 'present': D = |asistentes registrados|   — 2/3 de los presentes en la sesión
+base 'present': RETIRADO DEL MVP (ver B.2.b)
 ```
 
 Con `N = 300`, `A = 140`, `R = 60`, `Ab = 0`, `f = 2/3`, `strict = false`:
@@ -842,10 +1044,47 @@ inasistencia**: quien quiere bloquear no tiene que hacer nada.
 > Para todo lo demás el motor rechaza `base:'census'` en tiempo de configuración.**
 > *Razón:* es el freno adecuado para actos constituyentes (donde la inercia debe pesar) y es
 > veneno para la gestión ordinaria (donde produce parálisis y desmoraliza a quien sí participa).
+>
+> > **Corregido tras la implementación (2026-08-21):** «el motor rechaza» era falso, porque el motor
+> > no tenía **cómo** rechazar: la regla decía «sólo para (i), (ii), (iii)» y `DecisionMethod` no
+> > tenía ningún campo que dijera cuál de los tres era, ni ninguno. La única lectura implementable
+> > de «sólo se permite para» sobre un tipo que no distingue casos es «se permite siempre». Se añade
+> > el campo `constituentAct?: ConstituentAct` (A.3), **obligatorio ⟺ `base === 'census'`**, con los
+> > tres valores enumerados y ninguno más. *Una regla que el motor no puede verificar no es una
+> > regla, es un comentario.* Y como `constituentAct` entra en `configHash`, declarar «esto es una
+> > reforma del reglamento» para conseguir el denominador favorable deja de ser una decisión
+> > invisible del configurador y pasa a ser una afirmación firmada, publicada antes de abrir y
+> > recurrible en la ventana de impugnación.
 
-> **DECISIÓN B.2.b — `base:'present'` exige un registro de asistencia con evento propio
-> (`AttendanceRecorded`) cerrado ANTES de abrir la votación.** *Razón:* si el conjunto «presentes»
-> se determina después, es manipulable; y sin congelarlo el denominador vuelve a ser móvil.
+> **DECISIÓN B.2.b — `base:'present'` queda RETIRADO del MVP.**
+>
+> > **Corregido tras la implementación (2026-08-21).** El texto anterior decía: «`base:'present'`
+> > exige un registro de asistencia con evento propio (`AttendanceRecorded`) cerrado ANTES de abrir
+> > la votación». **`AttendanceRecorded` no existe en el catálogo de eventos de A.7**, de modo que
+> > `base:'present'` era un denominador que ninguna implementación podía calcular: el escrutador
+> > tenía que dividir por un conjunto que el log no registra.
+> >
+> > **Pero la errata sólo era el síntoma, y por eso la resolución no es añadir el evento.** Un
+> > quórum basado en quién está físicamente presente en una sala contradice el **primer principio
+> > del proyecto**, *asynchronous-first*: la ventana de 72 h, el padrón congelado, la delegación
+> > con resolución al cierre y la regla «delegar es participar» (D.1.a) existen precisamente para
+> > que la voz de alguien no dependa de que pueda estar en un aula un martes a las 4 p.m. El
+> > `AttendanceRecorded` que faltaba habría reintroducido, por la puerta del denominador, la
+> > desigualdad que toda la arquitectura está diseñada para desactivar —y la habría reintroducido
+> > con una ventaja retórica, porque «2/3 de los presentes» suena a asamblea legítima mientras
+> > significa «2/3 de quienes tuvieron el privilegio de poder ir».
+> >
+> > Que el evento faltara es, visto así, la señal de que la opción nunca perteneció a este diseño:
+> > el catálogo de A.7 se escribió entero desde el modelo asincrónico y no tenía dónde poner la
+> > asistencia porque no hay sesión que atender.
+> >
+> > **Si alguna vez vuelve**, deberá venir con dos cosas, y ninguna de las dos es opcional:
+> > (1) su evento en A.7, con su régimen de congelación, su actor y su lugar en A.8.1; y
+> > (2) una **justificación de gobernanza**, no técnica — es decir, un argumento sobre por qué la
+> > presencia física debe conferir un peso que la ausencia no confiere en un instituto donde hay
+> > estudiantes que trabajan, que tienen cuidado a cargo o que están fuera de Medellín. «Se puede
+> > implementar» no es esa justificación. La decisión de reintroducirlo la toma la asamblea, no
+> > quien escribe el escrutador.
 
 - **Complejidad:** `O(C)`.
 - **Desempate:** exactamente en el umbral (`A/D === f`): decide `strict`.
@@ -914,6 +1153,16 @@ export interface ObjectionAdmissibilityConfig {
 > *Contraparte reconocida:* abre la puerta a la objeción obstruccionista. Se mitiga con: el
 > límite de rondas (B.3.c), la publicidad del argumento (quien obstruye lo hace con nombre y
 > texto), y la posibilidad de escalar al método `supermajority` (B.3.d).
+>
+> > **Corregido tras la implementación (2026-08-21):** A.7 ponía el campo `votes` en
+> > `ObjectionAdmitted` y no en `ObjectionDismissed`, invirtiendo esta decisión. **Manda B.3.a** y
+> > `votes` se traslada a `ObjectionDismissed`. La admisión es una **presunción**, no un
+> > pronunciamiento: no la vota nadie, y de hecho se produce también por el silencio del panel
+> > vencido `panelDeadline`, caso en el que no habría votos que contar. Lo que exige el conteo de
+> > 2/3 del panel es **desestimar**. Un campo `votes` en `ObjectionAdmitted` no era sólo redundante:
+> > escribía en el tipo la doctrina contraria a la que este párrafo defiende, y un implementador que
+> > leyera únicamente A.7 habría construido un panel que vota la admisión —invirtiendo la carga de
+> > la prueba y devolviendo al panel el poder de anular disensos que B.3.a le quita.
 
 > **DECISIÓN B.3.b — «Integrar una objeción» tiene una definición operativa estricta:** existe
 > un evento `ObjectionIntegrated` que (i) referencia la objeción, (ii) contiene un
@@ -925,6 +1174,14 @@ export interface ObjectionAdmissibilityConfig {
 > *Válvula de escape:* si el objetante no responde en `panelDeadline` tras la enmienda, se
 > considera **retirada tácita** de la objeción (evento `ObjectionWithdrawn` por `system`), para
 > que el ausentismo no bloquee indefinidamente.
+>
+> > **Corregido tras la implementación (2026-08-21):** el punto (iii) —«está firmado por quien
+> > objetó»— era inaplicable, porque `ObjectionIntegrated` en A.7 tenía únicamente `{objectionId,
+> > newProposalVersionHash}` y **ningún campo donde constara la firma**. La condición más importante
+> > de esta decisión era, en el log, indistinguible de su ausencia. Se añade `signedBy: MemberId`,
+> > con la precondición `signedBy === objeción.by`; sin ella el evento se rechaza y la objeción
+> > sigue viva. INV-53 ya exigía exactamente esto («ni considerar integrada una objeción sin la
+> > firma del objetante») contra un tipo que lo hacía imposible de comprobar.
 
 ### Ciclo objeción → enmienda → nueva ronda
 
@@ -977,20 +1234,54 @@ RoundOpened(r, hash_r)
 ### Definición
 
 ```
-Aprueba ⟺ R = 0 ∧ (abstentionBlocks ? Ab = 0 : true) ∧ A = D
+Aprueba ⟺ R = 0 ∧ D > 0 ∧ A = D
+
+base:'cast'   ∧ abstentionBlocks = true   ⇒  D = A + R + Ab   (abstenerse rompe la unanimidad)
+base:'cast'   ∧ abstentionBlocks = false  ⇒  D = A + R        (la abstención SALE del denominador)
+base:'census'                             ⇒  D = N            (unanimidad del censo entero)
 ```
-con `D = A + R + Ab` (`base:'cast'`) o `D = N` (`base:'census'`, unanimidad del censo entero).
 
 ```ts
 function tallyUnanimity(cfg, bs): boolean {
   const { approve, reject, abstain } = countBinary(bs);
   const m = cfg.method as Extract<DecisionMethod, {kind:'unanimity'}>;
   if (reject > 0) return false;
-  if (m.abstentionBlocks && abstain > 0) return false;
-  const den = m.base === 'census' ? cfg.electorate.censusSize : approve + reject + abstain;
-  return den > 0 && approve === den;      // nunca 0/0
+  const den =
+    m.base === 'census'      ? cfg.electorate.censusSize
+    : m.abstentionBlocks     ? approve + reject + abstain
+    :                          approve + reject;
+  return den > 0 && approve === den;      // nunca 0/0 (B.0.d)
 }
 ```
+
+> **Corregido tras la implementación (2026-08-21) — `abstentionBlocks: false` era un campo
+> inerte.** La formulación anterior fijaba `D = A + R + Ab` para `base:'cast'` y exigía `A = D`.
+> Sustituyendo: `A = A + R + Ab` con `R = 0` obliga a `Ab = 0`. Es decir, **la abstención rompía la
+> unanimidad siempre**, y la rama `abstentionBlocks: false` no podía cambiar ningún resultado: el
+> campo existía, se configuraba, se mostraba en la interfaz y no hacía absolutamente nada. La
+> comprobación explícita `if (m.abstentionBlocks && abstain > 0) return false` reforzaba la
+> ilusión de que sí, ocultando que la línea siguiente ya lo garantizaba por aritmética.
+>
+> **Resolución: con `abstentionBlocks: false` el denominador pasa a `A + R`** —las abstenciones
+> salen del denominador— y el campo adquiere el efecto que su nombre promete. La comprobación
+> explícita desaparece porque queda subsumida: con `abstentionBlocks: true` y `Ab > 0` se tiene
+> `D = A + R + Ab > A`, luego `A ≠ D` y no aprueba.
+>
+> *Por qué esta resolución y no eliminar el campo:* la distinción es real y la sociocracia la usa
+> todos los días. «Nadie se opone **y todo el mundo se pronuncia**» y «nadie se opone **entre
+> quienes se pronunciaron**» son dos exigencias distintas, y la segunda es la razonable cuando la
+> unanimidad se aplica a un compromiso personal (firmar un comunicado): quien se abstiene está
+> diciendo «no me sumo pero no bloqueo», que no es ni un sí ni un no. Con la fórmula anterior su
+> abstención valía exactamente lo mismo que un veto.
+>
+> *Consecuencias que hay que ver.* (a) `abstentionBlocks: false` alinea la unanimidad con
+> `abstentionPolicy: 'exclude'` de B.0.4: mismo denominador, misma doctrina, un solo concepto que
+> explicar. (b) El caso degenerado sigue cerrado por B.0.d: `A = R = 0` con `Ab = 3` da `D = 0` y
+> **no aprueba** — tres abstenciones y ningún voto no son unanimidad, son ausencia de decisión.
+> (c) `base:'census'` no cambia: `D = N` por definición, así que `A = N` ya obliga a `Ab = 0` y
+> `abstentionBlocks` sigue siendo inerte **ahí**, pero ahora eso es una consecuencia declarada de
+> lo que significa «unanimidad del censo entero», no un accidente de la fórmula. La validación de
+> configuración debe advertirlo en lugar de aceptarlo en silencio.
 
 - **Complejidad:** `O(C)`.
 - **Desempate:** inexistente.
@@ -1010,6 +1301,22 @@ function tallyUnanimity(cfg, bs): boolean {
 > firmar un comunicado público en nombre de todos, asumir una obligación solidaria, ceder
 > derechos de autor colectivos. Ahí el veto individual no es una patología: es la protección
 > correcta.
+>
+> > **Corregido tras la implementación (2026-08-21):** «requiere una decisión previa del círculo que
+> > la autorice» no era verificable. `DecisionMethod` no tenía campo alguno donde constara esa
+> > decisión previa, así que el motor no podía distinguir una unanimidad autorizada de una que
+> > alguien configuró sin más — y «deshabilitada por defecto» se degradaba a una casilla de la
+> > interfaz, es decir, a nada. Se añade `unanimityAuthorizedBy: UnanimityAuthorization`
+> > (A.3), **obligatorio**, con `authorizingDecisionId`, `authorizingConfigHash` y `scope`; la
+> > validación de configuración exige que la decisión autorizante esté **ratificada**, que su método
+> > sea `supermajority`, y que su `scope` coincida con el `proposalId` de esta decisión.
+> > *Por qué el `configHash` de la autorizante y no sólo su id:* atar la autorización al identificador
+> > permitiría autorizar una unanimidad con unas reglas y ejercerla bajo otras; con el hash, la
+> > autorización queda amarrada a las reglas exactas que el círculo aprobó. Y por qué `scope`: una
+> > autorización sin alcance sería una llave maestra permanente, que es justo lo contrario de
+> > «autorizada para un caso concreto». *Una regla que el motor no puede verificar no es una regla,
+> > es un comentario* — y en este caso el comentario protegía el método con la patología más severa
+> > del documento.
 
 ---
 
@@ -2019,12 +2326,44 @@ P_c = |E ∩ M_c| / |M_c|     Cumple ⟺ P_c ≥ q_c   (y si |M_c| = 0 ⇒ NO cu
                    con `escalatedFrom = decisionId` (no es un estado de esta decisión)
 ```
 
-> **PRECISIÓN de A.8.1 — El tick de cierre es ATÓMICO y emite EXACTAMENTE UNO de
-> `{WindowExtended, DecisionClosed}`.** Ambos pueden llevar `occurredAt === closesAt`. La
-> serialización por `seq` en el store garantiza que no puedan coexistir: el segundo en llegar
-> encuentra el estado ya cambiado y es rechazado. *Razón:* si la prórroga tuviera que emitirse
-> estrictamente antes de `closesAt`, habría que evaluar el quórum antes del cierre, es decir,
-> **antes de que llegaran los últimos votos**, que es justo cuando se decide el quórum.
+> **PRECISIÓN de A.8.1 — El tick de cierre es ATÓMICO, lleva `occurredAt = closesAt` EXACTAMENTE, y
+> `WindowExtended` es ILEGAL desde ese instante inclusive.** La prórroga se emite estrictamente
+> antes (`occurredAt < closesAt`); el cierre, exactamente en `closesAt`. Los dos eventos no pueden
+> coexistir porque ya no comparten ningún instante legal.
+>
+> > **Corregido tras la implementación (2026-08-21).** El texto anterior decía que el tick emite
+> > exactamente uno de `{WindowExtended, DecisionClosed}` y que **«ambos pueden llevar
+> > `occurredAt === closesAt`»**, mientras A.8.2.5 prohíbe `WindowExtended` «emitido después de
+> > `closesAt`». Los dos pasajes se contradecían en el único instante que importa: en `closesAt`
+> > exacto, D.2 declaraba legal una prórroga que A.8.2 quería prohibir, y A.8.1 exigía además que la
+> > prórroga fuera «**antes** de `closesAt`», que es una tercera cosa.
+> >
+> > **Resolución: el tick de cierre lleva `occurredAt = closesAt` exactamente, y `WindowExtended` es
+> > ilegal a partir de ese instante inclusive.**
+> >
+> > *La razón es que la regla anterior no era verificable por el motor.* Si en `closesAt` fueran
+> > legales los dos eventos, lo único que impediría una decisión simultáneamente cerrada y
+> > prorrogada sería la serialización del store —una propiedad del runtime, con su `UNIQUE(decision_id,
+> > seq)` y su reintento optimista—, no una propiedad del dominio. Y `replay` es una **función pura
+> > sobre el log**: recibe eventos, no transacciones. Un log con `WindowExtended` y `DecisionClosed`
+> > ambos en `closesAt` es un log que el motor tendría que aceptar o rechazar por sí mismo, y con la
+> > regla anterior no tenía criterio para hacerlo. Con la frontera en `closesAt` inclusive, INV-38
+> > («el tick emite exactamente uno») deja de depender de la base de datos y pasa a ser comprobable
+> > leyendo el log — que es la única forma en que un auditor externo puede comprobarla.
+> >
+> > *El costo, declarado.* El párrafo anterior tenía un argumento real: evaluar el quórum antes de
+> > `closesAt` es evaluarlo antes de que lleguen los últimos votos. Se acepta, y es menor de lo que
+> > parece. (a) Si el tick de prórroga se dispara en `closesAt − δ` y en esos `δ` milisegundos
+> > llegan los votos que faltaban, la consecuencia es una ventana más larga de lo necesario y una
+> > segunda evaluación del quórum en el nuevo `closesAt`, que la cumplirá: **más participación, no
+> > un resultado distinto**. La prórroga no puede tumbar nada, sólo alargar. (b) La asimetría es
+> > deliberada: prorrogar de más cuesta 24 h; cerrar y prorrogar a la vez cuesta la reproducibilidad
+> > del log. (c) `δ` es un parámetro de operación (el planificador de tareas), no del dominio, y el
+> > dominio no debe depender de su valor.
+> >
+> > Queda además alineado con D.3.b —`castAt < closesAt`— y con D.3.d: **una sola frontera, la
+> > misma en todo el documento, y `closesAt` pertenece siempre al después.** Corregido también en
+> > A.8.1 (fila de `WindowExtended`) y en A.8.2.5.
 
 > **DECISIÓN D.2.a — `maxExtensions` por defecto = 1, tope duro = 2.** *Razón:* prorrogar
 > indefinidamente hasta alcanzar el quórum equivale a **no tener quórum**: convierte un requisito
@@ -2178,7 +2517,7 @@ independiente de su efecto sobre el resultado.
 
 | Generador | Produce |
 |---|---|
-| `arbMemberId` | `MemberId` único (base32, 26 chars) |
+| `arbMemberId` | `MemberId` único (**32 hex minúsculas**, `^[0-9a-f]{32}$` — ver ADR-0006) |
 | `arbElectorate(n?)` | `Electorate` con `n ∈ [1, 300]` miembros, ordenado, `rollHash` bien formado |
 | `arbStrata` | mapa `StratumKey → StratumValue` con 2–4 claves, 2–6 valores cada una |
 | `arbMethod` | cualquier variante de `DecisionMethod` con parámetros válidos |
@@ -2205,7 +2544,17 @@ contraejemplo minimizado se persiste en `test/props/__counterexamples__/`.
 ## E.1 Elegibilidad y padrón
 
 **INV-01 — Un voto inválido nunca cambia el resultado.**
-- *Formal:* `∀ L, b : ¬valid(b, cfg) ⇒ tally(cfg, L ⧺ [b]) ≡ tally(cfg, L)` (igualdad de `outcome`, `turnout` y `resultHash` salvo `computedFromSeq`).
+- *Formal:* `∀ L, b : ¬valid(b, cfg) ⇒ tally(cfg, L ⧺ [b]) ≡ tally(cfg, L)` — igualdad de `outcome`, `turnout`, `weights`, `quorumCheck`, `proof` **y `resultHash`**; el único campo que puede diferir es `computedFromSeq`, que por A.6 **no entra en la preimagen de `resultHash`**.
+
+  > **Corregido tras la implementación (2026-08-21):** la redacción «igualdad de … `resultHash`
+  > salvo `computedFromSeq`» era ambigua entre «los dos `resultHash` son iguales salvo por el efecto
+  > de `computedFromSeq`» (falso: un hash no difiere «un poco») y «son iguales, y además
+  > `computedFromSeq` puede diferir» (lo que se quería decir). Con A.6 corregida —`resultHash`
+  > excluye `resultHash` **y** `computedFromSeq`— la segunda lectura es la única posible y el
+  > invariante es exigible tal cual: **el `resultHash` no se mueve**. Antes de la corrección de A.6
+  > este invariante era insatisfacible y el implementador sólo podía elegir entre debilitarlo o
+  > cambiar A.6; se documenta porque debilitar el invariante habría sido la salida barata y habría
+  > desactivado en silencio la comprobación de recomputación de A.8.
 - *Generadores:* `arbConfig`, `arbEventLog`, `arbInvalidBallot`.
 - *Fallo ingenuo:* validar en el borde HTTP y no en el dominio; o «interpretar caritativamente» (un score `7` truncado a `5`, un ranking con repetidos deduplicado). Cualquier normalización silenciosa convierte basura en voto.
 
@@ -2214,8 +2563,16 @@ contraejemplo minimizado se persiste en `test/props/__counterexamples__/`.
 - *Generadores:* `arbElectorate`, `arbMemberId` (fuera del padrón), `arbBallot`.
 - *Fallo ingenuo:* filtrar por «existe en la tabla `members`» (registro actual) en vez de por el **snapshot congelado**.
 
-**INV-03 — Quien se matricula después de abrir no vota.**
-- *Formal:* `∀ m : m.enrolledAt ≥ electorate.frozenAt ⇒ m ∉ electorate.members ∧ ballots(m) rechazadas`.
+**INV-03 — Quien se matricula en el instante de abrir, o después, no vota.**
+- *Formal:* `∀ m : m.enrolledAt ≥ electorate.frozenAt ⇒ m ∉ electorate.members ∧ ballots(m) rechazadas`. Frontera semiabierta: pertenece al padrón ⟺ `enrolledAt < frozenAt ≤ withdrawnAt`.
+
+  > **Corregido tras la implementación (2026-08-21):** este invariante estaba bien y la prosa de A.1
+  > estaba mal («después de `frozenAt`», que deja **dentro** el alta simultánea). **Manda el
+  > invariante**; A.1 corregida. El caso `enrolledAt === frozenAt` no es una rareza de laboratorio:
+  > `frozenAt === DecisionOpened.occurredAt` (A.2) y ambos son milisegundos del reloj del servidor,
+  > de modo que un alta y una apertura pueden compartirlo con probabilidad nada despreciable en una
+  > jornada de matrícula. Los generadores **deben** producirlo explícitamente, no esperar a que
+  > salga por azar: `enrolledAt ∈ {frozenAt − 1, frozenAt, frozenAt + 1}`.
 - *Generadores:* `arbElectorate`, `arbEventLog` con `MemberEnrolled` intercalado tras `DecisionOpened`.
 - *Fallo ingenuo:* recalcular el padrón al cerrar «para tenerlo actualizado» — el error más natural y más grave.
 
@@ -2387,8 +2744,21 @@ contraejemplo minimizado se persiste en `test/props/__counterexamples__/`.
 
 **INV-34 — Ninguna transición ilegal se acepta.**
 - *Formal:* `∀ (s, e) ∉ TransicionesLegales : apply(s, e) lanza IllegalTransitionError ∧ estado inalterado`.
-- *Generadores:* producto cartesiano completo `Estado × TipoEvento` (6 × 17 = 102 casos, exhaustivo, no aleatorio) + `arbEventLog` con un evento ilegal inyectado en posición aleatoria.
+- *Generadores:* producto cartesiano completo `Estado × TipoEvento` (**6 × 19 = 114** casos, o **7 × 19 = 133** contando el estado previo a `Draft`; exhaustivo, no aleatorio) + `arbEventLog` con un evento ilegal inyectado en posición aleatoria.
 - *Fallo ingenuo:* un `switch` sobre el tipo de evento sin mirar el estado; o un `default:` que ignora en silencio.
+
+  > **Corregido tras la implementación (2026-08-21):** decía «6 × 17 = 102 casos». El catálogo de
+  > A.7 lista **19** tipos de evento, no 17, así que el producto cartesiano son **114** casos.
+  > Y hay un séptimo estado que la cuenta omitía: el previo a `Draft`, el del agregado que **aún no
+  > existe**, desde el cual `DecisionDrafted` es el único evento legal (A.8.1) — de ahí **133**.
+  > *Por qué no es una errata inofensiva:* el número es la **condición de exhaustividad** del test.
+  > Una suite que declara «102 casos, exhaustivo» y recorre `estados × tipos` reales pasaría con 114
+  > sin que nadie lo note, o —peor— alguien podría «cuadrar» el conteo excluyendo dos tipos de
+  > evento del recorrido para que diera 102. Los dos tipos que faltaban en la cuenta de 17 son
+  > justamente los dos que A.8.1 no ubicaba en ninguna fila (`BallotVoided` y `DecisionDrafted`), lo
+  > que sugiere que el 17 se contó sobre la tabla de transiciones y no sobre el catálogo. El
+  > invariante se prueba con la constante `DECISION_EVENT_TYPES.length` y `LIFECYCLE_STATUSES.length`
+  > del propio motor, nunca con un literal escrito a mano: así el conteo no puede volver a divergir.
 
 **INV-35 — Una propuesta cerrada no muta.**
 - *Formal:* `∀ L, ∀ e posterior a DecisionClosed : proposalVersionHash, electorate.rollHash, configHash, effectiveBallots son idénticos antes y después`.
@@ -2565,9 +2935,9 @@ satisfacer una propiedad que el método realmente no tiene.
 | A.11 | Prórroga = evento dentro de `Open` |
 | B.0.a–d | Pesos enteros; desempate final por hash; semilla compuesta con faro externo; `0/0` no aprueba |
 | B.1.a–c | `abstentionPolicy` y `base` obligatorios y visibles; default `exclude`+`cast`+estricto; mayoría absoluta = supermayoría 1/2 sobre censo |
-| B.2.a–c | `census` sólo para actos constituyentes; `present` exige registro previo; supermayorías con `≥` |
+| B.2.a–c | `census` sólo para actos constituyentes, **declarados en `constituentAct`**; **`present` RETIRADO del MVP** (contradice *asynchronous-first*); supermayorías con `≥` |
 | B.3.a–e | Presunción de validez de la objeción + panel sorteado; integración requiere firma del objetante; `maxRounds`=3; escalamiento explícito; el silencio no consiente |
-| B.4.a | Unanimidad deshabilitada por defecto |
+| B.4 / B.4.a | `abstentionBlocks:false` ⇒ denominador `A+R`; unanimidad deshabilitada por defecto y **autorizada en `unanimityAuthorizedBy`** |
 | B.5.a–c | `⊥` se ignora con `minCoverage`; agregador `median`; desempate por media exacta |
 | B.6.a–c | Cuota reducida; desempate de eliminación propio; IRV vetado para personas y estatutos |
 | B.7.a–c | Eliminación sucesiva (sin *gauge*); papeleta completa obligatoria; MJ es el método por defecto |

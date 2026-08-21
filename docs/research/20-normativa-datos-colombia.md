@@ -130,6 +130,21 @@ consent_record
   revoked_at         timestamptz null
 ```
 
+> **Corregido tras la implementación (2026-08-21):** esta tabla vive en el **PII Vault**, y por eso
+> `uuid` y `timestamptz` serían aceptables aquí —el vault es mutable, se borra físicamente y nada de
+> lo suyo entra al ledger (ADR-0008, ADR-0009)—. **Pero `evidence_chain` es una cadena de hashes**, y
+> eso cambia el análisis: los campos que entren a su preimagen quedan bajo la **regla de tipos del
+> ledger** (`10-ledger-inmutable.md` §1.1-bis) aunque no salgan nunca de la bóveda. Si `granted_at`
+> entra a la preimagen, PostgreSQL lo devolverá como `2026-08-21 03:14:00.1+00` y no como el
+> `2026-08-21T03:14:00.100Z` que se hasheó, y el registro de consentimiento **perderá exactamente el
+> valor probatorio que justifica su existencia** — que es lo que la SIC pediría ver.
+>
+> Se fija: **los campos que entran a la preimagen de `evidence_chain` se declaran explícitamente y se
+> almacenan en tipos que no normalizan** (`char(24)` para el instante, `char(32)` para los
+> identificadores, `text` para el resto). Los campos que **no** entran —`method`, `user_agent_hash`,
+> `revoked_at`— pueden seguir con el tipo natural. La lista de campos hasheados es parte del esquema,
+> no una convención: sin ella, la cadena no es reproducible por un tercero y no prueba nada.
+
 Reglas:
 
 1. **Una fila por finalidad.** Consentimiento granular ⇒ granularidad en el almacenamiento. Revocar una finalidad no debe tocar las otras.
@@ -426,8 +441,8 @@ Esa defensa se cae por completo si:
 
 | Elemento | Forma |
 |---|---|
-| Identificador de evento | UUIDv7 / ULID |
-| Marca temporal | UTC, truncada a la granularidad mínima necesaria |
+| Identificador de evento | 128 bits aleatorios en **32 hex minúsculas** (`^[0-9a-f]{32}$`). **No UUID, no ULID** — ver nota |
+| Marca temporal | UTC, truncada a la granularidad mínima necesaria, en RFC 3339 exacto `YYYY-MM-DDTHH:MM:SS.sssZ` almacenado como texto, nunca `timestamptz` |
 | Tipo de evento y versión de esquema | Enum cerrado |
 | Compromiso del payload | `H(nonce)` con `nonce` aleatorio de CSPRNG guardado en el PII Vault. **R2: ya no `HMAC-SHA-256(k_KMS, payload)` ni `Argon2id(payload, sal_única)`** |
 | Seudónimo de actor | El `MemberId` aleatorio de 128 bits, **único y estable por persona**. **R1: ya no un seudónimo por proceso derivado con sal por proceso** |
@@ -436,6 +451,29 @@ Esa defensa se cae por completo si:
 | Hash del documento de decisión publicado | El documento vive fuera |
 | Encadenamiento | `prev_hash`, `merkle_root`, altura |
 | Eventos de gobernanza del propio sistema | `identity_severed`, `policy_version_activated`, `key_rotated` — sin datos personales |
+
+> **Corregido tras la implementación (2026-08-21):** esta tabla proponía **UUIDv7 / ULID** como forma
+> del identificador de evento. Queda anulado por dos motivos independientes, y el segundo es
+> jurídico, no técnico:
+>
+> 1. **Técnico.** Todo identificador del ledger es de 128 bits en **32 hex minúsculas**
+>    (`10-ledger-inmutable.md` §1.1-bis). Ni `uuid` ni ULID sirven: PostgreSQL reescribe la forma del
+>    primero al devolverlo (36 caracteres con guiones), lo que cambia la preimagen del `eventHash` al
+>    rehidratar el evento y produce un falso positivo de «historia alterada». Es el error que la
+>    propia spec 10 arrastraba y que la implementación destapó.
+> 2. **De protección de datos.** **UUIDv7 y ULID incrustan la marca temporal de creación en el
+>    identificador** (48 bits de milisegundos Unix, en los bits más significativos y por tanto
+>    ordenables). Un identificador así **es** un dato de tiempo fino disfrazado de identificador
+>    opaco, y hace inútil el requisito de la fila de arriba —truncar la marca temporal a la
+>    granularidad mínima necesaria— porque la hora exacta viaja igualmente en el `id`. Con 300
+>    personas eso reabre el vector 8 de la tabla anterior (cuasi-identificadores por fecha fina) y
+>    contradice ADR-0014, que prohíbe marcas temporales en la urna precisamente por esto. El
+>    identificador es **aleatorio de CSPRNG, sin componente temporal ni ordenable**.
+>
+> El mismo argumento (2) se aplica al principio 6 de §1.3, donde UUIDv7/ULID aparecen como forma de
+> los identificadores de URL pública: para un recurso enumerable el requisito es «no adivinable», y
+> un identificador con reloj dentro cumple lo de no-secuencial pero filtra el instante de creación.
+> Úsese aleatorio de 128 bits ahí también.
 
 ---
 

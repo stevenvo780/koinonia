@@ -16,7 +16,13 @@ La clave institucional, además, es un secreto que tendría que sobrevivir tanto
 
 ## Decisión
 
-El `MemberId` es un **valor aleatorio de 128 bits generado con CSPRNG** (`crypto.randomBytes(16)`, codificado en base32) en el momento del alta. **No es función de ningún dato personal**: ni del documento, ni del correo, ni del nombre, ni de la fecha de nacimiento, ni de nada derivable de ellos.
+El `MemberId` es un **valor aleatorio de 128 bits generado con CSPRNG** (`crypto.randomBytes(16)`) en el momento del alta, **codificado en 32 caracteres hexadecimales minúsculos** (`^[0-9a-f]{32}$`), y almacenado en columnas `char(32)`. **No es función de ningún dato personal**: ni del documento, ni del correo, ni del nombre, ni de la fecha de nacimiento, ni de nada derivable de ellos.
+
+> **Corregido tras la implementación (2026-08-21):** este ADR decía «codificado en base32», y `30-decision-engine-spec.md` §A.0 y su tabla de generadores lo repetían («base32, 26 chars»). La resolución del arquitecto sobre la **regla de tipos del ledger** fija el `MemberId` como `char(32)` con `CHECK (~ '^[0-9a-f]{32}$')` (`10-ledger-inmutable.md` §1.1-bis), y `10-...` §1.1 ya lo describía como «32 hex minúsculas» desde el principio. Eran **tres representaciones distintas del mismo valor** en el corpus: base32 de 26 caracteres, hex de 32 caracteres y —en el DDL— una columna `uuid` de 36. Queda una: **hex de 32, minúsculas**.
+>
+> El cambio es de codificación, no de sustancia: siguen siendo los mismos 128 bits del mismo CSPRNG, y ninguna propiedad de este ADR depende del alfabeto. Se elige hex y no base32 por tres razones prácticas: es la forma en que ya se expone todo hash en el borde HTTP (spec 10 §2.1), permite `CHECK` con una expresión regular trivial y sin ambigüedad de mayúsculas, y —lo que decide— **el orden lexicográfico del hex minúsculo coincide con el orden binario de los 16 bytes que representa**, de modo que el `ORDER BY aggregate_id` de PostgreSQL y el ordenamiento del verificador independiente no pueden divergir al construir el `heads_root` (spec 10 §6.4). Con base32 en el alfabeto RFC 4648 esa coincidencia también se da, pero la representación es de 26 caracteres con relleno implícito y ninguna otra parte del sistema la usa.
+>
+> **Para el arquitecto:** este punto **no** venía en el informe de implementación; se deduce de aplicar E1 al corpus completo. Si la intención era conservar base32, entonces lo que hay que cambiar es la regla de §1.1-bis, no este ADR — pero una de las dos tiene que ceder, porque hoy se contradicen.
 
 Se genera y se persiste en el PII Vault como columna indexada **antes** de emitir cualquier evento al ledger. El HMAC sobre el documento sobrevive únicamente como `enrollmentTag` **dentro de la bóveda**, para detectar altas duplicadas, y se borra con el registro.
 

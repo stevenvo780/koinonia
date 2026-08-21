@@ -14,14 +14,26 @@ Al mismo tiempo el proyecto lo sostiene un equipo estudiantil pequeño, con rota
 
 Un **único repositorio** con espacios de trabajo de TypeScript y una regla de dependencia estricta:
 
-- `packages/domain` — el modelo de dominio y el `DecisionEngine`. **Cero dependencias de tiempo de ejecución** salvo la biblioteca estándar. Prohibido: acceso a red o disco, `Date.now()`, `Math.random()`, `localeCompare`, punto flotante en comparaciones de umbral, importar cualquier cosa de `apps/`, `services/` o de un framework.
+- `packages/crypto` — canonicalización JCS, hashing SHA-256, cadena de eventos, Merkle. **No depende de nadie:** ni de `domain`, ni de `contracts`, ni de ningún paquete externo en tiempo de ejecución. Es la **hoja** del grafo de dependencias.
+- `packages/domain` — el modelo de dominio y el `DecisionEngine`. **Cero dependencias de tiempo de ejecución** salvo la biblioteca estándar y **`@koinonia/crypto`, y nada más**. Prohibido: acceso a red o disco, `Date.now()`, `Math.random()`, `localeCompare`, punto flotante en comparaciones de umbral, importar cualquier cosa de `apps/`, `services/` o de un framework.
 - `packages/contracts` — tipos y textos de frontera (DTO, eventos, cadenas de interfaz). Depende de `domain`; nadie depende de `apps/`.
-- `packages/crypto` — canonicalización, hashing, cadena de eventos, Merkle. Depende sólo de `domain`.
 - `services/api` — adaptadores: persistencia, HTTP, correo, KMS. Es el único que hace I/O.
 - `apps/web` — interfaz.
 - `tests/` — integración y extremo a extremo, fuera de los paquetes.
 
-El tiempo y la aleatoriedad **entran como datos** (instantes y semillas), nunca como efectos. La dirección de dependencia se verifica en CI, no en revisión de código.
+El orden es total y no admite ciclos:
+
+```
+crypto  ←  domain  ←  contracts  ←  { services/api, apps/web }
+```
+
+El tiempo y la aleatoriedad **entran como datos** (instantes y semillas), nunca como efectos. La dirección de dependencia se verifica en CI (`scripts/check-domain-purity.mjs`), no en revisión de código.
+
+> **Corregido tras la implementación (2026-08-21):** este ADR decía «`packages/crypto` — […] Depende sólo de `domain`». **La dirección era la contraria**, y la implementación lo demostró de la única forma que importa: `packages/crypto/package.json` tiene `"dependencies": {}` y no podría ser de otro modo.
+>
+> El argumento no es de conveniencia sino de propiedad. `crypto` implementa JCS, SHA-256, la cadena y el árbol: piezas cuyo comportamiento **debe quedar congelado durante décadas**, porque un cambio en cualquiera de ellas invalida toda la historia anclada (spec 10 §1.4). El dominio, en cambio, cambia cada vez que la asamblea reforma su reglamento. Hacer que la pieza congelada dependa de la pieza que cambia es exactamente al revés: cada reforma del reglamento habría arrastrado un rebuild de `crypto` y una oportunidad de alterar, sin querer, la función que define la integridad del ledger.
+>
+> Además, `crypto` es lo que se publica como verificador independiente (`@koinonia/verificar`, spec 10 §9.2). Si dependiera de `domain`, un tercero que quiera comprobar hashes tendría que arrastrar el motor de decisiones entero —y con él las reglas de gobernanza vigentes hoy— para verificar una historia de hace tres años. La invertimos: **`crypto` no sabe nada de gobernanza; `domain` sí sabe hashear.**
 
 ## Alternativas consideradas
 
@@ -32,6 +44,7 @@ El tiempo y la aleatoriedad **entran como datos** (instantes y semillas), nunca 
 ## Consecuencias
 
 - El `DecisionEngine` se puede publicar como paquete autónomo y ejecutarse en el navegador, en un script de auditoría o en un verificador de terceros.
+- `packages/crypto` se puede publicar **solo**, sin arrastrar el dominio, que es la condición para que el verificador independiente de la spec 10 §9.2 quepa en las ~600 líneas auditables que promete.
 - Los property-based tests (fast-check) corren contra el dominio sin levantar infraestructura, lo que hace viable el umbral de `numRuns ≥ 1000` de la spec 30 §E.8.
 - Un solo pipeline de CI, un solo esquema de versiones, un solo lugar donde mirar la historia.
 - La regla de dependencia hace visible cualquier intento de meter I/O en el dominio: aparece como un error de compilación, no como una discusión.

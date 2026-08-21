@@ -15,7 +15,7 @@ Sin ella, cada nuevo tipo de proceso es código nuevo, y la comunidad no puede c
 Dos entidades ortogonales:
 
 - **`Espacio`** (`proceso | asamblea | iniciativa`) — contenedor con legitimidad y ciclo de vida propios, con `Fase`s ordenadas de las cuales exactamente una está activa.
-- **`Componente`** — instancia configurable (permisos, ventana de apertura, límites, `ajustes` jsonb por fase) enchufable en cualquier espacio. **Todo contenido cuelga de un componente, nunca del espacio.**
+- **`Componente`** — instancia configurable (permisos, ventana de apertura, límites, `ajustes` por fase — `jsonb` en la proyección, **`text` canónico en el evento**; ver consecuencias) enchufable en cualquier espacio. **Todo contenido cuelga de un componente, nunca del espacio.**
 
 Y una regla que es la que hace el trabajo:
 
@@ -42,3 +42,4 @@ Y una regla que es la que hace el trabajo:
 - La configuración por fase multiplica los estados posibles y con ellos los casos de prueba y los modos de configurar mal un espacio.
 - Una máquina de estados estricta produce situaciones frustrantes y legítimas: alguien llega tarde con un aporte valioso y el sistema lo rechaza. Se acepta; la alternativa es que no haya fases.
 - El `ajustes jsonb` es una puerta abierta a meter estructura sin esquema. Necesita validación por tipo de componente o se convertirá en un basurero.
+- **`ajustes` es `jsonb` sólo mientras viva en la proyección.** En el momento en que la configuración de un componente entre al `payload` de un evento del ledger —y `FaseActivada` ya lo hace con `abre_componentes[]`—, ese valor cae bajo la **regla de tipos del ledger** (`10-ledger-inmutable.md` §1.1-bis) y **no puede almacenarse en `jsonb`**: ese tipo reordena las claves y destruiría la canonicalización JCS del evento. La forma autoritativa es el texto canónico en `text`; el `jsonb` queda como copia derivada y no autoritativa para consultar. Es la misma trampa que la spec 10 tenía en su propio DDL y que sólo se vio al implementar.
