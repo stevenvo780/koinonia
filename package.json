@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "typecheck": "tsc -p tsconfig.check.json && tsc -p tests/e2e/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.check.json && tsc --build packages/contracts services/api && tsc -p tests/e2e/tsconfig.json",
     "lint": "eslint . && prettier --check . && node scripts/check-domain-purity.mjs",
     "lint:fix": "eslint . --fix && prettier --write .",
     "test": "vitest run",

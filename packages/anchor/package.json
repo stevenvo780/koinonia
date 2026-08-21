@@ -1,0 +1,31 @@
+{
+  "name": "@koinonia/anchor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Anclaje externo de checkpoints: OpenTimestamps, git firmado y testigos por correo, con quórum 2-de-3 por clase de independencia",
+  "license": "AGPL-3.0-or-later",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run --root ../.. packages/anchor"
+  },
+  "dependencies": {
+    "@koinonia/crypto": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

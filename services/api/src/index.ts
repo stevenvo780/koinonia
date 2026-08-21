@@ -94,6 +94,26 @@ export {
 } from './ledger/verify.js';
 
 export {
+  buildExport,
+  currentRoot,
+  type ExportBundle,
+  type ExportOptions,
+} from './ledger/export.js';
+
+export {
+  ANCHOR_AGGREGATE_ID,
+  ANCHOR_AGGREGATE_TYPE,
+  anchorLedgerPort,
+  countAnchorAttempts,
+  readAnchorReceipts,
+  requestIdFromHash,
+  saveAnchorAttempt,
+  saveBitcoinHeader,
+  type AnchorAttemptInput,
+  type AnchorState,
+} from './ledger/anchor-store.js';
+
+export {
   checkpointPreimage,
   computeCheckpointHash,
   computeHeadsRoot,

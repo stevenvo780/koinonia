@@ -8,7 +8,14 @@ Antioquia. Software libre, ~300 personas, español, móvil primero.
 Se escribe un problema, se discute con plazo, se decide con una regla dicha de antemano, y queda una
 constancia que **cualquiera puede recalcular por su cuenta sin confiar en quien administra el
 servidor**. Ver `docs/PRODUCT.md` (qué es y para quién), `docs/GOVERNANCE.md` (quién decide qué y con
-qué regla) y `docs/adr/` (por qué cada decisión técnica es la que es).
+qué regla), `docs/ARCHITECTURE.md` (cómo encajan las piezas) y `docs/adr/` (por qué cada decisión
+técnica es la que es).
+
+Ese «sin confiar en quien administra el servidor» no es una figura retórica: el historial se ancla
+fuera —Bitcoin vía OpenTimestamps, un commit firmado en dos forjas y testigos por correo, con
+**quórum de 2 clases independientes de 3**— y hay un **verificador que se ejecuta por separado y no
+habla con este servidor** (`packages/verifier-cli`). Cómo usarlo está más abajo, en
+[«Comprobarlo sin confiar en nosotros»](#comprobarlo-sin-confiar-en-nosotros).
 
 ---
 
@@ -74,7 +81,7 @@ pnpm run typecheck   # tsc estricto sobre fuentes, pruebas y extremo a extremo
 pnpm run lint        # eslint + prettier + pureza del dominio
 pnpm run test        # vitest: unitarias, de propiedad y de integración contra PostgreSQL real
 pnpm run e2e         # Playwright: el corte vertical por la interfaz
-pnpm run build       # tsc --build con project references
+pnpm run build       # tsc --build con project references (los cinco paquetes)
 pnpm run build:web   # la interfaz
 pnpm run verify      # typecheck + lint + test
 ```
@@ -83,20 +90,53 @@ pnpm run verify      # typecheck + lint + test
 
 ## Estructura
 
-| Ruta                 | Qué es                                                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `packages/crypto`    | Canonicalización JCS, SHA-256, cadena de eventos y árbol Merkle. Sin dependencias de runtime.                        |
-| `packages/domain`    | Dominio puro: motor de decisiones, agregados de trabajo y **autorización**. Sin I/O, sin reloj, sin azar (ADR-0001). |
-| `packages/contracts` | Los esquemas Zod de la frontera y el léxico de la interfaz. Una sola definición para servidor y cliente.             |
-| `services/api`       | Adaptadores: ledger sobre PostgreSQL, bóveda de identidad y capa HTTP con Fastify. Lo único que hace I/O.            |
-| `apps/web`           | Interfaz: Next.js, móvil primero, español de Colombia, WCAG 2.2 AA.                                                  |
-| `tests/integration`  | Contra PostgreSQL real, con Testcontainers.                                                                          |
-| `tests/e2e`          | Playwright: el corte vertical por la interfaz y por la API.                                                          |
-| `infra/docker`       | PostgreSQL de desarrollo.                                                                                            |
-| `docs/`              | Investigación, ADR, producto y gobernanza.                                                                           |
+Cinco paquetes, un servicio y una interfaz:
+
+| Ruta                    | Qué es                                                                                                                                                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/crypto`       | Canonicalización JCS (RFC 8785), SHA-256, cadena de eventos y árbol Merkle (RFC 6962). Sin dependencias de runtime.                                                                                                                                  |
+| `packages/domain`       | Dominio puro: motor de decisiones, agregados de trabajo y **autorización**. Sin I/O, sin reloj, sin azar (ADR-0001).                                                                                                                                 |
+| `packages/contracts`    | Los esquemas Zod de la frontera y el léxico de la interfaz. Una sola definición para servidor y cliente.                                                                                                                                             |
+| `packages/anchor`       | **Anclaje externo**: `AnchorProvider` con tres implementaciones de clases de independencia distintas —OpenTimestamps sobre Bitcoin, commit firmado con SSH en dos forjas, testigos por correo— y la política de quórum **2 clases de 3** (ADR-0016). |
+| `packages/verifier-cli` | **Verificador independiente** (`@koinonia/verificar`). Comprueba un paquete exportado **sin hablar con este servidor**, reimplementando los algoritmos por su cuenta.                                                                                |
+| `services/api`          | Adaptadores: ledger sobre PostgreSQL, bóveda de identidad, anclaje, export y capa HTTP con Fastify. Lo único que hace I/O.                                                                                                                           |
+| `apps/web`              | Interfaz: Next.js, móvil primero, español de Colombia, WCAG 2.2 AA.                                                                                                                                                                                  |
+| `tests/integration`     | Contra PostgreSQL real, con Testcontainers.                                                                                                                                                                                                          |
+| `tests/e2e`             | Playwright: el corte vertical por la interfaz y por la API.                                                                                                                                                                                          |
+| `infra/docker`          | PostgreSQL de desarrollo.                                                                                                                                                                                                                            |
+| `docs/`                 | Investigación, ADR, arquitectura, producto, gobernanza y estrategia de pruebas.                                                                                                                                                                      |
+
+El orden de dependencia es total y sin ciclos, con **dos ramas deliberadamente separadas** que sólo
+comparten la hoja `crypto`:
+
+```
+crypto ← domain ← contracts ← { services/api, apps/web }
+crypto ← anchor ← verifier-cli
+```
+
+El verificador no conoce las reglas de decisión y no importa nada de `services/api`: los algoritmos
+del ledger están **reimplementados** en él, y que las dos implementaciones coincidan es parte de la
+prueba. `services/api` sí depende de `verifier-cli`, pero **sólo para el formato del export**: el
+contrato del fichero lo define quien lo va a leer.
 
 La dirección de dependencia la verifica CI (`scripts/check-domain-purity.mjs`), no la revisión de
 código.
+
+### Migraciones
+
+SQL plano numerado en `services/api/migrations/`, aplicado en orden por un runner propio
+(`services/api/src/db/migrate.ts`) que **registra el hash de cada fichero**: editar una migración ya
+aplicada deja de ser invisible. Dos ficheros con el mismo número son un error duro, no un
+desempate arbitrario, porque el orden tiene que ser total.
+
+| Migración                | Qué crea                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `0001_governance_ledger` | `governance`: eventos, cabezas de agregado, cursor, checkpoints.             |
+| `0002_append_only_guard` | El trigger `ENABLE ALWAYS` que rechaza `UPDATE`, `DELETE` y `TRUNCATE`.      |
+| `0003_roles_and_grants`  | `koinonia_ddl` y `koinonia_app`, con la asimetría de privilegios.            |
+| `0004_projection`        | Proyecciones desechables con offset transaccional.                           |
+| `0005_identidad`         | `identity`: bóveda de datos personales, **físicamente separada** (ADR-0008). |
+| `0006_anclaje`           | `governance.anchor_attempt` y `governance.bitcoin_header`.                   |
 
 ---
 
@@ -149,16 +189,102 @@ KOINONIA_REQUIRE_DOCKER=1 pnpm test
 ### Extremo a extremo
 
 ```sh
-pnpm run e2e                              # Chromium
+pnpm run e2e                                         # Chromium
 KOINONIA_MATRIZ=completa pnpm exec playwright test   # matriz completa
 ```
 
 En un pull request corre **sólo Chromium**; en `main`, la matriz entera (Chromium, Firefox, WebKit,
 Chrome móvil, Safari móvil). Está en `.github/workflows/ci.yml`.
 
-Firefox y WebKit necesitan librerías del sistema que Playwright instala con
-`pnpm exec playwright install --with-deps`. **Sin ellas los navegadores se descargan pero no
-arrancan**, y el error es un aviso de dependencias del anfitrión, no un fallo de los tests.
+WebKit —y por tanto también `safari-movil`, que lo usa— necesita librerías del sistema
+(`libicu74`, `libxml2`, `libflite1`, `libmanette-0.2-0`) que Playwright instala con
+`sudo pnpm exec playwright install-deps`. **Sin ellas el navegador se descarga pero no arranca**, y
+lo que se ve es un aviso de dependencias del anfitrión, no un fallo del producto. Los proyectos
+quedan configurados igualmente: se prefiere un fallo visible a una matriz recortada que nadie note.
+
+---
+
+## Comprobarlo sin confiar en nosotros
+
+Todo lo anterior lo ejecuta quien administra el servidor. Esta parte, no.
+
+`packages/verifier-cli` es un programa aparte que lee un **paquete exportado** y comprueba la
+historia entera —canonicalización, cadena de resúmenes por expediente, contigüidad del índice
+global, raíces de Merkle, continuidad entre sellos y los comprobantes de anclaje externo— **sin
+hacer ni una petición de red**. Habla en castellano, no enseña un hash hasta el detalle final, y
+lleva dentro `README-VERIFICACION.txt`, que describe el algoritmo completo en prosa para que
+cualquiera lo reimplemente desde cero y no tenga que fiarse ni de este programa.
+
+### 1. Producir el paquete
+
+El paquete autocontenido lo arma `buildExport()` de `@koinonia/api`. Con el servicio ya levantado
+(los cuatro pasos de arriba) y desde la raíz del repositorio:
+
+```sh
+cat > exportar.mjs <<'FIN'
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { buildExport, createPool } from '@koinonia/api';
+
+const pool = createPool({
+  connectionString:
+    process.env.DATABASE_URL ?? 'postgresql://postgres:koinonia@localhost:55432/koinonia',
+});
+const cliente = await pool.connect();
+try {
+  const paquete = await buildExport(cliente, {
+    generatedAt: new Date().toISOString(),
+    // Padrón que viaja DENTRO del paquete. Prueba menos que uno obtenido por otro canal, y el
+    // verificador lo dice: levanta el aviso RAIZ_DE_CONFIANZA_DEL_EXPORT cuando usa éste.
+    trust: {
+      gitSigners: [],
+      witnesses: [],
+      minDistinctDomains: 2,
+      forges: ['codeberg', 'github'],
+      gitSigningKeyOffHost: false,
+    },
+  });
+  for (const [nombre, contenido] of paquete) {
+    const ruta = join('export', nombre);
+    await mkdir(dirname(ruta), { recursive: true });
+    await writeFile(ruta, contenido);
+  }
+  console.log(`${paquete.size} ficheros en export/`);
+} finally {
+  cliente.release();
+  await pool.end();
+}
+FIN
+
+node exportar.mjs
+```
+
+### 2. Comprobarlo
+
+```sh
+node packages/verifier-cli/dist/cli.js export            # tras `pnpm run build`
+node packages/verifier-cli/dist/cli.js export --explicar # y que además explique cada paso
+```
+
+Publicado como paquete npm, la orden es `npx @koinonia/verificar <ruta-al-paquete>`, que es la que
+va en el cartel de la asamblea. El padrón de firmantes **obtenido por otro canal** —que es el que
+prueba de verdad— se pasa con `--confianza <fichero>`.
+
+El **código de salida** es la conclusión, para poder encadenarlo:
+
+| Código | Qué significa                                                  |
+| ------ | -------------------------------------------------------------- |
+| `0`    | VERDE: todo cuadra y el resumen está registrado fuera.         |
+| `1`    | Error de uso (faltan argumentos, la ruta no existe).           |
+| `2`    | El paquete no se puede leer o le faltan piezas.                |
+| `3`    | ÁMBAR: íntegro por dentro, pero falta la confirmación externa. |
+| `4`    | Un comprobante externo es falso o registra otra historia.      |
+| `5`    | Los sellos periódicos no cuadran con la historia.              |
+| `6`    | ROJO: la historia está manipulada por dentro.                  |
+
+Un paquete recién generado sobre una base vacía sale **ÁMBAR**, y eso es correcto: sin sellos
+anclados fuera, la coherencia interna la puede fabricar quien controla el servidor. El verificador
+lo dice con esas palabras en vez de dar un verde que no se ha ganado.
 
 ---
 

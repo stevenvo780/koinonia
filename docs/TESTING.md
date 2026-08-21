@@ -1,12 +1,14 @@
 # Estrategia de pruebas de Koinonía
 
 > **Estado:** normativo. Documenta una estrategia **en marcha**, no un plan. Hoy el repositorio tiene
-> **345 pruebas en verde** —116 en `packages/crypto`, 229 en `packages/domain`—, de las cuales **40 son
-> propiedades de fast-check** mapeadas a un invariante de la PARTE E de la spec 30.
+> **603 pruebas en verde repartidas en 41 ficheros** —108 en `packages/crypto`, 255 en
+> `packages/domain`, 80 en `packages/anchor`, 33 en `packages/verifier-cli`, 17 en `services/api` y
+> 110 de integración contra PostgreSQL real—, entre ellas las **propiedades de fast-check** mapeadas
+> a un invariante de la PARTE E de la spec 30. A eso se suman **28 escenarios de extremo a extremo**
+> en Playwright.
 >
-> **Fecha:** 2026-08-21 · Lo exigido a `packages/*` ya se cumple; lo exigido a `services/api` y
-> `apps/web` es el contrato que deberán cumplir cuando existan, escrito ahora para que no se escriba
-> después.
+> **Fecha:** 2026-08-21 · Lo exigido a `packages/*`, a `services/api` y al corte vertical ya se
+> cumple; `apps/web` se cubre por extremo a extremo y no tiene suite unitaria propia.
 
 ## Principio rector
 
