@@ -1,9 +1,9 @@
 {
-  "name": "@koinonia/api",
+  "name": "@koinonia/anchor",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Adaptadores de Koinonía: persistencia del ledger sobre PostgreSQL. Lo único que hace I/O",
+  "description": "Anclaje externo de checkpoints: OpenTimestamps, git firmado y testigos por correo, con quórum 2-de-3 por clase de independencia",
   "license": "AGPL-3.0-or-later",
   "sideEffects": false,
   "exports": {
@@ -16,18 +16,14 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "migrations"
+    "README.md"
   ],
   "scripts": {
-    "build": "tsc --build"
+    "build": "tsc --build",
+    "test": "vitest run --root ../.. packages/anchor"
   },
   "dependencies": {
-    "@koinonia/anchor": "workspace:*",
-    "@koinonia/contracts": "workspace:*",
-    "@koinonia/crypto": "workspace:*",
-    "@koinonia/domain": "workspace:*",
-    "@koinonia/verificar": "workspace:*",
-    "pg": "^8.16.3"
+    "@koinonia/crypto": "workspace:*"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -132,11 +132,22 @@ function rowToCheckpoint(row: CheckpointRow): Checkpoint {
   };
 }
 
+/**
+ * El último checkpoint por `tree_size`.
+ *
+ * ⚠ El `ORDER BY` va **cualificado con la tabla** a propósito. `SELECT tree_size::text AS tree_size
+ * … ORDER BY tree_size` ordena por la columna de SALIDA, que es `text`, y por tanto
+ * lexicográficamente: con diez checkpoints, el «último» sería el 9 y no el 10. El `prevCheckpoint`
+ * del siguiente sello apuntaría al equivocado y la cadena de checkpoints se bifurcaría en silencio.
+ * Estaba así desde la primera versión; lo destapó el verificador independiente al ver un export con
+ * los eventos ordenados 0, 1, 10, 11, 2, 3…
+ */
 export async function latestCheckpoint(client: PgClient): Promise<Checkpoint | undefined> {
   const { rows } = await client.query<CheckpointRow>(
     `SELECT tree_size::text AS tree_size, root_hash, heads_root, prev_checkpoint,
             issued_at, checkpoint_hash, firm
-       FROM governance.checkpoint ORDER BY tree_size DESC LIMIT 1`,
+       FROM governance.checkpoint
+      ORDER BY governance.checkpoint.tree_size DESC LIMIT 1`,
   );
   const row = rows[0];
   return row === undefined ? undefined : rowToCheckpoint(row);

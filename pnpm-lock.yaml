@@ -45,6 +45,12 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@8.2.2(@types/node@22.20.1)(yaml@2.9.0))
 
+  packages/anchor:
+    dependencies:
+      '@koinonia/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+
   packages/contracts:
     dependencies:
       '@koinonia/domain':
@@ -59,8 +65,20 @@ importers:
         specifier: workspace:*
         version: link:../crypto
 
+  packages/verifier-cli:
+    dependencies:
+      '@koinonia/anchor':
+        specifier: workspace:*
+        version: link:../anchor
+      '@koinonia/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+
   services/api:
     dependencies:
+      '@koinonia/anchor':
+        specifier: workspace:*
+        version: link:../../packages/anchor
       '@koinonia/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -70,6 +88,9 @@ importers:
       '@koinonia/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@koinonia/verificar':
+        specifier: workspace:*
+        version: link:../../packages/verifier-cli
       pg:
         specifier: ^8.16.3
         version: 8.23.0
