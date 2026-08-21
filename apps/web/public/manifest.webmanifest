@@ -1,0 +1,22 @@
+{
+  "name": "Koinonía",
+  "short_name": "Koinonía",
+  "description": "Gobernanza del estudiantado del Instituto de Filosofía de la Universidad de Antioquia",
+  "lang": "es-CO",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#0b4fa8",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icono.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

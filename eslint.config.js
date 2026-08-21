@@ -5,7 +5,18 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/*.tsbuildinfo', 'docs/**'],
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/coverage/**',
+      '**/*.tsbuildinfo',
+      'docs/**',
+      // Artefactos generados: los produce Next.js y no se revisan, se borran.
+      'apps/web/.next/**',
+      'apps/web/next-env.d.ts',
+      'playwright-report/**',
+      'test-results/**',
+    ],
   },
 
   js.configs.recommended,
@@ -63,6 +74,50 @@ export default tseslint.config(
   },
 
   {
+    // La interfaz tiene su propio `tsconfig`: necesita JSX, `lib: DOM` y resolución de módulos de
+    // empaquetador, tres cosas incompatibles con la configuración del resto del monorepo. Se le da
+    // su proyecto en vez de excluirla del análisis: una carpeta sin `lint` es una carpeta sin reglas.
+    files: ['apps/web/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./apps/web/tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      globals: {
+        crypto: 'readonly',
+        document: 'readonly',
+        fetch: 'readonly',
+        Headers: 'readonly',
+        localStorage: 'readonly',
+        navigator: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly',
+        window: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+    rules: {
+      // En React el tipo de retorno de un componente lo infiere el compilador y anotarlo en cada
+      // manejador de eventos es ruido; el `strict` del `tsconfig` sigue vigilando lo importante.
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
+  },
+
+  {
+    // Los escenarios de extremo a extremo tienen su propio proyecto: usan `lib: DOM`, porque el
+    // código de `page.evaluate` corre dentro del navegador.
+    files: ['tests/e2e/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tests/e2e/tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+
+  {
     files: ['**/test/**/*.ts', 'tests/**/*.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
@@ -82,6 +137,8 @@ export default tseslint.config(
     },
     rules: {
       'no-console': 'off',
+      // En un fichero de configuración de JavaScript sin tipos, anotar el retorno no aporta nada.
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
     },
   },
 

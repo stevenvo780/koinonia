@@ -23,6 +23,7 @@
 
 import { sha256, toHex } from '@koinonia/crypto';
 
+import { type Actor, authorize } from './access.js';
 import type { Ballot, BallotDraft } from './ballot.js';
 import { validateBallot } from './ballot.js';
 import {
@@ -231,6 +232,20 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
     case 'BallotCast': {
       const config = requireConfig(state);
       const ballot = payload.ballot;
+      // ═══ Autorización horizontal, comprobada en el REPLAY ═══
+      //
+      // Nadie vota por otro. La comprobación no está sólo en la orden ni sólo en la ruta: está en el
+      // plegado, que es el único sitio por el que pasa todo log, venga de donde venga. Un log
+      // fabricado a mano —o escrito por una ruta futura que se olvide de comprobarlo— con una
+      // papeleta cuyo votante no es el actor del evento **no se pliega**: se rechaza, y la decisión
+      // entera queda en cuarentena hasta que alguien explique de dónde salió.
+      if (ballot.voter !== event.actor) {
+        throw new PreconditionError(
+          'BALLOT_NOT_SELF_CAST',
+          `el evento lo firma ${String(event.actor)} y la papeleta se atribuye a ${ballot.voter}: ` +
+            'nadie emite la papeleta de otra persona',
+        );
+      }
       if (ballot.seq !== event.seq) {
         throw new PreconditionError(
           'BALLOT_SEQ_MISMATCH',
@@ -714,6 +729,61 @@ export async function castBallot(
     occurredAt: input.at,
     actor: ballot.voter,
     payload: { type: 'BallotCast', ballot },
+  });
+}
+
+/**
+ * `castBallot` con autorización del dominio.
+ *
+ * Es la puerta que usa la capa de aplicación. `castBallot` sigue existiendo por debajo porque las
+ * pruebas de propiedad construyen recorridos sin actor autenticado, pero **saltársela no sirve de
+ * nada**: la comprobación que de verdad cierra el paso es la de `apply`, que exige
+ * `ballot.voter === event.actor` y corre en todo plegado, incluido el de la auditoría.
+ *
+ * Aquí se comprueba además el permiso completo —identidad, rol y sujeto— para poder dar un mensaje
+ * útil antes de escribir, en vez de un rechazo genérico al plegar.
+ */
+export async function castBallotBy(
+  log: DecisionLog,
+  input: CommandMeta & { readonly by: Actor; readonly ballot: BallotDraft },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  authorize(input.by, 'decision:cast-ballot', {
+    kind: 'decision',
+    subject: input.ballot.voter,
+    circleId: config.circleId,
+  });
+  return castBallot(log, {
+    eventId: input.eventId,
+    at: input.at,
+    actor: input.ballot.voter,
+    ballot: input.ballot,
+  });
+}
+
+/**
+ * Cierre con autorización del dominio: cuidar el procedimiento es un encargo, no un derecho general.
+ */
+export async function closeDecisionBy(
+  log: DecisionLog,
+  input: CommandMeta & {
+    readonly by: Actor;
+    readonly cause: CloseCause;
+    readonly signers?: readonly MemberId[];
+    readonly resolver?: WeightResolver;
+  },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  authorize(input.by, 'decision:close', { kind: 'decision', circleId: config.circleId });
+  return closeDecision(log, {
+    eventId: input.eventId,
+    at: input.at,
+    actor: input.actor,
+    cause: input.cause,
+    ...(input.signers === undefined ? {} : { signers: input.signers }),
+    ...(input.resolver === undefined ? {} : { resolver: input.resolver }),
   });
 }
 

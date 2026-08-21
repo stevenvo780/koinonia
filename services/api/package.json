@@ -19,15 +19,22 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc --build"
+    "build": "tsc --build",
+    "start": "node ./dist/bin.js"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@koinonia/contracts": "workspace:*",
     "@koinonia/crypto": "workspace:*",
     "@koinonia/domain": "workspace:*",
-    "pg": "^8.16.3"
+    "fastify": "^5.6.1",
+    "pg": "^8.16.3",
+    "zod": "^4.1.13"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "bin": {
+    "koinonia-api": "./dist/bin.js"
   }
 }

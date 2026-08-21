@@ -1,0 +1,321 @@
+/**
+ * La bóveda de identidad: personas, enlaces mágicos y sesiones.
+ *
+ * Es el **único** módulo del repositorio que toca datos personales, y todo lo que hace está pensado
+ * para que ese hecho no se filtre a ninguna otra parte. Devuelve `MemberId` opacos hacia arriba; el
+ * correo no cruza esta frontera.
+ *
+ * ═══ Enlace mágico: un solo uso, con caducidad y resistente a la reproducción ═══
+ *
+ * Tres propiedades, y las tres tienen su mecanismo:
+ *
+ *  1. **Del token no se guarda el token.** Se guarda `sha256(token)`. Quien lea la base no entra
+ *     como nadie: de la huella no se vuelve al token.
+ *  2. **Caducidad**: `expires_at`, comprobado contra el reloj inyectado. Quince minutos.
+ *  3. **Un solo uso, de verdad**: consumir es `UPDATE … WHERE token_hash = $1 AND consumed_at IS
+ *     NULL RETURNING …`, una comparación-y-cambio **atómica**. Dos peticiones simultáneas con el
+ *     mismo enlace producen exactamente un ganador porque lo decide el motor de la base, no una
+ *     lectura seguida de una escritura. Ese hueco entre leer y escribir es precisamente el que un
+ *     ataque de reproducción explota, y aquí no existe.
+ */
+
+import { createHash, timingSafeEqual } from 'node:crypto';
+
+import {
+  type CircleId,
+  circleId,
+  type MemberId,
+  memberId,
+  type Role,
+  isRole,
+} from '@koinonia/domain';
+
+import type { PgClient, PgPool } from '../db/client.js';
+import type { AuthenticatedMember, ClockPort, IdentityClaim, RandomPort } from './ports.js';
+
+/** Cuánto dura un enlace mágico. Se dice en pantalla: los plazos no se ocultan. */
+export const ENLACE_VIGENCIA_MS = 15 * 60 * 1000;
+/** Cuánto dura una sesión. Un semestre no; un día de trabajo sí. */
+export const SESION_VIGENCIA_MS = 12 * 60 * 60 * 1000;
+
+export function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+/** Comparación en tiempo constante de dos huellas hexadecimales de la misma longitud. */
+export function huellasIguales(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+}
+
+/** Token opaco de 256 bits en base64url. No lleva información: es un puntero a una fila. */
+export function nuevoToken(random: RandomPort): string {
+  return Buffer.from(random.bytes(32)).toString('base64url');
+}
+
+interface MemberRow {
+  readonly member_id: string;
+  readonly alias: string;
+  readonly roles: string[];
+  readonly circles: string[];
+  readonly semestre: string;
+  readonly jornada: string;
+  readonly enrolled_at: Date;
+  readonly withdrawn_at: Date | null;
+}
+
+export interface MemberRecord {
+  readonly memberId: MemberId;
+  readonly alias: string;
+  readonly roles: readonly Role[];
+  readonly circles: readonly CircleId[];
+  readonly semestre: string;
+  readonly jornada: string;
+  readonly enrolledAt: number;
+  readonly withdrawnAt: number | undefined;
+}
+
+function toRecord(row: MemberRow): MemberRecord {
+  return {
+    memberId: memberId(row.member_id.trimEnd()),
+    alias: row.alias,
+    // Un rol desconocido en la base no se acepta «por si acaso»: se descarta. Si alguien escribiera
+    // 'superadmin' en la columna, no querríamos que el sistema le diera un permiso sin nombre.
+    roles: row.roles.filter((r): r is Role => isRole(r)),
+    circles: row.circles.map((c) => circleId(c.trimEnd())),
+    semestre: row.semestre,
+    jornada: row.jornada,
+    enrolledAt: row.enrolled_at.getTime(),
+    withdrawnAt: row.withdrawn_at === null ? undefined : row.withdrawn_at.getTime(),
+  };
+}
+
+const MEMBER_COLUMNS =
+  'member_id, alias, roles, circles, semestre, jornada, enrolled_at, withdrawn_at';
+
+/**
+ * Alta o actualización de una persona a partir de lo que afirma el proveedor de identidad.
+ *
+ * El `member_id` se genera **una sola vez**, con 128 bits del generador criptográfico, y no se
+ * deriva del correo (ADR-0006): un identificador derivado es re-derivable por cualquiera que tenga
+ * el correo, lo que sobre 300 personas permite confirmar pertenencia por diccionario y vuelve
+ * ficticio el borrado.
+ */
+export async function upsertMember(
+  client: PgClient,
+  claim: IdentityClaim,
+  random: RandomPort,
+): Promise<MemberRecord> {
+  const emailHash = sha256Hex(claim.email);
+  const { rows } = await client.query<MemberRow>(
+    `INSERT INTO identity.member
+       (member_id, email, email_hash, alias, roles, circles, semestre, jornada)
+     VALUES ($1, $2, $3, $4, $5::text[], $6::char(32)[], $7, $8)
+     ON CONFLICT (email_hash) DO UPDATE
+       SET alias = EXCLUDED.alias,
+           roles = EXCLUDED.roles,
+           circles = EXCLUDED.circles
+     RETURNING ${MEMBER_COLUMNS}`,
+    [
+      random.opaqueId(),
+      claim.email,
+      emailHash,
+      claim.alias,
+      [...claim.roles],
+      [...claim.circles],
+      claim.semestre,
+      claim.jornada,
+    ],
+  );
+  const row = rows[0];
+  if (row === undefined) throw new Error('el alta de la persona no devolvió fila');
+  return toRecord(row);
+}
+
+export async function findMember(
+  client: PgClient,
+  id: MemberId,
+): Promise<MemberRecord | undefined> {
+  const { rows } = await client.query<MemberRow>(
+    `SELECT ${MEMBER_COLUMNS} FROM identity.member WHERE member_id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}
+
+/** Todo el registro vivo, en orden de identificador. Es la entrada de la congelación del padrón. */
+export async function allMembers(client: PgClient): Promise<readonly MemberRecord[]> {
+  const { rows } = await client.query<MemberRow>(
+    `SELECT ${MEMBER_COLUMNS} FROM identity.member ORDER BY member_id ASC`,
+  );
+  return rows.map(toRecord);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Enlace mágico
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface EnlaceEmitido {
+  readonly token: string;
+  readonly expiraEn: number;
+}
+
+export async function issueMagicLink(
+  client: PgClient,
+  member: MemberRecord,
+  ports: { readonly clock: ClockPort; readonly random: RandomPort },
+): Promise<EnlaceEmitido> {
+  const token = nuevoToken(ports.random);
+  const expiraEn = ports.clock.now() + ENLACE_VIGENCIA_MS;
+  await client.query(
+    `INSERT INTO identity.magic_link (token_hash, member_id, issued_at, expires_at)
+     VALUES ($1, $2, to_timestamp($3::double precision / 1000), to_timestamp($4::double precision / 1000))`,
+    [sha256Hex(token), member.memberId, ports.clock.now(), expiraEn],
+  );
+  return { token, expiraEn };
+}
+
+export type CanjeResultado =
+  | { readonly ok: true; readonly memberId: MemberId }
+  | { readonly ok: false; readonly code: 'ENLACE_INVALIDO' | 'ENLACE_VENCIDO' | 'ENLACE_YA_USADO' };
+
+/**
+ * Canjea el enlace. **Un solo uso, con caducidad y resistente a la reproducción.**
+ *
+ * El `UPDATE … WHERE consumed_at IS NULL RETURNING` es la pieza entera: es atómico, así que dos
+ * intentos simultáneos con el mismo token producen un ganador y un perdedor, y el perdedor no
+ * consigue una sesión. Después se distingue «vencido» de «ya usado» **releyendo la fila**, para dar
+ * un mensaje útil sin haber relajado la atomicidad.
+ */
+export async function redeemMagicLink(
+  client: PgClient,
+  token: string,
+  clock: ClockPort,
+): Promise<CanjeResultado> {
+  const tokenHash = sha256Hex(token);
+  const now = clock.now();
+
+  const claimed = await client.query<{ member_id: string }>(
+    `UPDATE identity.magic_link
+        SET consumed_at = to_timestamp($2::double precision / 1000)
+      WHERE token_hash = $1
+        AND consumed_at IS NULL
+        AND expires_at > to_timestamp($2::double precision / 1000)
+      RETURNING member_id`,
+    [tokenHash, now],
+  );
+
+  const row = claimed.rows[0];
+  if (row !== undefined) return { ok: true, memberId: memberId(row.member_id.trimEnd()) };
+
+  // No se pudo consumir. Ahora sí se puede leer sin carrera: la fila, si existe, ya no es
+  // consumible por nadie, así que el diagnóstico es estable.
+  const { rows } = await client.query<{ consumed: boolean; expired: boolean }>(
+    `SELECT consumed_at IS NOT NULL AS consumed,
+            expires_at <= to_timestamp($2::double precision / 1000) AS expired
+       FROM identity.magic_link WHERE token_hash = $1`,
+    [tokenHash, now],
+  );
+  const estado = rows[0];
+  if (estado === undefined) return { ok: false, code: 'ENLACE_INVALIDO' };
+  if (estado.consumed) return { ok: false, code: 'ENLACE_YA_USADO' };
+  return { ok: false, code: 'ENLACE_VENCIDO' };
+}
+
+/** Barre los enlaces vencidos. Un enlace caducado que sigue en la base es un dato sin propósito. */
+export async function purgeExpiredLinks(client: PgClient, clock: ClockPort): Promise<number> {
+  const result = await client.query(
+    `DELETE FROM identity.magic_link
+      WHERE expires_at < to_timestamp($1::double precision / 1000)`,
+    [clock.now() - ENLACE_VIGENCIA_MS],
+  );
+  return result.rowCount ?? 0;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Sesión
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface SesionEmitida {
+  readonly token: string;
+  readonly expiraEn: number;
+}
+
+export async function openSession(
+  client: PgClient,
+  id: MemberId,
+  ports: { readonly clock: ClockPort; readonly random: RandomPort },
+): Promise<SesionEmitida> {
+  const token = nuevoToken(ports.random);
+  const expiraEn = ports.clock.now() + SESION_VIGENCIA_MS;
+  await client.query(
+    `INSERT INTO identity.session (token_hash, member_id, issued_at, expires_at)
+     VALUES ($1, $2, to_timestamp($3::double precision / 1000), to_timestamp($4::double precision / 1000))`,
+    [sha256Hex(token), id, ports.clock.now(), expiraEn],
+  );
+  return { token, expiraEn };
+}
+
+interface SessionRow extends MemberRow {
+  readonly expires_at: Date;
+}
+
+/** Resuelve una sesión a la persona. Devuelve `undefined` si no vale, sin decir por qué. */
+export async function resolveSession(
+  client: PgClient,
+  token: string,
+  clock: ClockPort,
+): Promise<AuthenticatedMember | undefined> {
+  const { rows } = await client.query<SessionRow>(
+    `SELECT m.member_id, m.alias, m.roles, m.circles, m.semestre, m.jornada,
+            m.enrolled_at, m.withdrawn_at, s.expires_at
+       FROM identity.session s
+       JOIN identity.member m ON m.member_id = s.member_id
+      WHERE s.token_hash = $1
+        AND s.revoked_at IS NULL
+        AND s.expires_at > to_timestamp($2::double precision / 1000)`,
+    [sha256Hex(token), clock.now()],
+  );
+  const row = rows[0];
+  if (row === undefined) return undefined;
+  const record = toRecord(row);
+  return {
+    memberId: record.memberId,
+    alias: record.alias,
+    roles: record.roles,
+    circles: record.circles,
+    expiresAt: row.expires_at.getTime(),
+  };
+}
+
+export async function revokeSession(
+  client: PgClient,
+  token: string,
+  clock: ClockPort,
+): Promise<void> {
+  await client.query(
+    `UPDATE identity.session
+        SET revoked_at = to_timestamp($2::double precision / 1000)
+      WHERE token_hash = $1 AND revoked_at IS NULL`,
+    [sha256Hex(token), clock.now()],
+  );
+}
+
+/**
+ * Borrado físico de una persona (ADR-0009).
+ *
+ * Se lleva por delante sus sesiones y sus enlaces, y **no toca ni un evento del historial**: los
+ * identificadores opacos siguen ahí, las cadenas de hashes siguen cuadrando y las decisiones que
+ * ayudó a tomar siguen siendo verificables. Eso es exactamente lo que la separación física de los
+ * dos esquemas hace posible.
+ */
+export async function forgetMember(pool: PgPool, id: MemberId): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query('DELETE FROM identity.member WHERE member_id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  } finally {
+    client.release();
+  }
+}

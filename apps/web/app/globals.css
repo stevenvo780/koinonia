@@ -1,0 +1,440 @@
+/*
+ * Estilos de Koinonía. Móvil primero, WCAG 2.2 AA.
+ *
+ * No hace falta que sea bonito; hace falta que sea claro, que se lea de pie en un bus con una mano y
+ * que funcione con un lector de pantalla. Tres decisiones que no son estéticas:
+ *
+ *  1. **Contraste comprobado.** El texto principal es #16191d sobre #ffffff (17.6:1) y el texto
+ *     secundario #4a5057 sobre #ffffff (8.1:1). El azul de enlace es #0b4fa8 sobre blanco (8.2:1) y
+ *     el rojo de error #a41818 sobre blanco (7.7:1). Ninguno baja de 4.5:1, ni siquiera los que
+ *     «casi no se leen».
+ *  2. **Objetivos táctiles de 44 px**, no de 24. El mínimo de la norma es 24×24; 44 es lo que hace
+ *     falta para acertar con el pulgar yendo de pie.
+ *  3. **Nada depende sólo del color.** Verde y rojo llevan siempre un símbolo y una palabra.
+ */
+
+:root {
+  --tinta: #16191d;
+  --tinta-suave: #4a5057;
+  --fondo: #ffffff;
+  --fondo-suave: #f4f5f7;
+  --borde: #c9ced4;
+  --enlace: #0b4fa8;
+  --bien: #14612f;
+  --bien-fondo: #e7f4ec;
+  --mal: #a41818;
+  --mal-fondo: #fdeaea;
+  --aviso-fondo: #fdf4e3;
+  --foco: #0b4fa8;
+  --radio: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  /* 100% del tamaño que la persona eligió en su sistema. Nunca se fija en píxeles. */
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--tinta);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+
+/* Foco SIEMPRE visible, y con grosor suficiente para verse en una pantalla al sol. */
+:focus-visible {
+  outline: 3px solid var(--foco);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respeto por quien pidió menos movimiento. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* El enlace para saltar al contenido: invisible hasta que se enfoca con el teclado. */
+.saltar {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--tinta);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  z-index: 100;
+}
+.saltar:focus {
+  left: 0;
+}
+
+header.cabecera {
+  border-bottom: 1px solid var(--borde);
+  padding: 0.75rem 1rem;
+}
+
+header.cabecera a.marca {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--tinta);
+  text-decoration: none;
+}
+
+nav.principal ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+nav.principal a {
+  display: inline-block;
+  min-height: 44px;
+  line-height: 44px;
+  color: var(--enlace);
+}
+
+main {
+  padding: 1rem;
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+footer.pie {
+  border-top: 1px solid var(--borde);
+  padding: 1rem;
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+  max-width: 44rem;
+  margin: 2rem auto 0;
+}
+
+h1 {
+  font-size: 1.625rem;
+  line-height: 1.25;
+  margin: 0.5rem 0 1rem;
+}
+h2 {
+  font-size: 1.25rem;
+  line-height: 1.3;
+  margin: 1.75rem 0 0.5rem;
+}
+h3 {
+  font-size: 1.0625rem;
+  margin: 1.25rem 0 0.25rem;
+}
+
+a {
+  color: var(--enlace);
+}
+
+p.suave {
+  color: var(--tinta-suave);
+}
+
+/* ── Botones ─────────────────────────────────────────────────────────────────────────────── */
+
+.boton,
+button.boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.625rem 1.125rem;
+  border-radius: var(--radio);
+  border: 2px solid var(--enlace);
+  background: var(--enlace);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.boton[disabled] {
+  opacity: 1;
+  background: var(--fondo-suave);
+  border-color: var(--borde);
+  color: var(--tinta-suave);
+  cursor: not-allowed;
+}
+
+.boton.secundario {
+  background: var(--fondo);
+  color: var(--enlace);
+}
+
+/* El botón grande de la portada: es la acción principal de toda la plataforma. */
+.boton.grande {
+  width: 100%;
+  min-height: 64px;
+  font-size: 1.1875rem;
+  padding: 1rem;
+}
+
+/* ── Formularios ─────────────────────────────────────────────────────────────────────────── */
+
+.campo {
+  margin: 1.25rem 0;
+}
+
+.campo label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.campo .ayuda {
+  display: block;
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+  margin-bottom: 0.375rem;
+}
+
+.campo input,
+.campo textarea,
+.campo select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.625rem 0.75rem;
+  border: 2px solid var(--borde);
+  border-radius: var(--radio);
+  font: inherit;
+  color: var(--tinta);
+  background: var(--fondo);
+}
+
+.campo textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.campo input[aria-invalid='true'],
+.campo textarea[aria-invalid='true'] {
+  border-color: var(--mal);
+}
+
+.error-campo {
+  color: var(--mal);
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
+/* ── Avisos ──────────────────────────────────────────────────────────────────────────────── */
+
+.aviso {
+  border: 2px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.875rem 1rem;
+  margin: 1rem 0;
+  background: var(--fondo-suave);
+}
+
+.aviso.error {
+  border-color: var(--mal);
+  background: var(--mal-fondo);
+  color: var(--mal);
+}
+
+.aviso.bien {
+  border-color: var(--bien);
+  background: var(--bien-fondo);
+  color: var(--bien);
+}
+
+.aviso.atencion {
+  background: var(--aviso-fondo);
+  border-color: #a06a08;
+}
+
+/* ── Tarjetas y listas ───────────────────────────────────────────────────────────────────── */
+
+ul.tarjetas {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+ul.tarjetas > li {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.875rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+ul.tarjetas h3 {
+  margin-top: 0;
+}
+
+.etiqueta {
+  display: inline-block;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.875rem;
+  background: var(--fondo-suave);
+  color: var(--tinta);
+}
+
+.vacio {
+  border: 2px dashed var(--borde);
+  border-radius: var(--radio);
+  padding: 1.25rem;
+  background: var(--fondo-suave);
+}
+
+.vacio ul {
+  padding-left: 1.25rem;
+}
+
+/* ── Versiones de una propuesta ──────────────────────────────────────────────────────────── */
+
+.version {
+  border: 1px solid var(--borde);
+  border-left: 6px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.version.vigente {
+  border-left-color: var(--enlace);
+}
+
+.version .texto {
+  white-space: pre-wrap;
+}
+
+/* ── Papeleta ────────────────────────────────────────────────────────────────────────────── */
+
+fieldset.opciones {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.5rem 1rem 1rem;
+  margin: 1rem 0;
+}
+
+fieldset.opciones legend {
+  font-weight: 700;
+  padding: 0 0.375rem;
+}
+
+.opcion {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  min-height: 44px;
+  padding: 0.5rem 0;
+}
+
+.opcion input[type='radio'] {
+  width: 24px;
+  height: 24px;
+  margin-top: 0.25rem;
+  flex: 0 0 auto;
+}
+
+.opcion label {
+  font-weight: 600;
+}
+
+.opcion .explica {
+  display: block;
+  font-weight: 400;
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+}
+
+/* ── Traza y verificación ────────────────────────────────────────────────────────────────── */
+
+ol.traza {
+  padding-left: 1.25rem;
+}
+
+ol.traza li {
+  margin-bottom: 0.75rem;
+}
+
+table.datos {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+}
+
+table.datos th,
+table.datos td {
+  border: 1px solid var(--borde);
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+}
+
+table.datos th {
+  background: var(--fondo-suave);
+}
+
+.comprobacion {
+  border: 2px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.comprobacion.bien {
+  border-color: var(--bien);
+  background: var(--bien-fondo);
+}
+
+.comprobacion.mal {
+  border-color: var(--mal);
+  background: var(--mal-fondo);
+}
+
+/* El símbolo va con la palabra: nada depende sólo del color. */
+.marca-estado {
+  font-weight: 700;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.comprobacion.bien .marca-estado {
+  color: var(--bien);
+}
+
+.comprobacion.mal .marca-estado {
+  color: var(--mal);
+}
+
+code.comprobante {
+  display: block;
+  overflow-wrap: anywhere;
+  background: var(--fondo-suave);
+  border: 1px solid var(--borde);
+  border-radius: 4px;
+  padding: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.cargando {
+  color: var(--tinta-suave);
+}

@@ -285,11 +285,35 @@ export {
   type WeightResolver,
 } from './tally/index.js';
 
+// ── Autorización (en el DOMINIO, no en la ruta) ─────────────────────────────────────────────────
+export {
+  ACTIONS,
+  type Action,
+  type Actor,
+  ANONYMOUS,
+  authorize,
+  can,
+  type DenialReason,
+  denialReason,
+  isRole,
+  type ResourceKind,
+  type ResourceRef,
+  type Role,
+  ROLES,
+  ruleFor,
+  UnauthorizedError,
+} from './access.js';
+
+// ── Agregados de trabajo: problemas y propuestas ────────────────────────────────────────────────
+export * from './workspace/index.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,
   castBallot,
+  castBallotBy,
   closeDecision,
+  closeDecisionBy,
   type CommandMeta,
   computeResult,
   currentWindow,

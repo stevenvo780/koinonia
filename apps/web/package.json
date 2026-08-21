@@ -1,0 +1,26 @@
+{
+  "name": "@koinonia/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interfaz de Koinonía: PWA móvil primero, español de Colombia, WCAG 2.2 AA",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "e2e": "next build && next start --port 3100 --hostname 127.0.0.1"
+  },
+  "dependencies": {
+    "@koinonia/contracts": "workspace:*",
+    "next": "^15.5.9",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

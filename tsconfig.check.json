@@ -10,6 +10,8 @@
     "types": ["node"],
     "paths": {
       "@koinonia/crypto": ["./packages/crypto/src/index.ts"],
+      "@koinonia/anchor": ["./packages/anchor/src/index.ts"],
+      "@koinonia/verificar": ["./packages/verifier-cli/src/index.ts"],
       "@koinonia/domain": ["./packages/domain/src/index.ts"],
       "@koinonia/contracts": ["./packages/contracts/src/index.ts"],
       "@koinonia/api": ["./services/api/src/index.ts"]
@@ -21,6 +23,8 @@
     "services/*/src/**/*.ts",
     "services/*/test/**/*.ts",
     "tests/**/*.ts",
-    "vitest.config.ts"
-  ]
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["tests/e2e/**"]
 }

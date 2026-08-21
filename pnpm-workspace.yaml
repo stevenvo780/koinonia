@@ -11,5 +11,10 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+  # `sharp` es el optimizador de imágenes opcional de Next.js. Se deniega: la interfaz no sirve ni
+  # una imagen rasterizada (mapas de bits pesan en datos móviles, que es exactamente lo que Daniela
+  # no tiene de sobra), y un addon nativo compilado en `postinstall` es superficie de ataque de
+  # cadena de suministro a cambio de nada.
+  sharp: false
 minimumReleaseAgeExclude:
   - eslint@10.9.0

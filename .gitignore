@@ -25,3 +25,10 @@ Thumbs.db
 # Artefactos locales de verificación (los publicados viven fuera del repo de código).
 /export/
 /checkpoints-local/
+
+# Artefactos de la interfaz y de las pruebas de extremo a extremo.
+.next/
+next-env.d.ts
+/playwright-report/
+/test-results/
+/tests/e2e/.entorno.json

@@ -142,3 +142,99 @@ export {
   replayDecision,
   type PersistResult,
 } from './decision/repository.js';
+
+// ── Agregados de trabajo ────────────────────────────────────────────────────────────────────────
+export {
+  decodeProblemEvent,
+  decodeProposalEvent,
+  encodeProblemEvent,
+  encodeProposalEvent,
+  PROBLEM_AGGREGATE_TYPE,
+  PROPOSAL_AGGREGATE_TYPE,
+  WORKSPACE_EVENT_VERSION,
+  WorkspaceCodecError,
+} from './workspace/codec.js';
+
+export {
+  listAggregateIds,
+  loadProblemLog,
+  loadProblemState,
+  loadProposalLog,
+  loadProposalState,
+  persistProblemLog,
+  persistProposalLog,
+  WorkspacePersistenceError,
+  type WorkspacePersistResult,
+} from './workspace/repository.js';
+
+// ── Capa HTTP ───────────────────────────────────────────────────────────────────────────────────
+export { buildApp, COOKIE_SESION, type AppOptions } from './http/app.js';
+
+export {
+  consoleMailer,
+  cryptoRandom,
+  DOMINIO_INSTITUCIONAL,
+  MemoryMailer,
+  systemClock,
+  udeaIdentityAdapter,
+} from './http/adapters.js';
+
+export {
+  CIRCULOS,
+  CIRCULOS_LISTA,
+  existeCirculo,
+  nombreDeCirculo,
+  type CirculoFijo,
+} from './http/circles.js';
+
+export {
+  allMembers,
+  ENLACE_VIGENCIA_MS,
+  findMember,
+  forgetMember,
+  huellasIguales,
+  issueMagicLink,
+  type MemberRecord,
+  openSession,
+  purgeExpiredLinks,
+  redeemMagicLink,
+  resolveSession,
+  revokeSession,
+  SESION_VIGENCIA_MS,
+  sha256Hex,
+  upsertMember,
+} from './http/identity.js';
+
+export {
+  bucketKey,
+  consume,
+  pepperOfDay,
+  purgeOldBuckets,
+  type RateRule,
+  type RateVerdict,
+  REGLA_ENLACE,
+  REGLA_ESCRITURA,
+} from './http/rate-limit.js';
+
+export type {
+  AuthenticatedMember,
+  ClockPort,
+  IdentityClaim,
+  IdentityProviderAdapter,
+  IdentityResult,
+  MailerPort,
+  OutgoingMail,
+  Ports,
+  RandomPort,
+} from './http/ports.js';
+
+export {
+  ACTOR_ANONIMO,
+  queHaceFaltaParaQuePase,
+  ServicioError,
+  type MetodoSoportado,
+  type ServicioDeps,
+} from './http/service.js';
+
+// `server.ts` NO se reexporta desde aquí: contiene el arranque y leer variables de entorno no es
+// asunto de la librería. El ejecutable es `dist/bin.js`.

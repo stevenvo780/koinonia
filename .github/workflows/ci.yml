@@ -42,3 +42,87 @@ jobs:
           KOINONIA_REQUIRE_DOCKER: '1'
 
       - run: pnpm run build
+      - run: pnpm run build:web
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════
+  # Extremo a extremo.
+  #
+  # En un pull request corre SÓLO Chromium: el ciclo de revisión tiene que caber en el tiempo que
+  # alguien está dispuesto a esperar mirando la pestaña, y la mayoría de las regresiones aparecen en
+  # el primer navegador. En `main` corre la matriz entera —Chromium, Firefox, WebKit, Chrome móvil y
+  # Safari móvil—, porque esto se usa en un teléfono y Safari móvil es donde fallan las cosas que en
+  # el escritorio funcionan.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  e2e-pr:
+    name: e2e · Chromium (pull request)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Navegadores (sólo Chromium)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Comprobar que Docker está disponible
+        run: docker info
+
+      - run: pnpm run e2e
+        env:
+          CI: 'true'
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-pr
+          path: playwright-report/
+          retention-days: 7
+
+  e2e-main:
+    name: e2e · ${{ matrix.proyecto }} (main)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        proyecto: [chromium, firefox, webkit, chrome-movil, safari-movil]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `--with-deps` instala las librerías del sistema que Firefox y WebKit necesitan
+      # (libicu, libxml2, libflite1, libmanette). Sin ellas WebKit descarga pero no arranca.
+      - name: Navegadores y dependencias del sistema
+        run: pnpm exec playwright install --with-deps
+
+      - name: Comprobar que Docker está disponible
+        run: docker info
+
+      - run: pnpm exec tsc --build packages/contracts services/api
+
+      - run: pnpm exec playwright test --project=${{ matrix.proyecto }}
+        env:
+          CI: 'true'
+          KOINONIA_MATRIZ: completa
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-${{ matrix.proyecto }}
+          path: playwright-report/
+          retention-days: 7
