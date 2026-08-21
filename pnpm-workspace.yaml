@@ -1,0 +1,6 @@
+packages:
+  - 'packages/*'
+  - 'services/*'
+  - 'apps/*'
+minimumReleaseAgeExclude:
+  - eslint@10.9.0

@@ -1,0 +1,27 @@
+{
+  "name": "@koinonia/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Dominio puro de Koinonía: sin I/O, sin reloj, sin aleatoriedad, sin framework (ADR-0001)",
+  "license": "AGPL-3.0-or-later",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

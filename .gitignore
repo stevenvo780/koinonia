@@ -1,0 +1,27 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.tsbuildinfo/
+.vitest/
+.eslintcache
+
+# Entorno y secretos: nada de esto entra al repositorio.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Ruido de editores y sistemas operativos.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+
+# Artefactos locales de verificación (los publicados viven fuera del repo de código).
+/export/
+/checkpoints-local/

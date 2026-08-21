@@ -1,0 +1,29 @@
+{
+  "name": "@koinonia/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tipos y textos de frontera de Koinonía (DTO, eventos, cadenas de interfaz)",
+  "license": "AGPL-3.0-or-later",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@koinonia/domain": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
