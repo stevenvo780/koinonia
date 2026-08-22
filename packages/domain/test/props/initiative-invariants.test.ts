@@ -8,6 +8,9 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import {
+  acceptTaskBy,
+  activateInitiative,
+  type Actor,
   circleId,
   createInitiative,
   decisionId,
@@ -15,8 +18,16 @@ import {
   hash,
   initiativeId,
   instant,
+  milestoneId,
+  offerTaskBy,
+  planMilestoneBy,
   proposalId,
   proposalVersionHash,
+  rejectTaskBy,
+  reofferTaskBy,
+  replayInitiative,
+  requestTaskReassignmentBy,
+  taskId,
   type ExecutionPlan,
   validateExecutionPlan,
   verifyInitiativeLog,
@@ -25,6 +36,7 @@ import {
   circleIdAt,
   DECISION_ID,
   eventIdAt,
+  hex32,
   memberIdAt,
   PROPOSAL_ID,
   runs,
@@ -32,6 +44,88 @@ import {
 } from '../arbitraries.js';
 
 const CREATED_AT = instant(T0 + 10_000);
+
+async function offeredExecution(seed: number) {
+  const circle = circleIdAt(1);
+  const owner: Actor = {
+    memberId: memberIdAt(20_000 + seed),
+    roles: ['member'],
+    circles: [circle],
+  };
+  const recipient: Actor = {
+    memberId: memberIdAt(30_000 + seed),
+    roles: ['member'],
+    circles: [circle],
+  };
+  const replacement: Actor = {
+    memberId: memberIdAt(40_000 + seed),
+    roles: ['member'],
+    circles: [circle],
+  };
+  const initiative = initiativeId(hex32(0xa0_000 + seed));
+  const milestone = milestoneId(hex32(0xb0_000 + seed));
+  const task = taskId(hex32(0xc0_000 + seed));
+  const reviewAt = instant(CREATED_AT + 100_000);
+  const plan: ExecutionPlan = {
+    objective: `Completar de manera verificable el plan de ejecución generado ${String(seed)}.`,
+    responsibleId: owner.memberId!,
+    reviewAt,
+    successCriteria: [
+      {
+        description: `El resultado generado ${String(seed)} se puede comprobar públicamente.`,
+        evidenceSource: `Registro institucional generado ${String(seed)}`,
+      },
+    ],
+  };
+  const baseEvent = 100_000 + seed * 20;
+  let log = await createInitiative(
+    { eventId: eventIdAt(baseEvent), at: CREATED_AT, actor: 'system' },
+    {
+      initiativeId: initiative,
+      outcomeKind: 'approved',
+      decisionId: DECISION_ID,
+      proposalId: PROPOSAL_ID,
+      proposalVersionHash: hash('a'.repeat(64)),
+      decisionResultHash: hash('b'.repeat(64)),
+      circleId: circle,
+      executionPlan: plan,
+    },
+  );
+  log = await activateInitiative(
+    log,
+    { eventId: eventIdAt(baseEvent + 1), at: instant(CREATED_AT + 1), actor: 'system' },
+    {
+      ratificationEventId: eventIdAt(baseEvent + 10),
+      ratificationEventHash: hash('c'.repeat(64)),
+    },
+  );
+  log = await planMilestoneBy(
+    log,
+    { eventId: eventIdAt(baseEvent + 2), at: instant(CREATED_AT + 2), by: owner },
+    {
+      milestoneId: milestone,
+      title: `Hito verificable ${String(seed)}`,
+      completionCriterion: `Hay evidencia verificable del hito generado ${String(seed)}.`,
+      dueAt: instant(reviewAt - 1_000),
+    },
+  );
+  log = await offerTaskBy(
+    log,
+    { eventId: eventIdAt(baseEvent + 3), at: instant(CREATED_AT + 3), by: owner },
+    {
+      taskId: task,
+      milestoneId: milestone,
+      offeredTo: recipient.memberId!,
+      recipient,
+      title: `Tarea verificable ${String(seed)}`,
+      description: `Preparar evidencia suficiente para la tarea generada ${String(seed)}.`,
+      effortMinutes: 60,
+      dueAt: instant(reviewAt - 2_000),
+      dependsOn: [],
+    },
+  );
+  return { baseEvent, log, milestone, owner, recipient, replacement, reviewAt, task };
+}
 
 function planFor(seed: number, criteria = 1): ExecutionPlan {
   return {
@@ -199,6 +293,7 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
           },
         );
         const payload = log[0]!.payload;
+        if (payload.type !== 'InitiativeCreated') throw new Error('genesis inesperado');
         const tamperedPayloads = [
           { ...payload, decisionId: decisionId('f'.repeat(32)) },
           { ...payload, proposalId: proposalId('e'.repeat(32)) },
@@ -223,6 +318,247 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
         }
       }),
       runs(60),
+    );
+  });
+
+  it('cada respuesta inicial generada produce una sola respuesta para la oferta', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('accept', 'reject', 'reassign'),
+        async (seed, choice) => {
+          const scenario = await offeredExecution(seed);
+          const offerId = eventIdAt(scenario.baseEvent + 3);
+          const expectedTaskSeq = replayInitiative(scenario.log).tasks[0]!.lastSeq;
+          const meta = {
+            eventId: eventIdAt(scenario.baseEvent + 4),
+            at: instant(CREATED_AT + 4),
+            by: scenario.recipient,
+          } as const;
+          const next =
+            choice === 'accept'
+              ? await acceptTaskBy(scenario.log, meta, {
+                  taskId: scenario.task,
+                  offerId,
+                  expectedTaskSeq,
+                })
+              : choice === 'reject'
+                ? await rejectTaskBy(scenario.log, meta, {
+                    taskId: scenario.task,
+                    offerId,
+                    expectedTaskSeq,
+                    reason: 'plazo-inviable',
+                  })
+                : await requestTaskReassignmentBy(scenario.log, meta, {
+                    taskId: scenario.task,
+                    offerId,
+                    expectedTaskSeq,
+                    reason: 'otra-persona-mas-adecuada',
+                  });
+
+          const task = replayInitiative(next).tasks[0];
+          expect(task?.responses).toHaveLength(1);
+          expect(task?.responses[0]?.offerId).toBe(offerId);
+          expect(replayInitiative(scenario.log).tasks[0]?.responses).toHaveLength(0);
+        },
+      ),
+      runs(60),
+    );
+  });
+
+  it('dos respuestas generadas sobre la misma revisión nunca se aplican ambas', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 2_000 }), async (seed) => {
+        const scenario = await offeredExecution(seed);
+        const offerId = eventIdAt(scenario.baseEvent + 3);
+        const revision = replayInitiative(scenario.log).tasks[0]!.lastSeq;
+        const accepted = await acceptTaskBy(
+          scenario.log,
+          {
+            eventId: eventIdAt(scenario.baseEvent + 4),
+            at: instant(CREATED_AT + 4),
+            by: scenario.recipient,
+          },
+          { taskId: scenario.task, offerId, expectedTaskSeq: revision },
+        );
+        const before = replayInitiative(accepted);
+
+        await expect(
+          requestTaskReassignmentBy(
+            accepted,
+            {
+              eventId: eventIdAt(scenario.baseEvent + 5),
+              at: instant(CREATED_AT + 5),
+              by: scenario.recipient,
+            },
+            {
+              taskId: scenario.task,
+              offerId,
+              expectedTaskSeq: revision,
+              reason: 'razon-privada',
+            },
+          ),
+        ).rejects.toMatchObject({ code: 'STALE_TASK_REVISION' });
+        expect(replayInitiative(accepted)).toEqual(before);
+
+        await expect(
+          requestTaskReassignmentBy(
+            accepted,
+            {
+              eventId: eventIdAt(scenario.baseEvent + 6),
+              at: instant(CREATED_AT + 6),
+              by: scenario.recipient,
+            },
+            {
+              taskId: scenario.task,
+              offerId,
+              expectedTaskSeq: before.tasks[0]!.lastSeq,
+              reason: 'sin-disponibilidad',
+            },
+          ),
+        ).resolves.toHaveLength(6);
+      }),
+      runs(60),
+    );
+  });
+
+  it('un offerId obsoleto generado nunca cambia el estado vigente', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 2_000 }), async (seed) => {
+        const scenario = await offeredExecution(seed);
+        const firstOfferId = eventIdAt(scenario.baseEvent + 3);
+        const firstRevision = replayInitiative(scenario.log).tasks[0]!.lastSeq;
+        let log = await rejectTaskBy(
+          scenario.log,
+          {
+            eventId: eventIdAt(scenario.baseEvent + 4),
+            at: instant(CREATED_AT + 4),
+            by: scenario.recipient,
+          },
+          {
+            taskId: scenario.task,
+            offerId: firstOfferId,
+            expectedTaskSeq: firstRevision,
+            reason: 'plazo-inviable',
+          },
+        );
+        log = await reofferTaskBy(
+          log,
+          {
+            eventId: eventIdAt(scenario.baseEvent + 5),
+            at: instant(CREATED_AT + 5),
+            by: scenario.owner,
+          },
+          {
+            taskId: scenario.task,
+            previousOfferId: firstOfferId,
+            offeredTo: scenario.replacement.memberId!,
+            recipient: scenario.replacement,
+          },
+        );
+        const before = replayInitiative(log);
+
+        await expect(
+          acceptTaskBy(
+            log,
+            {
+              eventId: eventIdAt(scenario.baseEvent + 6),
+              at: instant(CREATED_AT + 6),
+              by: scenario.recipient,
+            },
+            {
+              taskId: scenario.task,
+              offerId: firstOfferId,
+              expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+            },
+          ),
+        ).rejects.toMatchObject({ code: 'STALE_TASK_OFFER' });
+        expect(replayInitiative(log)).toEqual(before);
+      }),
+      runs(60),
+    );
+  });
+
+  it('esfuerzo, dependencias o fecha inválidos generados nunca agregan una tarea', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('effort', 'dependencies', 'due'),
+        fc.integer({ min: 0, max: 1 }),
+        async (seed, invalidKind, edge) => {
+          const scenario = await offeredExecution(seed);
+          // Se parte del estado planificado, antes de la primera oferta.
+          const plannedLog = scenario.log.slice(0, 3);
+          const before = replayInitiative(plannedLog);
+          const base = {
+            taskId: scenario.task,
+            milestoneId: scenario.milestone,
+            offeredTo: scenario.recipient.memberId!,
+            recipient: scenario.recipient,
+            title: `Tarea inválida ${String(seed)}`,
+            description: `Esta tarea generada debe rechazarse sin cambiar el estado ${String(seed)}.`,
+            effortMinutes: 60,
+            dueAt: instant(scenario.reviewAt - 2_000),
+            dependsOn: [] as const,
+          };
+          const candidate =
+            invalidKind === 'effort'
+              ? { ...base, effortMinutes: edge === 0 ? 0 : 10_081 }
+              : invalidKind === 'dependencies'
+                ? {
+                    ...base,
+                    dependsOn: Array.from({ length: 51 }, (_, index) =>
+                      taskId(hex32(0xd0_000 + seed * 100 + index)),
+                    ),
+                  }
+                : { ...base, dueAt: scenario.reviewAt };
+
+          await expect(
+            offerTaskBy(
+              plannedLog,
+              {
+                eventId: eventIdAt(scenario.baseEvent + 11),
+                at: instant(CREATED_AT + 11),
+                by: scenario.owner,
+              },
+              candidate,
+            ),
+          ).rejects.toBeDefined();
+          expect(replayInitiative(plannedLog)).toEqual(before);
+          expect(before.tasks).toHaveLength(0);
+        },
+      ),
+      runs(60),
+    );
+  });
+
+  it('todo log generado con sólo InitiativeCreated reproduce el mismo estado histórico', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 4_000 }), async (seed) => {
+        const log = await createInitiative(
+          { eventId: eventIdAt(900_000 + seed), at: CREATED_AT, actor: 'system' },
+          {
+            initiativeId: initiativeId(hex32(0xe0_000 + seed)),
+            outcomeKind: 'approved',
+            decisionId: DECISION_ID,
+            proposalId: PROPOSAL_ID,
+            proposalVersionHash: hash('a'.repeat(64)),
+            decisionResultHash: hash('b'.repeat(64)),
+            circleId: circleIdAt(seed % 5),
+            executionPlan: planFor(seed, 1),
+          },
+        );
+        const first = replayInitiative(log);
+        const second = replayInitiative([...log]);
+        expect(second).toEqual(first);
+        expect(first).toMatchObject({
+          status: 'por-empezar',
+          activatedAt: undefined,
+          milestones: [],
+          tasks: [],
+        });
+      }),
+      runs(80),
     );
   });
 });

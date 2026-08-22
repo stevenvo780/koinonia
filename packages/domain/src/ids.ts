@@ -39,6 +39,8 @@ export type TopicId = Brand<string, 'TopicId'>;
 export type DecisionId = Brand<string, 'DecisionId'>;
 export type ProposalId = Brand<string, 'ProposalId'>;
 export type InitiativeId = Brand<string, 'InitiativeId'>;
+export type MilestoneId = Brand<string, 'MilestoneId'>;
+export type TaskId = Brand<string, 'TaskId'>;
 export type OptionId = Brand<string, 'OptionId'>;
 export type BallotId = Brand<string, 'BallotId'>;
 export type EventId = Brand<string, 'EventId'>;
@@ -111,6 +113,16 @@ export function proposalId(value: string): ProposalId {
 export function initiativeId(value: string): InitiativeId {
   assertPattern('InitiativeId', value, ID_PATTERN, OPAQUE);
   return value as InitiativeId;
+}
+
+export function milestoneId(value: string): MilestoneId {
+  assertPattern('MilestoneId', value, ID_PATTERN, OPAQUE);
+  return value as MilestoneId;
+}
+
+export function taskId(value: string): TaskId {
+  assertPattern('TaskId', value, ID_PATTERN, OPAQUE);
+  return value as TaskId;
 }
 
 export function optionId(value: string): OptionId {

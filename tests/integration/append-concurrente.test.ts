@@ -317,6 +317,44 @@ describe.skipIf(!env.ok)(`idempotencia por request_id${skipNote(env)}`, () => {
     expect(await readStream(pool, aggregateId)).toEqual(before);
   });
 
+  it('el mismo UUID puede sellar pasos distintos sólo en scopes distintos', async () => {
+    const rid = requestId('idempotencia-scope');
+    const publicAggregate = id32('scope-publico');
+    const internalAggregate = id32('scope-interno');
+    await append(pool, {
+      aggregateId: publicAggregate,
+      aggregateType: 'decision',
+      expectedHead: { kind: 'new' },
+      requestId: rid,
+      events: [{ eventType: 'DecisionRatified', occurredAt: iso(0), payload: {} }],
+    });
+    await expect(
+      append(pool, {
+        aggregateId: internalAggregate,
+        aggregateType: 'initiative',
+        expectedHead: { kind: 'new' },
+        requestId: rid,
+        requestScope: 'internal:initiative-activation:v1',
+        events: [{ eventType: 'InitiativeActivated', occurredAt: iso(0), payload: {} }],
+      }),
+    ).resolves.toMatchObject({ idempotentReplay: false });
+
+    await expect(
+      append(pool, {
+        aggregateId: internalAggregate,
+        aggregateType: 'initiative',
+        expectedHead: { kind: 'new' },
+        requestId: rid,
+        requestScope: 'internal:initiative-activation:v1',
+        events: [
+          { eventType: 'InitiativeActivated', occurredAt: iso(0), payload: { tampered: true } },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(LedgerAppendError);
+    expect(await readStream(pool, publicAggregate)).toHaveLength(1);
+    expect(await readStream(pool, internalAggregate)).toHaveLength(1);
+  });
+
   it('el reintento devuelve el resultado ya registrado, no un error', async () => {
     const aggregateId = id32('idempotencia-lote');
     const rid = requestId('idempotencia-lote');

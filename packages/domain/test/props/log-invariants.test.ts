@@ -157,7 +157,7 @@ describe('E.5 — INV-34/INV-35: eventos ilegales y decisiones cerradas', () => 
             eventId: eventIdAt(900),
             decisionId: DECISION_ID,
             occurredAt: instant(T0 + 5000),
-            actor: 'system',
+            actor: memberIdAt(0),
             payload: { type: 'DecisionRatified' },
           });
           expect(() => replay(ilegal)).toThrow(IllegalTransitionError);
@@ -511,7 +511,7 @@ describe('INV-60 — el desenlace es coherente con el estado final', () => {
             eventId: eventIdAt(502),
             decisionId: DECISION_ID,
             occurredAt: instant(CLOSES_AT + config.window.challengeWindow),
-            actor: 'system',
+            actor: memberIdAt(0),
             payload: { type: 'DecisionRatified' },
           });
           const rechazar = await append(log, {
@@ -554,7 +554,7 @@ describe('INV-60 — el desenlace es coherente con el estado final', () => {
       eventId: eventIdAt(522),
       decisionId: DECISION_ID,
       occurredAt: instant(CLOSES_AT + config.window.challengeWindow - 1),
-      actor: 'system',
+      actor: memberIdAt(0),
       payload: { type: 'DecisionRatified' },
     });
     expect(() => replay(prematura)).toThrow(/impugnación/u);

@@ -10,7 +10,7 @@ Un archivo por decisión, numerado correlativamente y **nunca renumerado**. Una 
 4. `20-normativa-datos-colombia.md` y `21-normativa-udea.md` (marco legal — vinculante en lo que afirmen sobre la ley, no sobre el diseño).
 5. Los documentos de investigación `01`, `02`, `03`, `11`.
 
-Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. El **0043** fija el primer incremento posterior al corte vertical auditado.
+Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0044** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado.
 
 | ADR | Título | Estado | Resumen en una línea |
 |---|---|---|---|
@@ -57,6 +57,7 @@ Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0
 | [0041](0041-prohibicion-de-jerga-tecnica-en-la-interfaz.md) | Sin jerga técnica en la interfaz | Aceptado | «Condorcet», «Schulze», «HHI» prohibidas por lint en los strings de interfaz: el rigor va en la `Proof`, no en el rótulo. |
 | [0042](0042-esal-estudiantil-como-responsable-del-tratamiento.md) | ESAL estudiantil como Responsable | Propuesto | Una asociación sin ánimo de lucro es la Responsable: es la única base sólida del art. 6 lit. c para tratar datos sensibles. |
 | [0043](0043-plan-de-ejecucion-congelado-e-iniciativa-atomica.md) | Plan congelado e iniciativa atómica | Aceptado | La versión incluye el plan; un resultado aprobado y su iniciativa única se escriben en el mismo commit. |
+| [0044](0044-ratificacion-activa-hitos-y-ofertas-de-tarea.md) | Ratificación, hitos y ofertas de tarea | Aceptado | Ratificar activa atómicamente la iniciativa; una oferta sólo se vuelve asignación al aceptarla. |
 
 ## Trazabilidad con los ADR propuestos en la investigación
 

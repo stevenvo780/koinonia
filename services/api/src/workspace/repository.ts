@@ -129,7 +129,7 @@ async function persist<P>(
   pool: PgPool,
   log: ChainedLog<P>,
   codec: Codec<P>,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   const first = log[0];
   if (first === undefined) throw new WorkspacePersistenceError('un log vacío no identifica nada');
@@ -155,6 +155,7 @@ async function persist<P>(
     events: pending.map(codec.encode),
     expectedHead: prepared.expectedHead,
     requestId: options.requestId,
+    ...(options.requestScope === undefined ? {} : { requestScope: options.requestScope }),
   });
 
   return {
@@ -169,7 +170,7 @@ async function persistWithin<P>(
   client: PgPoolClient,
   log: ChainedLog<P>,
   codec: Codec<P>,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   const first = log[0];
   if (first === undefined) throw new WorkspacePersistenceError('un log vacío no identifica nada');
@@ -189,6 +190,7 @@ async function persistWithin<P>(
     events: prepared.pending.map(codec.encode),
     expectedHead: prepared.expectedHead,
     requestId: options.requestId,
+    ...(options.requestScope === undefined ? {} : { requestScope: options.requestScope }),
   });
   return {
     aggregateId: prepared.aggregateId,
@@ -220,7 +222,7 @@ async function load<P>(
 export async function persistProblemLog(
   pool: PgPool,
   log: ProblemLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   return persist(pool, log, PROBLEM_CODEC, options);
 }
@@ -239,7 +241,7 @@ export async function loadProblemState(client: PgClient, problemId: string): Pro
 export async function persistProposalLog(
   pool: PgPool,
   log: ProposalLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   return persist(pool, log, PROPOSAL_CODEC, options);
 }
@@ -248,7 +250,7 @@ export async function persistProposalLog(
 export async function persistProposalLogWithin(
   client: PgPoolClient,
   log: ProposalLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   return persistWithin(client, log, PROPOSAL_CODEC, options);
 }
@@ -271,7 +273,7 @@ export async function loadProposalState(
 export async function persistInitiativeLogWithin(
   client: PgPoolClient,
   log: InitiativeLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<WorkspacePersistResult> {
   return persistWithin(client, log, INITIATIVE_CODEC, options);
 }

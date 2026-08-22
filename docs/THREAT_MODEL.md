@@ -161,6 +161,29 @@ y checkpoint forzado al ratificar → **Prueba**
 `append-concurrente.test.ts::la_misma_clave_con_payload_distinto_se_denuncia` y
 `decision-opening-invariants.test.ts`.
 
+**T-28 · Activación prematura, asignación fantasma, fuga o respuesta obsoleta** `A2` `A4` `A7`
+Contar la ventana de impugnación desde el cierre nominal aunque el resultado se publique tarde puede
+activar trabajo antes de que la comunidad haya tenido tiempo real de objetar; una tarea marcada como
+asignada sin aceptación atribuye una obligación inexistente; una aceptación o reoferta retardada
+puede aplicarse después de que la tarea ya recorrió otro ciclo; y una justificación libre puede
+publicar salud, empleo u otra PII en un ledger indeleble → **Precond.** publicación repetible o sin
+instante, confianza en sesión/membresía obsoleta, estado mutable sin identidad/revisión de oferta,
+mutaciones concurrentes o texto personal en eventos públicos → **Impacto** alto: ejecución de una
+decisión todavía impugnable, responsabilidad falsa, reasignaciones erróneas y exposición irreversible
+de datos personales → **Detectab.** alta sólo si cada paso
+es un evento enlazado y el verificador cruza decisión e iniciativa → **MVP** `ResultComputed` único y
+`resultComputedAt`; ventana desde `max(closedAt,resultComputedAt)`; ratificación+activación atómicas;
+un solo instante para comprobar matrícula y fechar ambas mitades;
+`TaskOffered` no crea `assigneeId`; `offerId=eventId`; aceptación, rechazo, solicitud y reoferta
+exigen oferta y revisión vigentes; CAS por revisión de tarea además de transacción serializada; actor y
+destinatario se revalidan contra una fila de membresía bloqueada, no sólo contra la sesión; motivos
+cerrados sin texto libre en el ledger; clave de idempotencia estable tras perder la respuesta;
+reautorización viva incluso en replay; administrador técnico sin permisos (ADR-0044) → **Después**
+capacidad colectiva y reasignación por
+revisión del círculo → **Prueba** tests de dominio de oferta obsoleta/ABA, integración de
+aceptar-vs-rechazar-vs-reasignar concurrentes, retiro concurrente, ausencia de texto personal,
+rollback del commit compuesto y E2E de aceptación explícita con reintento tras respuesta perdida.
+
 ### 3.4 Privacidad (Information Disclosure)
 
 **T-20 · Correlación votante↔voto por temporización** `A2` `A3`

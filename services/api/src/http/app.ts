@@ -34,11 +34,18 @@ import {
   mensajeDe,
   type Portada,
   retirarEvidencia as retirarEvidenciaSchema,
+  ratificarDecision as ratificarDecisionSchema,
+  planificarHito as planificarHitoSchema,
+  ofrecerTarea as ofrecerTareaSchema,
+  reofrecerTarea as reofrecerTareaSchema,
+  responderOfertaTarea as responderOfertaTareaSchema,
   type Sesion,
   solicitudEnlace as solicitudEnlaceSchema,
 } from '@koinonia/contracts';
 import {
   DomainError,
+  authorize,
+  circleId,
   type ExecutionPlan,
   type MemberId,
   UnauthorizedError,
@@ -53,6 +60,7 @@ import {
   ENLACE_VIGENCIA_MS,
   findMember,
   issueMagicLink,
+  listActiveCircleMembers,
   openSession,
   redeemMagicLink,
   resolveSession,
@@ -88,6 +96,11 @@ import {
   mePasaLoMismo,
   resultadoDeDecision,
   retirarEvidencia,
+  ratificarDecision,
+  planificarHito,
+  ofrecerTarea,
+  reofrecerTarea,
+  responderOfertaTarea,
   ServicioError,
   type ServicioDeps,
   verDecision,
@@ -168,9 +181,13 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
     };
   }
   if (error instanceof DomainError) {
-    // Un rechazo del dominio es una respuesta, no un fallo: 422.
+    // Una oferta reemplazada es una carrera semántica: reintentarla no la vuelve válida.
+    const semanticConflict =
+      error.code === 'STALE_TASK_OFFER' ||
+      error.code === 'STALE_TASK_REVISION' ||
+      error.code === 'TASK_OFFER_ALREADY_ANSWERED';
     return {
-      estado: 422,
+      estado: semanticConflict ? 409 : 422,
       cuerpo: { codigo: error.code, mensaje: mensajeDe(error.code, error.message) },
     };
   }
@@ -339,7 +356,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         } satisfies ApiError);
       }
 
-      const miembro = await upsertMember(client, identidad.claim, options.ports.random);
+      const miembro = await upsertMember(client, identidad.claim, options.ports);
       const enlace = await issueMagicLink(client, miembro, options.ports);
       const url = `${options.webBaseUrl}/entrar/confirmar?token=${encodeURIComponent(enlace.token)}`;
 
@@ -432,6 +449,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     void reply.clearCookie(COOKIE_SESION, { path: '/' });
     return { salio: true };
+  });
+
+  /** Selector acotado: sólo integrantes vigentes del círculo que la persona ya puede consultar. */
+  app.get('/circulos/:id/miembros', async (request) => {
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    if (!existeCirculo(id)) throw new ServicioError('NO_ENCONTRADO', 404, 'ese grupo no existe');
+    const circle = circleId(id);
+    authorize(actorDe(request), 'circle:members-read', { kind: 'circle', circleId: circle });
+    const client = await options.pool.connect();
+    try {
+      return await listActiveCircleMembers(client, circle, options.ports.clock.now());
+    } finally {
+      client.release();
+    }
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -655,20 +686,69 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return resultadoDto(cerrada.resultado, cerrada.iniciativaId);
   });
 
+  app.post('/decisiones/:id/ratificar', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(ratificarDecisionSchema, request.body);
+    const ratificada = await ratificarDecision(deps, actorDe(request), id, cuerpo);
+    const initiativeId = ratificada.draft?.plannedInitiativeId;
+    if (initiativeId === undefined) return await reply.status(204).send();
+    const initiative = await verIniciativa(deps, initiativeId);
+    return await reply
+      .status(200)
+      .send(
+        iniciativaDto(initiative.id, initiative.state, idDe(request), initiative.ratificableEn),
+      );
+  });
+
   app.get('/decisiones/:id/resultado', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const found = await resultadoDeDecision(deps, id);
     return resultadoDto(found.resultado, found.iniciativaId);
   });
 
-  app.get('/iniciativas', async () => {
-    return (await listarIniciativas(deps)).map(({ id, state }) => iniciativaDto(id, state));
+  app.get('/iniciativas', async (request) => {
+    return (await listarIniciativas(deps)).map(({ id, state, ratificableEn }) =>
+      iniciativaDto(id, state, idDe(request), ratificableEn),
+    );
   });
 
   app.get('/iniciativas/:id', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const found = await verIniciativa(deps, id);
-    return iniciativaDto(found.id, found.state);
+    return iniciativaDto(found.id, found.state, idDe(request), found.ratificableEn);
+  });
+
+  app.post('/iniciativas/:id/hitos', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const body = parse(planificarHitoSchema, request.body);
+    const state = await planificarHito(deps, actorDe(request), id, body);
+    return await reply.status(201).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const body = parse(ofrecerTareaSchema, request.body);
+    const state = await ofrecerTarea(deps, actorDe(request), id, body);
+    return await reply.status(201).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/respuestas', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(responderOfertaTareaSchema, request.body);
+    const state = await responderOfertaTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/reofertas', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(reofrecerTareaSchema, request.body);
+    const state = await reofrecerTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(201).send(iniciativaDto(id, state, idDe(request)));
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════

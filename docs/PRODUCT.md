@@ -47,7 +47,9 @@ quien escribe una, de máximo 1500 caracteres, y **no ve las ajenas hasta enviar
 ancla a nadie. Julián escribe una sola vez, igual que todos. La papeleta dice, con esas palabras, qué
 se necesita para que la propuesta pase. La asamblea presencial sigue existiendo, pero deja de ser la
 sede del gobierno y pasa a ser fuente de insumos trazables. Y cuando se decide no termina nada: empieza
-una iniciativa con hitos, tareas, nombres propios y fecha de evaluación fijada **antes** de aprobar.
+una iniciativa cuyo objetivo, responsable inicial y fecha de evaluación se fijaron **antes** de
+aprobar; tras ratificar, ese plan se convierte en hitos y ofertas de tarea que cada persona acepta o
+devuelve sin culpa.
 
 **Para quién.** Para las ~300 personas matriculadas en los programas del Instituto: padrón conocido,
 finito, autenticable con el correo institucional. No hay presupuesto que repartir y todo el mundo se va
@@ -147,12 +149,18 @@ admitidas: **aprobada**. El sistema muestra la demostración en una página —q
 cuántos se manifestaron, qué regla se aplicó, por qué pasó—. Andrés la recalcula por su cuenta y
 coincide.
 
-**Día 34 · Iniciativa, hitos y tareas.** La aprobación **no puede cerrarse** sin responsable nominal,
+**Día 34 · Iniciativa provisional.** La aprobación **no puede cerrarse** sin responsable nominal,
 fecha de evaluación y criterio de éxito acordado ahí mismo: «a los cuatro meses la sala abre hasta las
-9:00 p.m. al menos tres días por semana, verificable con el horario publicado». Tres hitos —petición
-radicada, respuesta recibida, horario publicado— y nueve tareas con nombre y fecha: Sara redacta el
-oficio, Julián consigue el dato de uso, Daniela aporta el testimonio de la nocturna, Andrés revisa la
-forma. Cada quien **acepta, rechaza con justificación o pide reasignación**.
+9:00 p.m. al menos tres días por semana, verificable con el horario publicado». La iniciativa aparece
+en revisión, enlazada al resultado, pero todavía no autoriza trabajo mientras corre la impugnación.
+
+**Día 37 · Ratificación, hitos y ofertas.** Vencida la ventana sin una impugnación admitida, la
+ratificación activa esa misma iniciativa. Entonces se registran tres hitos —petición radicada,
+respuesta recibida, horario publicado— y se ofrecen nueve tareas con fecha: a Sara redactar el oficio,
+a Julián conseguir el dato de uso, a Daniela aportar el testimonio de la nocturna y a Andrés revisar
+la forma. Nadie queda responsable por figurar en el borrador: cada persona **acepta explícitamente,
+rechaza con un motivo general o pide reasignación**. Un detalle sensible permanece privado; no se
+publica como explicación indeleble.
 
 **Seguimiento.** Informe cada 15 días; sin él la iniciativa no avanza de estado. El oficio se radica el
 día 41 y su número entra con reloj de 15 días hábiles y avisos al 50 %, al 80 % y al vencimiento. Día
@@ -187,7 +195,7 @@ el primer día.
 | **Decisiones** | Las votaciones formales con su resultado y su demostración | Las abiertas primero, con el tiempo restante; en cada papeleta, **qué se necesita para que esto pase**: «se aprueba si hay más síes que noes; las abstenciones no cuentan para ese cálculo, pero sí para la participación mínima». Acción: emitir o cambiar la postura hasta el cierre | «No hay ninguna decisión abierta. Así debe ser la mayoría del tiempo: si hay más de tres por semana, algo está mal en cómo estamos decidiendo», y las tres últimas cerradas | Cuenta regresiva 5 min antes, avisando que un envío iniciado antes puede rechazarse. Voto sobre versión enmendada: se invalida y se pide revotar |
 | **Consenso** | Descubrir qué piensa el conjunto antes de discutir | Una afirmación corta a la vez con tres botones —*de acuerdo*, *en desacuerdo*, *paso*—; no se le puede responder a nadie. Acción: votar ~15 afirmaciones en tres minutos | No existe, y es deliberado: un sondeo **no puede abrirse** sin 12 afirmaciones sembradas por quien convoca, de las cuales 3 contradigan su propia posición | Menos de 7 votos: «todavía no podemos ubicarte en el mapa». Sin agrupamientos: **«no hay grupos claros»**, que es un resultado |
 | **Iniciativas** | Lo que se está haciendo con lo que se decidió | Kanban por estado (`por empezar`, `en curso`, `bloqueada`, `en revisión`, `cerrada`) con la decisión de origen enlazada, avance, próximo informe y quién responde. Acción: registrar avance con evidencia | «Todavía no hay iniciativas porque no hay decisiones aprobadas. Cuando se apruebe la primera va a aparecer aquí sola: una decisión no se puede cerrar sin crear una» | Informe vencido: no avanza y entra al tablero de deuda, atribuida al **círculo**, nunca a una persona. Sin evidencia: «sin verificar» |
-| **Mis tareas** | Lo que me comprometí a hacer, y sólo eso | Lista corta con fecha, iniciativa de origen y estado; arriba, mi capacidad en horas por semana, y si una asignación la supera **no se deja asignar**. Acción: *aceptar*, *rechazar con justificación*, *pedir reasignación*, *declarar bloqueo* o *pedir ayuda*; las dos últimas **detienen el reloj** | «No tenés tareas. Eso está bien: no todo el mundo tiene que estar haciendo algo todo el tiempo», y tres tareas sin responsable por si alguien quiere una. Nunca culpabilizar el vacío | Tarea vencida: pregunta, no reproche —«¿seguís?», «¿necesitás ayuda?», «no puedo»—. Bloqueo: se registra la causa, no la persona |
+| **Mis tareas** | Lo que me comprometí a hacer, y sólo eso | Lista corta con fecha, iniciativa de origen y estado; arriba, mi capacidad en horas por semana, y si una aceptación la supera **no se permite confirmar**. Acción: *aceptar*, *rechazar con motivo general*, *pedir reasignación*, *declarar bloqueo* o *pedir ayuda*; las dos últimas **detienen el reloj** | «No tenés tareas. Eso está bien: no todo el mundo tiene que estar haciendo algo todo el tiempo», y tres tareas sin responsable por si alguien quiere una. Nunca culpabilizar el vacío | Tarea vencida: pregunta, no reproche —«¿seguís?», «¿necesitás ayuda?», «no puedo»—. Bloqueo: se registra la causa, no la persona |
 | **Círculos y comisiones** | Quién decide qué, y qué no puede decidir | Mapa de círculos con su propósito en una frase, **qué decide sin consultarle a nadie**, límites, integrantes, enlaces, acuerdos vigentes y cuántos vencidos. Acción: «proponer un cambio de dominio» | «Por ahora todo lo decide la Asamblea. Cuando un tema aparezca tres veces, conviene crear un círculo que lo decida sin preguntarle a las 300 personas cada vez» | Dos círculos reclaman lo mismo: se abre un problema en el ancestro común y queda en espera, declarado |
 | **Reuniones** | Que lo presencial entre como insumo trazable, no como sede del gobierno | Próximas con hora, lugar, enlace remoto y orden del día publicado con antelación; las pasadas con su acta y **las propuestas que salieron de ellas enlazadas como tales**. Acción: «publicar acta» y «convertir este acuerdo en propuesta» | «No hay reuniones convocadas. Se puede decidir sin reunirse: la mayoría de lo que hay aquí se resolvió sin que nadie tuviera que ir a ningún lado a una hora fija» | Acta sin asistentes: se permite pero se marca, y no sirve para decisiones que dependan de quiénes estaban |
 | **Normas** | Las reglas vigentes, con la decisión que creó cada una y su fecha de revisión | Acuerdos por tipo (operativo, procedimental, constitutivo) con estado `vigente`, `en revisión`, `enmendado`, `derogado` o `caducado`, y por qué existe, quién lo revisa y con qué criterios. Acción: «proponer un cambio», que abre un problema | Sólo las reglas fundacionales, con el aviso «estas reglas se aprobaron el [fecha] y **caducan** el [fecha + 1 año] si no se vuelven a ratificar» | Acuerdo vencido: marcado con los días de retraso, atribuido al círculo. Sin fecha de revisión o sin criterios: no se aprueba |
@@ -306,10 +314,12 @@ quien tiene la tarea B cuando la A se destraba. Cada iniciativa declara qué **r
 hoy no tiene y, **cuando aplique**, un presupuesto con soportes: la mayoría no maneja dinero y el campo
 ni aparece. El avance se registra con **evidencia**; sin ella queda «sin verificar».
 
-**Ciclo de una tarea.** Quien la recibe puede **aceptarla**, **rechazarla con justificación** o **pedir
-reasignación**. Nadie queda asignado por omisión, y todo queda registrado: ese registro es lo que
-permite después discutir la carga de trabajo con datos y no con reproches. Cada persona declara sus
-horas por semana y el sistema **rechaza** asignaciones que las superen.
+**Ciclo de una tarea.** Quien recibe una oferta puede **aceptarla**, **rechazarla con un motivo
+general** o **pedir reasignación**. Nadie queda asignado por omisión, y todo queda registrado: ese
+registro es lo que permite después discutir la carga de trabajo con datos y no con reproches. Los
+detalles sensibles viven cifrados y con acceso restringido, no en el ledger público. Cada persona
+declara sus horas por semana y el sistema **rechaza** nuevas aceptaciones que las superen sin revelar
+esa capacidad a quien ofrece.
 
 **Flujo de incumplimiento.** Gradual, proporcional, reversible y orientado a recuperar el trabajo. El
 supuesto de diseño es que la mayoría de los incumplimientos son sobrecarga o bloqueo, no mala fe.

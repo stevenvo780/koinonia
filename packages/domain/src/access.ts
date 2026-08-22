@@ -78,6 +78,7 @@ export interface Actor {
 export const ANONYMOUS: Actor = { memberId: undefined, roles: ['observer'], circles: [] };
 
 export type Action =
+  | 'circle:members-read'
   | 'problem:read'
   | 'problem:create'
   | 'problem:me-too'
@@ -90,10 +91,18 @@ export type Action =
   | 'decision:open'
   | 'decision:cast-ballot'
   | 'decision:close'
+  | 'decision:ratify'
+  | 'initiative:plan'
+  | 'task:offer'
+  | 'task:reoffer'
+  | 'task:accept'
+  | 'task:reject'
+  | 'task:request-reassignment'
   | 'ledger:read'
   | 'ledger:export';
 
 export const ACTIONS: readonly Action[] = [
+  'circle:members-read',
   'problem:read',
   'problem:create',
   'problem:me-too',
@@ -106,11 +115,19 @@ export const ACTIONS: readonly Action[] = [
   'decision:open',
   'decision:cast-ballot',
   'decision:close',
+  'decision:ratify',
+  'initiative:plan',
+  'task:offer',
+  'task:reoffer',
+  'task:accept',
+  'task:reject',
+  'task:request-reassignment',
   'ledger:read',
   'ledger:export',
 ];
 
-export type ResourceKind = 'problem' | 'evidence' | 'proposal' | 'decision' | 'ledger';
+export type ResourceKind =
+  'circle' | 'problem' | 'evidence' | 'proposal' | 'decision' | 'initiative' | 'task' | 'ledger';
 
 /**
  * El recurso sobre el que se actúa.
@@ -182,6 +199,10 @@ const MEMBER: Rule = {
   circleOnly: false,
 };
 
+const CIRCLE_MEMBER: Rule = { ...MEMBER, circleOnly: true };
+const OWNER_IN_CIRCLE: Rule = { ...CIRCLE_MEMBER, ownerOnly: true };
+const SUBJECT_IN_CIRCLE: Rule = { ...CIRCLE_MEMBER, subjectOnly: true };
+
 /**
  * La matriz. Es la tabla del §4 de `docs/GOVERNANCE.md` en forma ejecutable.
  *
@@ -196,6 +217,10 @@ const RULES: Readonly<Record<Action, Rule>> = {
   'decision:read': OPEN,
   'ledger:read': OPEN,
   'ledger:export': OPEN,
+
+  // El selector de destinatarios no expone un directorio mundial: sólo miembros autenticados del
+  // círculo competente pueden pedir la lista de ese círculo.
+  'circle:members-read': CIRCLE_MEMBER,
 
   'problem:create': MEMBER,
   'problem:me-too': { ...MEMBER, subjectOnly: true },
@@ -226,6 +251,24 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     circleOnly: true,
   },
+  'decision:ratify': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    circleOnly: true,
+  },
+
+  // ADR-0044: descomponer la iniciativa y volver a ofrecer trabajo pertenece a quien asumió el plan.
+  'initiative:plan': OWNER_IN_CIRCLE,
+  'task:offer': OWNER_IN_CIRCLE,
+  'task:reoffer': OWNER_IN_CIRCLE,
+
+  // Una oferta sólo la responde su destinatario vigente. Tener el mismo rol o facilitar el círculo
+  // no permite aceptar, rechazar ni pedir reasignación por otra persona.
+  'task:accept': SUBJECT_IN_CIRCLE,
+  'task:reject': SUBJECT_IN_CIRCLE,
+  'task:request-reassignment': SUBJECT_IN_CIRCLE,
 };
 
 /** La regla aplicable a una acción. Expuesta para poder explicarla en la interfaz, no para saltarla. */

@@ -31,20 +31,25 @@ export default function Iniciativas(): ReactNode {
         <section className="vacio" aria-labelledby="sin-iniciativas-titulo">
           <h2 id="sin-iniciativas-titulo">Todavía no hay iniciativas</h2>
           <p>
-            Cuando aparezca el primer resultado aprobado, acá quedará su siguiente paso como «por
-            empezar» mientras termina la revisión, junto con la forma de comprobarlo.
+            Cuando aparezca el primer resultado aprobado, acá quedará su siguiente paso en revisión
+            hasta que pueda ratificarse, junto con la forma de comprobarlo.
           </p>
         </section>
       ) : (
-        <ul className="tarjetas" aria-label="Iniciativas por revisar">
+        <ul className="tarjetas" aria-label="Iniciativas">
           {iniciativas?.map((iniciativa) => (
             <li key={iniciativa.id}>
               <h2>
                 <Link href={`/iniciativas/${iniciativa.id}`}>{iniciativa.objetivo}</Link>
               </h2>
               <p>
-                <span className="etiqueta">Por empezar</span>
+                <span className="etiqueta">{iniciativa.activa ? 'Activa' : 'En revisión'}</span>
               </p>
+              {!iniciativa.activa && iniciativa.ratificableEn !== undefined && (
+                <p className="suave">
+                  Puede ratificarse desde el {cuando(iniciativa.ratificableEn)}.
+                </p>
+              )}
               <p className="suave">Volvemos a mirar el {cuando(iniciativa.revisarEn)}.</p>
             </li>
           ))}

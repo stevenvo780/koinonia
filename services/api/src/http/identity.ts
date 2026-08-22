@@ -104,20 +104,21 @@ const MEMBER_COLUMNS =
 export async function upsertMember(
   client: PgClient,
   claim: IdentityClaim,
-  random: RandomPort,
+  ports: { readonly random: RandomPort; readonly clock: ClockPort },
 ): Promise<MemberRecord> {
   const emailHash = sha256Hex(claim.email);
   const { rows } = await client.query<MemberRow>(
     `INSERT INTO identity.member
-       (member_id, email, email_hash, alias, roles, circles, semestre, jornada)
-     VALUES ($1, $2, $3, $4, $5::text[], $6::char(32)[], $7, $8)
+       (member_id, email, email_hash, alias, roles, circles, semestre, jornada, enrolled_at)
+     VALUES ($1, $2, $3, $4, $5::text[], $6::char(32)[], $7, $8,
+             to_timestamp($9::double precision / 1000))
      ON CONFLICT (email_hash) DO UPDATE
        SET alias = EXCLUDED.alias,
            roles = EXCLUDED.roles,
            circles = EXCLUDED.circles
      RETURNING ${MEMBER_COLUMNS}`,
     [
-      random.opaqueId(),
+      ports.random.opaqueId(),
       claim.email,
       emailHash,
       claim.alias,
@@ -125,6 +126,7 @@ export async function upsertMember(
       [...claim.circles],
       claim.semestre,
       claim.jornada,
+      ports.clock.now(),
     ],
   );
   const row = rows[0];
@@ -144,10 +146,54 @@ export async function findMember(
   return row === undefined ? undefined : toRecord(row);
 }
 
-/** Todo el registro vivo, en orden de identificador. Es la entrada de la congelación del padrón. */
-export async function allMembers(client: PgClient): Promise<readonly MemberRecord[]> {
+/**
+ * Relee y bloquea suavemente la matrícula vigente que una mutación va a atribuir. El bloqueo evita
+ * aceptar una tarea para alguien que se retiró entre la lectura de la interfaz y el append.
+ */
+export async function findActiveMemberInCircleForShare(
+  client: PgClient,
+  id: MemberId,
+  circle: CircleId,
+  now: number,
+): Promise<MemberRecord | undefined> {
   const { rows } = await client.query<MemberRow>(
-    `SELECT ${MEMBER_COLUMNS} FROM identity.member ORDER BY member_id ASC`,
+    `SELECT ${MEMBER_COLUMNS} FROM identity.member
+      WHERE member_id = $1
+        AND enrolled_at <= to_timestamp($3::double precision / 1000)
+        AND (withdrawn_at IS NULL OR withdrawn_at > to_timestamp($3::double precision / 1000))
+        AND $2::char(32) = ANY(circles)
+      FOR SHARE`,
+    [id, circle, now],
+  );
+  const row = rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}
+
+/** Selector mínimo de miembros vigentes del círculo; nunca es un directorio de identidades. */
+export async function listActiveCircleMembers(
+  client: PgClient,
+  circle: CircleId,
+  now: number,
+): Promise<readonly { readonly id: MemberId; readonly alias: string }[]> {
+  const { rows } = await client.query<{ member_id: string; alias: string }>(
+    `SELECT member_id, alias FROM identity.member
+      WHERE enrolled_at <= to_timestamp($2::double precision / 1000)
+        AND (withdrawn_at IS NULL OR withdrawn_at > to_timestamp($2::double precision / 1000))
+        AND $1::char(32) = ANY(circles)
+      ORDER BY member_id ASC`,
+    [circle, now],
+  );
+  return rows.map((row) => ({ id: memberId(row.member_id.trimEnd()), alias: row.alias }));
+}
+
+/** Todo el registro vivo, en orden de identificador. Es la entrada de la congelación del padrón. */
+export async function allMembers(client: PgClient, now: number): Promise<readonly MemberRecord[]> {
+  const { rows } = await client.query<MemberRow>(
+    `SELECT ${MEMBER_COLUMNS} FROM identity.member
+      WHERE enrolled_at <= to_timestamp($1::double precision / 1000)
+        AND (withdrawn_at IS NULL OR withdrawn_at > to_timestamp($1::double precision / 1000))
+      ORDER BY member_id ASC`,
+    [now],
   );
   return rows.map(toRecord);
 }
@@ -274,7 +320,9 @@ export async function resolveSession(
        JOIN identity.member m ON m.member_id = s.member_id
       WHERE s.token_hash = $1
         AND s.revoked_at IS NULL
-        AND s.expires_at > to_timestamp($2::double precision / 1000)`,
+        AND s.expires_at > to_timestamp($2::double precision / 1000)
+        AND m.enrolled_at <= to_timestamp($2::double precision / 1000)
+        AND (m.withdrawn_at IS NULL OR m.withdrawn_at > to_timestamp($2::double precision / 1000))`,
     [sha256Hex(token), clock.now()],
   );
   const row = rows[0];

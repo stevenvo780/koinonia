@@ -21,9 +21,11 @@ import {
   isMemberId,
   isStrictlySorted,
   memberId,
+  milestoneId,
   proposalId,
   sortIds,
   stratumKey,
+  taskId,
   ZERO_HASH,
 } from '../src/index.js';
 import { FC, hex32 } from './arbitraries.js';
@@ -35,6 +37,8 @@ describe('ids — forma', () => {
     expect(memberId(VALID)).toBe(VALID);
     expect(decisionId(VALID)).toBe(VALID);
     expect(proposalId(VALID)).toBe(VALID);
+    expect(milestoneId(VALID)).toBe(VALID);
+    expect(taskId(VALID)).toBe(VALID);
     expect(VALID).toHaveLength(ID_LENGTH);
   });
 
@@ -52,6 +56,8 @@ describe('ids — forma', () => {
   ])('rechaza %s', (_caso, valor) => {
     expect(() => memberId(valor)).toThrow(InvalidIdError);
     expect(isMemberId(valor)).toBe(false);
+    expect(() => milestoneId(valor)).toThrow(InvalidIdError);
+    expect(() => taskId(valor)).toThrow(InvalidIdError);
   });
 
   it('un hash mide 64 caracteres y el hash cero es su elemento neutro', () => {

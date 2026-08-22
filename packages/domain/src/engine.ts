@@ -111,6 +111,8 @@ export interface DecisionState {
   readonly seed: string | undefined;
   readonly resultHash: Hash | undefined;
   readonly outcomeKind: OutcomeKind | undefined;
+  /** Instante en que el resultado se hizo público; desde aquí corre la ventana de impugnación. */
+  readonly resultComputedAt: Instant | undefined;
   readonly lastSeq: number;
 }
 
@@ -132,6 +134,7 @@ export function initialState(decision: DecisionId): DecisionState {
     seed: undefined,
     resultHash: undefined,
     outcomeKind: undefined,
+    resultComputedAt: undefined,
     lastSeq: 0,
   };
 }
@@ -589,17 +592,43 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
     }
 
     case 'ResultComputed':
-      return { ...base, resultHash: payload.resultHash, outcomeKind: payload.outcomeKind };
+      if (state.resultHash !== undefined || state.resultComputedAt !== undefined) {
+        throw new PreconditionError(
+          'RESULT_ALREADY_COMPUTED',
+          'el resultado ya fue publicado: no se sobrescribe ni se reinicia su ventana de impugnación',
+        );
+      }
+      return {
+        ...base,
+        resultHash: payload.resultHash,
+        outcomeKind: payload.outcomeKind,
+        resultComputedAt: event.occurredAt,
+      };
 
     case 'DecisionRatified': {
+      if (event.actor === 'system') {
+        throw new PreconditionError(
+          'RATIFICATION_REQUIRES_MEMBER',
+          'la ratificación es un acto humano de procedimiento y nunca se atribuye al sistema',
+        );
+      }
       const config = requireConfig(state);
-      if (state.closedAt === undefined || state.outcomeKind === undefined) {
+      if (
+        state.closedAt === undefined ||
+        state.outcomeKind === undefined ||
+        state.resultComputedAt === undefined
+      ) {
         throw new PreconditionError('NO_RESULT', 'no se ratifica lo que no se ha escrutado');
       }
-      if (event.occurredAt < state.closedAt + config.window.challengeWindow) {
+      // La ventana corre desde que el resultado es conocible, no desde el cierre nominal de la urna.
+      // Un planificador tardío puede publicar ResultComputed horas después de `closedAt`; usar sólo el
+      // cierre permitiría ratificar inmediatamente y convertir la impugnación en una ficción.
+      const challengeStartsAt = Math.max(state.closedAt, state.resultComputedAt);
+      if (event.occurredAt < challengeStartsAt + config.window.challengeWindow) {
         throw new PreconditionError(
           'CHALLENGE_WINDOW_OPEN',
-          'A.8.1: la ratificación espera a que venza la ventana de impugnación',
+          'A.8.1: la ratificación espera la ventana completa de impugnación desde que se publicó ' +
+            'el resultado',
         );
       }
       // INV-60: el desenlace tiene que ser coherente con el estado final.
@@ -1094,6 +1123,42 @@ export async function recordResult(
       outcomeKind: input.result.outcome.kind,
     },
   });
+}
+
+/**
+ * `Closed → Ratified`: finaliza un desenlace aprobado cuando ya transcurrió completa la ventana de
+ * impugnación. `apply` vuelve a comprobar resultado, desenlace e instante durante cualquier replay.
+ */
+export async function ratifyDecision(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & { readonly actor: MemberId },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  nextStatus(state.status, 'DecisionRatified');
+  return emit(log, state, {
+    eventId: input.eventId,
+    decisionId: state.decisionId,
+    occurredAt: input.at,
+    actor: input.actor,
+    payload: { type: 'DecisionRatified' },
+  });
+}
+
+/** Ratificación disparada por quien cuida el procedimiento en el círculo competente. */
+export async function ratifyDecisionBy(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & { readonly by: Actor },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  authorize(input.by, 'decision:ratify', { kind: 'decision', circleId: config.circleId });
+  const actor = input.by.memberId;
+  if (actor === undefined) {
+    // Inalcanzable después de `authorize`, pero mantiene la frontera tipada y falla cerrado si la
+    // matriz cambiara por error.
+    throw new PreconditionError('NOT_AUTHENTICATED', 'ratificar exige identidad verificada');
+  }
+  return ratifyDecision(log, { eventId: input.eventId, at: input.at, actor });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════

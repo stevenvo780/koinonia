@@ -33,6 +33,11 @@ const lucia: Actor = {
   roles: ['member', 'facilitator'],
   circles: [CIRCULO],
 };
+const gabriel: Actor = {
+  memberId: memberIdAt(5),
+  roles: ['guarantees'],
+  circles: [CIRCULO],
+};
 const admin: Actor = { memberId: memberIdAt(4), roles: ['tech-admin'], circles: [CIRCULO] };
 
 describe('matriz de autorización', () => {
@@ -88,6 +93,38 @@ describe('autorización VERTICAL', () => {
     expect(denialReason(lucia, 'decision:open', { kind: 'decision' })).toBe('NOT_IN_CIRCLE');
   });
 
+  it('el directorio del círculo sólo se consulta con identidad y membresía vigente', () => {
+    for (const actor of [daniela, lucia, gabriel]) {
+      expect(can(actor, 'circle:members-read', { kind: 'circle', circleId: CIRCULO })).toBe(true);
+    }
+    expect(
+      denialReason(ANONYMOUS, 'circle:members-read', { kind: 'circle', circleId: CIRCULO }),
+    ).toBe('NOT_AUTHENTICATED');
+    expect(
+      denialReason(daniela, 'circle:members-read', {
+        kind: 'circle',
+        circleId: OTRO_CIRCULO,
+      }),
+    ).toBe('NOT_IN_CIRCLE');
+    expect(denialReason(admin, 'circle:members-read', { kind: 'circle', circleId: CIRCULO })).toBe(
+      'ROLE_NOT_GRANTED',
+    );
+  });
+
+  it('ratificar exige facilitación o garantías dentro del círculo', () => {
+    expect(can(lucia, 'decision:ratify', { kind: 'decision', circleId: CIRCULO })).toBe(true);
+    expect(can(gabriel, 'decision:ratify', { kind: 'decision', circleId: CIRCULO })).toBe(true);
+    expect(denialReason(daniela, 'decision:ratify', { kind: 'decision', circleId: CIRCULO })).toBe(
+      'ROLE_NOT_GRANTED',
+    );
+    expect(
+      denialReason(lucia, 'decision:ratify', { kind: 'decision', circleId: OTRO_CIRCULO }),
+    ).toBe('NOT_IN_CIRCLE');
+    expect(denialReason(admin, 'decision:ratify', { kind: 'decision', circleId: CIRCULO })).toBe(
+      'ROLE_NOT_GRANTED',
+    );
+  });
+
   it('el administrador técnico no gobierna (§7): la tabla de «no puede», ejecutable', () => {
     for (const accion of [
       'problem:create',
@@ -95,7 +132,14 @@ describe('autorización VERTICAL', () => {
       'proposal:create',
       'decision:open',
       'decision:close',
+      'decision:ratify',
       'decision:cast-ballot',
+      'initiative:plan',
+      'task:offer',
+      'task:reoffer',
+      'task:accept',
+      'task:reject',
+      'task:request-reassignment',
     ] as const) {
       expect(can(admin, accion, { kind: 'decision', circleId: CIRCULO })).toBe(false);
     }
@@ -145,6 +189,33 @@ describe('autorización HORIZONTAL — el mismo rol, y aun así no', () => {
     expect(
       denialReason(julian, 'problem:me-too', { kind: 'problem', subject: daniela.memberId }),
     ).toBe('NOT_THE_SUBJECT');
+  });
+
+  it('hitos, ofertas y reofertas son del responsable inicial y de su círculo', () => {
+    for (const action of ['initiative:plan', 'task:offer', 'task:reoffer'] as const) {
+      const resource = {
+        kind: action === 'initiative:plan' ? ('initiative' as const) : ('task' as const),
+        owner: daniela.memberId,
+        circleId: CIRCULO,
+      };
+      expect(can(daniela, action, resource)).toBe(true);
+      expect(denialReason(julian, action, resource)).toBe('NOT_THE_OWNER');
+      expect(denialReason({ ...daniela, circles: [OTRO_CIRCULO] }, action, resource)).toBe(
+        'NOT_IN_CIRCLE',
+      );
+    }
+  });
+
+  it('aceptar, rechazar y pedir reasignación pertenecen al destinatario vigente', () => {
+    for (const action of ['task:accept', 'task:reject', 'task:request-reassignment'] as const) {
+      const task = { kind: 'task' as const, subject: daniela.memberId, circleId: CIRCULO };
+      expect(can(daniela, action, task)).toBe(true);
+      expect(denialReason(julian, action, task)).toBe('NOT_THE_SUBJECT');
+      expect(denialReason(lucia, action, task)).toBe('NOT_THE_SUBJECT');
+      expect(denialReason({ ...daniela, circles: [OTRO_CIRCULO] }, action, task)).toBe(
+        'NOT_IN_CIRCLE',
+      );
+    }
   });
 
   it('SIN AUTOR DECLARADO se deniega, no se deja pasar: es la puerta que abre la escalada', () => {

@@ -473,3 +473,86 @@ code.comprobante {
 .cargando {
   color: var(--tinta-suave);
 }
+
+/* ── Organización inicial del trabajo ───────────────────────────────────────────────────── */
+
+.accion-procedimiento {
+  margin: 1rem 0;
+}
+
+.formulario-acotado {
+  margin: 1.25rem 0;
+}
+
+.formulario-acotado > fieldset,
+.respuesta-tarea > fieldset {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.5rem 1rem 1rem;
+}
+
+.formulario-acotado > fieldset > legend,
+.respuesta-tarea > fieldset > legend {
+  font-weight: 700;
+  padding: 0 0.375rem;
+}
+
+ol.hitos,
+ul.tareas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ol.hitos > li {
+  margin: 1rem 0;
+}
+
+.tarjeta-trabajo {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.875rem 1rem;
+}
+
+.tarjeta-trabajo > h3,
+.tarea > h4 {
+  margin-top: 0;
+}
+
+ul.tareas > li {
+  border-top: 1px solid var(--borde);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.datos-trabajo {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.datos-trabajo > div {
+  background: var(--fondo-suave);
+  border-radius: 4px;
+  padding: 0.5rem 0.625rem;
+}
+
+.datos-trabajo dt {
+  color: var(--tinta-suave);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.datos-trabajo dd {
+  margin: 0;
+}
+
+.respuesta-tarea {
+  margin-top: 1rem;
+}
+
+@media (min-width: 38rem) {
+  .datos-trabajo {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

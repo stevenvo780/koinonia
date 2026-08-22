@@ -129,14 +129,15 @@ SQL plano numerado en `services/api/migrations/`, aplicado en orden por un runne
 aplicada deja de ser invisible. Dos ficheros con el mismo número son un error duro, no un
 desempate arbitrario, porque el orden tiene que ser total.
 
-| Migración                | Qué crea                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `0001_governance_ledger` | `governance`: eventos, cabezas de agregado, cursor, checkpoints.             |
-| `0002_append_only_guard` | El trigger `ENABLE ALWAYS` que rechaza `UPDATE`, `DELETE` y `TRUNCATE`.      |
-| `0003_roles_and_grants`  | `koinonia_ddl` y `koinonia_app`, con la asimetría de privilegios.            |
-| `0004_projection`        | Proyecciones desechables con offset transaccional.                           |
-| `0005_identidad`         | `identity`: bóveda de datos personales, **físicamente separada** (ADR-0008). |
-| `0006_anclaje`           | `governance.anchor_attempt` y `governance.bitcoin_header`.                   |
+| Migración                   | Qué crea                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `0001_governance_ledger`    | `governance`: eventos, cabezas de agregado, cursor, checkpoints.             |
+| `0002_append_only_guard`    | El trigger `ENABLE ALWAYS` que rechaza `UPDATE`, `DELETE` y `TRUNCATE`.      |
+| `0003_roles_and_grants`     | `koinonia_ddl` y `koinonia_app`, con la asimetría de privilegios.            |
+| `0004_projection`           | Proyecciones desechables con offset transaccional.                           |
+| `0005_identidad`            | `identity`: bóveda de datos personales, **físicamente separada** (ADR-0008). |
+| `0006_anclaje`              | `governance.anchor_attempt` y `governance.bitcoin_header`.                   |
+| `0007_append_request_scope` | Separa claves de idempotencia públicas de consecuencias internas atómicas.   |
 
 ---
 

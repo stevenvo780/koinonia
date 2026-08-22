@@ -15,6 +15,7 @@ import {
 import {
   createInitiative,
   buildDecisionConfig,
+  DEFAULT_CHALLENGE_WINDOW_MS,
   draftDecision,
   decisionId as toDecisionId,
   eventId,
@@ -34,6 +35,7 @@ import {
   como,
   entrar,
   FACILITADORA,
+  GARANTIAS,
   listo,
   planDe,
   skipNote,
@@ -73,6 +75,7 @@ describe.skipIf(!env.ok)(`iniciativa atomica por HTTP${skipNote(env)}`, () => {
   let initiativeId = '';
   let firstCloseRequest = '';
   let firstOpenRequest = '';
+  let firstRatifyRequest = '';
 
   beforeAll(async () => {
     e = listo(env);
@@ -269,17 +272,40 @@ describe.skipIf(!env.ok)(`iniciativa atomica por HTTP${skipNote(env)}`, () => {
 
     const initiatives = await e.app.inject({ method: 'GET', url: '/iniciativas' });
     expect(initiatives.statusCode).toBe(200);
-    const list =
-      initiatives.json<
-        { id: string; decisionId: string; comprobanteDecision: string; estado: string }[]
-      >();
+    const list = initiatives.json<
+      {
+        id: string;
+        decisionId: string;
+        comprobanteDecision: string;
+        estado: string;
+        activa: boolean;
+        ratificableEn?: number;
+      }[]
+    >();
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       id: initiativeId,
       decisionId,
       comprobanteDecision: result.comprobante,
       estado: 'por-empezar',
+      activa: false,
     });
+    const decisionClient = await e.pool.connect();
+    try {
+      const state = await loadDecisionState(decisionClient, decisionId);
+      if (
+        state.closedAt === undefined ||
+        state.resultComputedAt === undefined ||
+        state.config === undefined
+      ) {
+        throw new Error('la prueba exige cierre y resultado publicados');
+      }
+      expect(list[0]?.ratificableEn).toBe(
+        Math.max(state.closedAt, state.resultComputedAt) + state.config.window.challengeWindow,
+      );
+    } finally {
+      decisionClient.release();
+    }
     expect(await readStream(e.pool, initiativeId)).toHaveLength(1);
   });
 
@@ -300,6 +326,184 @@ describe.skipIf(!env.ok)(`iniciativa atomica por HTTP${skipNote(env)}`, () => {
 
     expect(await readStream(e.pool, decisionId)).toHaveLength(beforeDecision.length);
     expect(await readStream(e.pool, initiativeId)).toHaveLength(beforeInitiative.length);
+  });
+
+  it('ratifica y activa atómicamente; el replay exige las dos mitades y el mismo actor', async () => {
+    const tooSoon = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/ratificar`,
+      headers: como(facilitator.testigo),
+      payload: { requestId: requestId() },
+    });
+    expect(tooSoon.statusCode).toBe(422);
+    expect(tooSoon.json<{ codigo: string }>().codigo).toBe('CHALLENGE_WINDOW_OPEN');
+
+    e.reloj.avanzar(DEFAULT_CHALLENGE_WINDOW_MS + 1);
+    facilitator = await entrar(e, FACILITADORA);
+    firstRatifyRequest = requestId();
+    const beforeDecision = await readStream(e.pool, decisionId);
+    const beforeInitiative = await readStream(e.pool, initiativeId);
+    const ratificationNow = e.reloj.now();
+    const withdrawnBetweenOldReads = ratificationNow + 1;
+    await e.superPool.query(
+      `UPDATE identity.member
+          SET withdrawn_at = to_timestamp($2::double precision / 1000)
+        WHERE member_id = $1`,
+      [facilitator.miembroId, withdrawnBetweenOldReads],
+    );
+
+    // El borde HTTP lee el reloj para sesión y rate-limit antes del servicio. Las tres primeras
+    // lecturas ven a la facilitadora vigente; una cuarta caería exactamente en su retirada. La
+    // regresión demuestra que ratificar captura una sola vez dentro del servicio y fecha con ese
+    // mismo corte tanto DecisionRatified como InitiativeActivated.
+    const controlledClock = e.reloj as { now: () => number };
+    const originalNow = controlledClock.now.bind(e.reloj);
+    let clockReads = 0;
+    controlledClock.now = () => {
+      clockReads += 1;
+      return clockReads <= 3 ? ratificationNow : withdrawnBetweenOldReads;
+    };
+    const ratified = await (async () => {
+      try {
+        return await e.app.inject({
+          method: 'POST',
+          url: `/decisiones/${decisionId}/ratificar`,
+          headers: como(facilitator.testigo),
+          payload: { requestId: firstRatifyRequest },
+        });
+      } finally {
+        controlledClock.now = originalNow;
+        await e.superPool.query(
+          `UPDATE identity.member SET withdrawn_at = NULL WHERE member_id = $1`,
+          [facilitator.miembroId],
+        );
+      }
+    })();
+    expect(ratified.statusCode).toBe(200);
+    expect(clockReads).toBe(3);
+    expect(ratified.json<{ id: string; activa: boolean; ratificableEn?: number }>()).toMatchObject({
+      id: initiativeId,
+      activa: true,
+    });
+    expect(ratified.json<Record<string, unknown>>()).not.toHaveProperty('ratificableEn');
+    expect(await readStream(e.pool, decisionId)).toHaveLength(beforeDecision.length + 1);
+    expect(await readStream(e.pool, initiativeId)).toHaveLength(beforeInitiative.length + 1);
+
+    const mappings = await e.pool.query<{ request_scope: string }>(
+      `SELECT request_scope FROM governance.append_request
+        WHERE request_id = $1 ORDER BY request_scope`,
+      [firstRatifyRequest],
+    );
+    expect(mappings.rows.map((row) => row.request_scope)).toEqual([
+      'internal:initiative-activation:v1',
+      'public',
+    ]);
+
+    const afterDecision = await readStream(e.pool, decisionId);
+    const afterInitiative = await readStream(e.pool, initiativeId);
+    expect(
+      Date.parse(
+        afterDecision.find((row) => row.event.eventType === 'DecisionRatified')?.event.occurredAt ??
+          '',
+      ),
+    ).toBe(ratificationNow);
+    expect(
+      Date.parse(
+        afterInitiative.find((row) => row.event.eventType === 'InitiativeActivated')?.event
+          .occurredAt ?? '',
+      ),
+    ).toBe(ratificationNow);
+    const replay = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/ratificar`,
+      headers: como(facilitator.testigo),
+      payload: { requestId: firstRatifyRequest },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json<{ activa: boolean }>().activa).toBe(true);
+    expect(await readStream(e.pool, decisionId)).toEqual(afterDecision);
+    expect(await readStream(e.pool, initiativeId)).toEqual(afterInitiative);
+
+    const guarantees = await entrar(e, GARANTIAS);
+    const otherActor = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/ratificar`,
+      headers: como(guarantees.testigo),
+      payload: { requestId: firstRatifyRequest },
+    });
+    expect(otherActor.statusCode).toBe(409);
+    expect(otherActor.json<{ codigo: string }>().codigo).toBe('IDEMPOTENCY_KEY_REUSED');
+
+    // Una clave nueva no escribe otra ratificación: primero vuelve a probar el vínculo ya sellado.
+    const semanticReplay = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/ratificar`,
+      headers: como(facilitator.testigo),
+      payload: { requestId: requestId() },
+    });
+    expect(semanticReplay.statusCode).toBe(200);
+    expect(await readStream(e.pool, decisionId)).toEqual(afterDecision);
+    expect(await readStream(e.pool, initiativeId)).toEqual(afterInitiative);
+  });
+
+  it('un replay no disimula la pérdida del registro interno de activación', async () => {
+    const selected = await e.superPool.query<{
+      request_scope: string;
+      request_id: string;
+      aggregate_id: string;
+      first_leaf_index: string;
+      event_count: number;
+      head_seq: number;
+      head_hash: Uint8Array;
+    }>(
+      `SELECT request_scope, request_id, aggregate_id,
+              first_leaf_index::text AS first_leaf_index, event_count, head_seq, head_hash
+         FROM governance.append_request
+        WHERE request_scope = 'internal:initiative-activation:v1' AND request_id = $1`,
+      [firstRatifyRequest],
+    );
+    const row = selected.rows[0];
+    if (row === undefined) throw new Error('la prueba exige el mapping interno de activación');
+    await e.superPool.query(
+      'ALTER TABLE governance.append_request DISABLE TRIGGER trg_append_request_append_only',
+    );
+    try {
+      await e.superPool.query(
+        `DELETE FROM governance.append_request
+          WHERE request_scope = 'internal:initiative-activation:v1' AND request_id = $1`,
+        [firstRatifyRequest],
+      );
+      const replay = await e.app.inject({
+        method: 'POST',
+        url: `/decisiones/${decisionId}/ratificar`,
+        headers: como(facilitator.testigo),
+        payload: { requestId: firstRatifyRequest },
+      });
+      expect(replay.statusCode).toBe(500);
+      expect(replay.json<{ codigo: string }>().codigo).toBe('INTEGRITY_RATIFICATION_ATOMICITY');
+    } finally {
+      try {
+        await e.superPool.query(
+          `INSERT INTO governance.append_request
+             (request_scope, request_id, aggregate_id, first_leaf_index,
+              event_count, head_seq, head_hash)
+           VALUES ($1, $2, $3, $4::bigint, $5, $6, $7)`,
+          [
+            row.request_scope,
+            row.request_id,
+            row.aggregate_id,
+            row.first_leaf_index,
+            row.event_count,
+            row.head_seq,
+            row.head_hash,
+          ],
+        );
+      } finally {
+        await e.superPool.query(
+          'ALTER TABLE governance.append_request ENABLE ALWAYS TRIGGER trg_append_request_append_only',
+        );
+      }
+    }
   });
 
   it('una papeleta que ocupa la clave derivada del cierre no cierra ni crea iniciativa', async () => {
@@ -485,6 +689,51 @@ describe.skipIf(!env.ok)(`iniciativa atomica por HTTP${skipNote(env)}`, () => {
     expect(report.comprobaciones.find((check) => check.id === 'ejecucion')).toEqual(
       expect.objectContaining({ bien: true }),
     );
+  });
+
+  it('la auditoría detecta si la activación deja de apuntar a la ratificación exacta', async () => {
+    const selected = await e.superPool.query<{ payload: string }>(
+      `SELECT payload FROM governance.event
+        WHERE aggregate_id = $1 AND event_type = 'InitiativeActivated'`,
+      [initiativeId],
+    );
+    const original = selected.rows[0]?.payload;
+    if (original === undefined) throw new Error('la prueba exige InitiativeActivated');
+    const envelope = JSON.parse(original) as {
+      body: { ratificationEventHash: string };
+      eventId: string;
+    };
+    envelope.body.ratificationEventHash = 'f'.repeat(64);
+    const tampered = JSON.stringify(envelope);
+
+    await e.superPool.query('ALTER TABLE governance.event DISABLE TRIGGER trg_event_append_only');
+    try {
+      await e.superPool.query(
+        `UPDATE governance.event SET payload = $2
+          WHERE aggregate_id = $1 AND event_type = 'InitiativeActivated'`,
+        [initiativeId, tampered],
+      );
+      const response = await e.app.inject({ method: 'GET', url: '/integridad' });
+      expect(response.statusCode).toBe(200);
+      const report = response.json<{
+        comprobaciones: { id: string; bien: boolean; detalle?: string }[];
+      }>();
+      const execution = report.comprobaciones.find((check) => check.id === 'ejecucion');
+      expect(execution).toEqual(expect.objectContaining({ bien: false }));
+      expect(execution?.detalle).toMatch(/ratific|activaci/iu);
+    } finally {
+      try {
+        await e.superPool.query(
+          `UPDATE governance.event SET payload = $2
+            WHERE aggregate_id = $1 AND event_type = 'InitiativeActivated'`,
+          [initiativeId, original],
+        );
+      } finally {
+        await e.superPool.query(
+          'ALTER TABLE governance.event ENABLE ALWAYS TRIGGER trg_event_append_only',
+        );
+      }
+    }
   });
 
   it('una colision en la reserva aborta tambien el cierre de la decision', async () => {

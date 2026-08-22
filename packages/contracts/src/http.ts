@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { TASK_RESPONSE_REASONS } from '@koinonia/domain';
 
 import { apiError } from './errors.js';
 import { email, hash64, instantMs, opaqueId, requestId } from './ids.js';
@@ -51,6 +52,19 @@ export const sesion = z.object({
   expiraEn: instantMs,
 });
 export type Sesion = z.infer<typeof sesion>;
+
+/**
+ * Vista autenticada y mínima para elegir una persona del mismo círculo. No es un directorio:
+ * deliberadamente no lleva correo, roles, semestre ni otros datos que no hagan falta al dropdown.
+ */
+export const miembroCirculo = z.object({
+  id: opaqueId,
+  alias: z.string().min(1).max(120),
+});
+export type MiembroCirculo = z.infer<typeof miembroCirculo>;
+
+export const miembrosCirculo = z.array(miembroCirculo);
+export type MiembrosCirculo = z.infer<typeof miembrosCirculo>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Problemas
@@ -352,12 +366,111 @@ export const resultadoDecision = z.object({
 });
 export type ResultadoDecision = z.infer<typeof resultadoDecision>;
 
+/** La ratificación abre la ejecución sólo después de la ventana de impugnación. */
+export const ratificarDecision = z.object({ requestId });
+export type RatificarDecision = z.infer<typeof ratificarDecision>;
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Iniciativas
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export const estadoIniciativa = z.enum(['por-empezar']);
 export type EstadoIniciativa = z.infer<typeof estadoIniciativa>;
+
+/** Estados visibles: una oferta no atribuye trabajo hasta que la persona la acepta. */
+export const estadoTarea = z.enum(['ofrecida', 'aceptada', 'rechazada', 'reasignacion-solicitada']);
+export type EstadoTarea = z.infer<typeof estadoTarea>;
+
+export const planificarHito = z.object({
+  requestId,
+  titulo: z.string().min(10).max(140),
+  criterioDeTerminacion: z.string().min(20).max(500),
+  venceEn: instantMs,
+});
+export type PlanificarHito = z.infer<typeof planificarHito>;
+
+export const ofrecerTarea = z.object({
+  requestId,
+  hitoId: opaqueId,
+  destinatarioId: opaqueId,
+  titulo: z.string().min(10).max(140),
+  descripcion: z.string().min(20).max(4000),
+  venceEn: instantMs,
+  esfuerzoMinutos: z.number().int().min(1).max(10_080),
+  /** Son identificadores, nunca nombres; el dominio comprueba existencia, propia tarea y ciclos. */
+  dependeDe: z
+    .array(opaqueId)
+    .max(50)
+    .refine(
+      (ids) => new Set(ids).size === ids.length,
+      'Una dependencia sólo puede aparecer una vez.',
+    ),
+});
+export type OfrecerTarea = z.infer<typeof ofrecerTarea>;
+
+export const motivoRespuestaTarea = z.enum(TASK_RESPONSE_REASONS);
+export type MotivoRespuestaTarea = z.infer<typeof motivoRespuestaTarea>;
+
+export const MOTIVO_RESPUESTA_TAREA_EN_PALABRAS: Readonly<Record<MotivoRespuestaTarea, string>> = {
+  'sin-disponibilidad': 'No tengo disponibilidad para asumirla',
+  'plazo-inviable': 'No puedo cumplir el plazo propuesto',
+  'alcance-no-claro': 'Necesito que se aclare o divida la tarea',
+  'otra-persona-mas-adecuada': 'Otra persona puede asumirla mejor',
+  'razon-privada': 'Prefiero no publicar el motivo',
+};
+
+const respuestaOfertaBase = z.object({
+  requestId,
+  offerId: opaqueId,
+  /** CAS opaco: el cliente lo devuelve, pero nunca tiene que mostrárselo a la persona. */
+  revision: z.number().int().positive(),
+});
+/** `offerId` evita que una respuesta retrasada acepte una oferta que ya fue reemplazada. */
+export const responderOfertaTarea = z.discriminatedUnion('tipo', [
+  respuestaOfertaBase.extend({ tipo: z.literal('aceptar') }),
+  respuestaOfertaBase.extend({
+    tipo: z.literal('rechazar'),
+    motivo: motivoRespuestaTarea,
+  }),
+  respuestaOfertaBase.extend({
+    tipo: z.literal('pedir-reasignacion'),
+    motivo: motivoRespuestaTarea,
+  }),
+]);
+export type ResponderOfertaTarea = z.infer<typeof responderOfertaTarea>;
+
+/** La oferta vigente que se reemplaza evita una reoferta tardía después de otra reasignación. */
+export const reofrecerTarea = z.object({ requestId, offerId: opaqueId, destinatarioId: opaqueId });
+export type ReofrecerTarea = z.infer<typeof reofrecerTarea>;
+
+export const hito = z.object({
+  id: opaqueId,
+  titulo: z.string(),
+  criterioDeTerminacion: z.string(),
+  venceEn: instantMs,
+  planificadoEn: instantMs,
+});
+export type Hito = z.infer<typeof hito>;
+
+export const tarea = z.object({
+  id: opaqueId,
+  hitoId: opaqueId,
+  destinatarioId: opaqueId,
+  /** Sólo existe después de aceptar; una oferta todavía no obliga a nadie. */
+  responsableId: opaqueId.optional(),
+  ofertaId: opaqueId,
+  /** Revisión opaca para que dos respuestas construidas sobre la misma vista no escriban ambas. */
+  revision: z.number().int().positive(),
+  titulo: z.string(),
+  descripcion: z.string(),
+  venceEn: instantMs,
+  esfuerzoMinutos: z.number().int().positive(),
+  dependeDe: z.array(opaqueId),
+  estado: estadoTarea,
+  /** El servidor lo calcula contra la sesión; no se muestra el nombre de otra persona. */
+  esMia: z.boolean(),
+});
+export type Tarea = z.infer<typeof tarea>;
 
 export const iniciativaResumen = z.object({
   id: opaqueId,
@@ -372,10 +485,21 @@ export const iniciativaResumen = z.object({
   creadaEn: instantMs,
   comprobanteDecision: hash64,
   comprobanteVersion: hash64,
+  /** Una iniciativa aprobada permanece provisional hasta que vence la impugnación y se ratifica. */
+  activa: z.boolean(),
+  /** Plazo derivado de la decisión, no un campo retroescrito dentro del stream de iniciativa. */
+  ratificableEn: instantMs.optional(),
+  activadaEn: instantMs.optional(),
+  /** No es un nombre: habilita acciones del plan sin revelar identidad personal. */
+  esResponsableInicial: z.boolean(),
 });
 export type IniciativaResumen = z.infer<typeof iniciativaResumen>;
 
-export const iniciativaDetalle = iniciativaResumen;
+export const iniciativaDetalle = iniciativaResumen.extend({
+  /** El proyector convierte la ausencia histórica en listas vacías; la UI nunca infiere `undefined`. */
+  hitos: z.array(hito),
+  tareas: z.array(tarea),
+});
 export type IniciativaDetalle = z.infer<typeof iniciativaDetalle>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════

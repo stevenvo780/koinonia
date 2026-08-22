@@ -74,6 +74,8 @@ export interface AppendCommand {
   readonly expectedHead: ExpectedHead;
   /** Clave de idempotencia del COMANDO (§3.5). UUID v4 generado por el cliente. */
   readonly requestId: string;
+  /** `public` para HTTP; los pasos derivados usan un namespace interno fijo y no aceptan entrada. */
+  readonly requestScope?: string | undefined;
 }
 
 export interface AppendedEvent {

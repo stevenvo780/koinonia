@@ -216,6 +216,50 @@ sin reserva no puede adquirir ejecución retroactiva y ninguna iniciativa puede 
 no aprobado. También recompone la relación `Proposal.DecisionLinked ↔ DecisionConfig` en los dos
 sentidos: ni una decisión huérfana ni un enlace hacia una decisión inexistente pueden dar verde.
 
+### 4.2 Ratificación, activación y aceptación de trabajo
+
+[ADR-0044](adr/0044-ratificacion-activa-hitos-y-ofertas-de-tarea.md) conserva una segunda frontera
+atómica. `InitiativeCreated` es la consecuencia provisional del escrutinio, no permiso para ejecutar.
+Cuando ya transcurrió la ventana completa desde la publicación única del resultado, una transacción
+escribe:
+
+```text
+DecisionRatified + InitiativeActivated(ratificationEventId, ratificationEventHash)
+```
+
+La iniciativa apunta al evento de ratificación exacto, no sólo a la decisión. El verificador cruza
+ambas historias en los dos sentidos. Una caída, una colisión de clave o una iniciativa ocupada dejan
+los dos agregados como estaban.
+
+Después de activar, `MilestonePlanned` y los eventos de tarea continúan en el stream de la iniciativa.
+Una oferta no es una asignación: `TaskOffered` guarda destinatario y usa su propio `eventId` como
+`offerId`; sólo `TaskAccepted` crea `assigneeId`. Toda respuesta y toda reoferta referencia la oferta
+vigente. Eso evita que una petición retardada actúe sobre un ciclo posterior, incluso si el estado
+visible volvió a llamarse `ofrecida`.
+
+Las mutaciones se serializan bajo el cerrojo del ledger y releen la cabeza después de adquirirlo.
+Las respuestas incluyen también la revisión de tarea observada —el `seq` de su último evento— como
+CAS. Entre aceptar, rechazar y pedir reasignación desde la misma revisión hay un solo ganador; una
+segunda transición legítima debe leer la revisión producida por la primera. La clave de idempotencia
+permanece estable en el cliente hasta recibir éxito inequívoco, por lo que perder una respuesta de red
+no duplica hitos, ofertas ni respuestas. Un replay exacto vuelve a comprobar el rol, círculo y
+membresía actuales antes de devolver éxito: idempotencia no perpetúa una autorización revocada.
+
+También bloquean y revalidan las filas de identidad necesarias hasta el commit: rol, círculo y retiro
+no se toman de una sesión vieja. El directorio de selección vive al otro lado de la frontera PII y
+devuelve sólo `MemberId` y alias a miembros autenticados del mismo círculo; el alias nunca entra al
+evento. Después de una supresión legítima, el historial demuestra la atribución seudónima y las
+transiciones, pero deliberadamente no reconstruye la fila personal borrada.
+
+La ratificación usa un único instante para comprobar esa membresía y para fechar las dos mitades del
+commit compuesto; no existe una ventana en la que la consulta considere vigente a una persona pero el
+evento quede atribuido después de su retiro.
+
+Un rechazo o una solicitud de reasignación publica únicamente una categoría cerrada no sensible. El
+API no admite texto libre en esos eventos. Los plazos capturados en la web se convierten desde hora de
+Colombia de forma explícita; el servidor siempre recibe un instante epoch, independiente de la zona
+del dispositivo.
+
 ## 5. Separación Governance Ledger / PII Vault
 
 ```mermaid

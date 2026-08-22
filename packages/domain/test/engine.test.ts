@@ -22,6 +22,8 @@ import {
   isLogChainIntact,
   openDecision,
   PreconditionError,
+  ratifyDecision,
+  ratifyDecisionBy,
   ratio,
   recordResult,
   replay,
@@ -134,16 +136,131 @@ describe('DecisionEngine — recorrido completo', () => {
     });
     expect(replay(log).status).toBe('Closed');
 
-    const ratified = await import('../src/events.js').then(async (m) =>
-      m.append(log, {
-        eventId: eventIdAt(202),
+    const ratified = await ratifyDecisionBy(log, {
+      eventId: eventIdAt(202),
+      at: instant(CLOSES_AT + config.window.challengeWindow),
+      by: {
+        memberId: memberIdAt(0),
+        roles: ['facilitator'],
+        circles: [config.circleId],
+      },
+    });
+    expect(replay(ratified).status).toBe('Ratified');
+  });
+
+  it('la impugnación corre desde la publicación tardía y admite el borde exacto', async () => {
+    const config = await simpleMajorityConfig(3);
+    let log = await openLog(config);
+    log = await castMany(log, ['yes', 'yes', 'no']);
+    log = await closeDecision(log, {
+      eventId: eventIdAt(203),
+      at: CLOSES_AT,
+      actor: 'system',
+      cause: 'window',
+    });
+    const result = await computeResult(log);
+    const publishedAt = instant(CLOSES_AT + 10 * HOUR);
+    log = await recordResult(log, {
+      eventId: eventIdAt(204),
+      at: publishedAt,
+      actor: 'system',
+      result,
+    });
+    expect(replay(log).resultComputedAt).toBe(publishedAt);
+
+    const boundary = instant(publishedAt + config.window.challengeWindow);
+    await expect(
+      ratifyDecision(log, {
+        eventId: eventIdAt(205),
+        at: instant(boundary - 1),
+        actor: memberIdAt(0),
+      }),
+    ).rejects.toMatchObject({ code: 'CHALLENGE_WINDOW_OPEN' });
+
+    const ratified = await ratifyDecision(log, {
+      eventId: eventIdAt(206),
+      at: boundary,
+      actor: memberIdAt(0),
+    });
+    expect(replay(ratified).status).toBe('Ratified');
+  });
+
+  it('rechaza un segundo ResultComputed por orden y por replay sin mover el instante original', async () => {
+    const config = await simpleMajorityConfig(3);
+    let log = await openLog(config);
+    log = await castMany(log, ['yes', 'yes', 'no']);
+    log = await closeDecision(log, {
+      eventId: eventIdAt(207),
+      at: CLOSES_AT,
+      actor: 'system',
+      cause: 'window',
+    });
+    const result = await computeResult(log);
+    const firstAt = instant(CLOSES_AT + HOUR);
+    log = await recordResult(log, {
+      eventId: eventIdAt(208),
+      at: firstAt,
+      actor: 'system',
+      result,
+    });
+
+    await expect(
+      recordResult(log, {
+        eventId: eventIdAt(209),
+        at: instant(firstAt + HOUR),
+        actor: 'system',
+        result,
+      }),
+    ).rejects.toMatchObject({ code: 'RESULT_ALREADY_COMPUTED' });
+    expect(replay(log).resultComputedAt).toBe(firstAt);
+
+    const fabricated = await import('../src/events.js').then((events) =>
+      events.append(log, {
+        eventId: eventIdAt(210),
+        decisionId: DECISION_ID,
+        occurredAt: instant(firstAt + HOUR),
+        actor: 'system',
+        payload: {
+          type: 'ResultComputed',
+          resultHash: result.resultHash,
+          outcomeKind: result.outcome.kind,
+        },
+      }),
+    );
+    expect(() => replay(fabricated)).toThrow(
+      expect.objectContaining({ code: 'RESULT_ALREADY_COMPUTED' }),
+    );
+  });
+
+  it('rechaza en replay una DecisionRatified atribuida a system', async () => {
+    const config = await simpleMajorityConfig(3);
+    let log = await openLog(config);
+    log = await castMany(log, ['yes', 'yes', 'no']);
+    log = await closeDecision(log, {
+      eventId: eventIdAt(211),
+      at: CLOSES_AT,
+      actor: 'system',
+      cause: 'window',
+    });
+    const result = await computeResult(log);
+    log = await recordResult(log, {
+      eventId: eventIdAt(212),
+      at: CLOSES_AT,
+      actor: 'system',
+      result,
+    });
+    const fabricated = await import('../src/events.js').then((events) =>
+      events.append(log, {
+        eventId: eventIdAt(213),
         decisionId: DECISION_ID,
         occurredAt: instant(CLOSES_AT + config.window.challengeWindow),
         actor: 'system',
         payload: { type: 'DecisionRatified' },
       }),
     );
-    expect(replay(ratified).status).toBe('Ratified');
+    expect(() => replay(fabricated)).toThrow(
+      expect.objectContaining({ code: 'RATIFICATION_REQUIRES_MEMBER' }),
+    );
   });
 
   it('INV-19 — la cadena de hashes del log es consistente y detecta manipulación', async () => {

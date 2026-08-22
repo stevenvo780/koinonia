@@ -118,8 +118,14 @@ describe('quórum — propiedades', () => {
       fc.property(fc.array(arbEvidencia, { maxLength: 10 }), (evidencia) => {
         const veredicto = evaluar(evidencia);
         for (const provider of veredicto.countedProviders) {
-          const origen = evidencia.find((e) => e.provider === provider);
-          expect(origen?.status).toBe('confirmado');
+          // Un proveedor puede aparecer varias veces (p. ej. primero incompleto y luego
+          // confirmado). `find` probaría arbitrariamente el primer intento, no la evidencia que
+          // justifica que el proveedor haya contado.
+          expect(
+            evidencia.some(
+              (candidate) => candidate.provider === provider && candidate.status === 'confirmado',
+            ),
+          ).toBe(true);
         }
       }),
       { numRuns: 300 },

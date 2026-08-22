@@ -230,7 +230,7 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
       'Quienes estudian en la noche pueden usar la sala hasta las nueve sin quedar en el pasillo.',
     ),
   ).toBeVisible();
-  await expect(page.getByText('Por empezar').first()).toBeVisible();
+  await expect(page.getByText('En revisión').first()).toBeVisible();
   await expect(page.getByText('Registro semanal de apertura de la sala')).toBeVisible();
 
   const textoIniciativa = (await page.locator('main').innerText()).toLowerCase();

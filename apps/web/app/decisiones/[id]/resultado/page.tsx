@@ -85,9 +85,9 @@ export default function Resultado(): ReactNode {
         <section aria-labelledby="siguiente-paso-titulo">
           <h2 id="siguiente-paso-titulo">El siguiente paso</h2>
           <p>
-            La decisión ya tiene una iniciativa para seguir el cambio acordado. Está{' '}
-            <strong>por empezar</strong> mientras termina la revisión: todavía no es una orden de
-            iniciar trabajo irreversible.
+            La decisión creó una iniciativa para seguir el cambio acordado. Nació en revisión y sólo
+            puede organizar trabajo después de la ratificación. Consultá su estado actual en la
+            iniciativa vinculada.
           </p>
           <p>
             <Link className="boton" href={`/iniciativas/${resultado.iniciativaId}`}>

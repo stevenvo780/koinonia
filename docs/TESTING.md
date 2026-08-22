@@ -1,11 +1,11 @@
 # Estrategia de pruebas de Koinonía
 
 > **Estado:** normativo. Documenta una estrategia **en marcha**, no un plan. Hoy el repositorio tiene
-> **603 pruebas en verde repartidas en 41 ficheros** —108 en `packages/crypto`, 255 en
-> `packages/domain`, 80 en `packages/anchor`, 33 en `packages/verifier-cli`, 17 en `services/api` y
-> 110 de integración contra PostgreSQL real—, entre ellas las **propiedades de fast-check** mapeadas
-> a un invariante de la PARTE E de la spec 30. A eso se suman **28 escenarios de extremo a extremo**
-> en Playwright.
+> **696 pruebas en verde repartidas en 49 ficheros** —108 en `packages/crypto`, 307 en
+> `packages/domain`, 80 en `packages/anchor`, 33 en `packages/verifier-cli`, 16 en
+> `packages/contracts`, 18 en `services/api` y 134 de integración contra PostgreSQL real—, entre ellas
+> las **propiedades de fast-check** mapeadas a un invariante de la PARTE E de la spec 30. A eso se suman
+> los escenarios de extremo a extremo en Playwright, cuyo contador vigente se registra en el handoff.
 >
 > **Fecha:** 2026-08-21 · Lo exigido a `packages/*`, a `services/api` y al corte vertical ya se
 > cumple; `apps/web` se cubre por extremo a extremo y no tiene suite unitaria propia.
@@ -248,6 +248,11 @@ Cubre además **concurrencia** (dos `BallotCast` simultáneos obtienen `seq` dis
 optimista converge; nunca hay huecos), **el tick de cierre** (INV-38) y **migraciones** (cada una sobre
 una base con datos, verificando que el ledger sigue íntegro).
 
+Para ADR-0044, tres respuestas de tarea lanzadas desde la misma revisión —aceptar, rechazar y pedir
+reasignación— compiten contra PostgreSQL real: exactamente una escribe y las otras reciben conflicto.
+Un intento posterior sólo puede avanzar con la revisión nueva. Las pruebas leen luego el payload
+persistido y demuestran que ni un campo extra de texto libre ni su valor llegan al ledger.
+
 ---
 
 ## 6. E2E con Playwright
@@ -260,7 +265,12 @@ Nueve escenarios **obligatorios**. Si uno falla, no hay release.
    con las papeletas; `cast` y `represented` se muestran por separado (`E23`).
 2. **Ejecución.** La propuesta exige plan previo; cambiar sólo el plan crea otra versión; una decisión
    aprobada crea exactamente una iniciativa enlazada con fecha y criterios, y el resultado conduce a
-   ella. Abrir y cerrar se recorren también desde la interfaz de facilitación (ADR-0043).
+   ella. Abrir y cerrar se recorren también desde la interfaz de facilitación (ADR-0043). Tras la
+   ventana real de impugnación, ratificar activa esa misma iniciativa; se crea un hito, se ofrece una
+   tarea y otra sesión la acepta. Antes de aceptar no aparece responsable. Una respuesta a la oferta
+   anterior tras reofertar falla sin cambiar la vigente. Aceptar exige una elección sin valor
+   predeterminado. Si el servidor guarda una orden y se pierde sólo la respuesta, el reintento usa la
+   misma clave y no duplica el hecho (ADR-0044).
 3. **Inmutabilidad.** Se altera el ledger **por debajo de la aplicación** —`UPDATE` directo sobre el
    payload de un evento intermedio— y la verificación **lo denuncia**: señala el `seq` exacto donde se
    rompe la cadena y la decisión queda en cuarentena. La prueba simétrica es igual de obligatoria: sin

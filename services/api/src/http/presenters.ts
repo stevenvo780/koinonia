@@ -307,7 +307,12 @@ export function resultadoDto(resultado: DecisionResult, iniciativaId?: string): 
   };
 }
 
-export function iniciativaDto(id: string, state: InitiativeState): IniciativaDetalle {
+export function iniciativaDto(
+  id: string,
+  state: InitiativeState,
+  quien?: MemberId,
+  ratificableEn?: number,
+): IniciativaDetalle {
   return {
     id,
     decisionId: state.decisionId,
@@ -320,9 +325,38 @@ export function iniciativaDto(id: string, state: InitiativeState): IniciativaDet
       descripcion: criterion.description,
       fuenteDeVerificacion: criterion.evidenceSource,
     })),
-    estado: state.status,
+    // El campo histórico conserva su único valor público; `activa` expresa la nueva distinción.
+    estado: 'por-empezar',
     creadaEn: state.createdAt,
     comprobanteDecision: state.decisionResultHash,
     comprobanteVersion: state.proposalVersionHash,
+    // Los streams históricos sólo tienen InitiativeCreated: se proyectan como provisionales y sin
+    // trabajo, sin inventarles una activación ni una asignación.
+    activa: state.activatedAt !== undefined,
+    ...(state.activatedAt !== undefined || ratificableEn === undefined ? {} : { ratificableEn }),
+    ...(state.activatedAt === undefined ? {} : { activadaEn: state.activatedAt }),
+    esResponsableInicial: quien !== undefined && state.executionPlan.responsibleId === quien,
+    hitos: state.milestones.map((milestone) => ({
+      id: milestone.milestoneId,
+      titulo: milestone.title,
+      criterioDeTerminacion: milestone.completionCriterion,
+      venceEn: milestone.dueAt,
+      planificadoEn: milestone.plannedAt,
+    })),
+    tareas: state.tasks.map((task) => ({
+      id: task.taskId,
+      hitoId: task.milestoneId,
+      destinatarioId: task.offeredTo,
+      ...(task.assigneeId === undefined ? {} : { responsableId: task.assigneeId }),
+      ofertaId: task.currentOfferId,
+      revision: task.lastSeq,
+      titulo: task.title,
+      descripcion: task.description,
+      venceEn: task.dueAt,
+      esfuerzoMinutos: task.effortMinutes,
+      dependeDe: [...task.dependsOn],
+      estado: task.status,
+      esMia: quien !== undefined && (task.assigneeId === quien || task.offeredTo === quien),
+    })),
   };
 }

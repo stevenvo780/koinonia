@@ -27,10 +27,14 @@ import {
   initiativeId,
   instant,
   memberId,
+  milestoneId,
   type ProblemPayload,
   type ProblemStatus,
   type ProposalPayload,
   proposalId,
+  type TaskResponseReason,
+  TASK_RESPONSE_REASONS,
+  taskId,
 } from '@koinonia/domain';
 
 import { instantToIso, isoToInstant } from '../decision/codec.js';
@@ -102,6 +106,26 @@ function arr(source: JsonObject, key: string, path: string): readonly JsonValue[
     throw new WorkspaceCodecError(`${path}.${key}`, 'se esperaba un arreglo');
   }
   return value as readonly JsonValue[];
+}
+
+function stringArray(source: JsonObject, key: string, path: string): readonly string[] {
+  return arr(source, key, path).map((value, index) => {
+    if (typeof value !== 'string') {
+      throw new WorkspaceCodecError(`${path}.${key}[${String(index)}]`, 'se esperaba texto');
+    }
+    return value;
+  });
+}
+
+function taskResponseReason(source: JsonObject, key: string, path: string): TaskResponseReason {
+  const value = str(source, key, path);
+  if (!(TASK_RESPONSE_REASONS as readonly string[]).includes(value)) {
+    throw new WorkspaceCodecError(
+      `${path}.${key}`,
+      'se esperaba un motivo público y no sensible de respuesta a tarea',
+    );
+  }
+  return value as TaskResponseReason;
 }
 
 function encodeExecutionPlan(plan: ExecutionPlan): JsonObject {
@@ -310,29 +334,129 @@ function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
-  return {
-    decisionId: payload.decisionId,
-    proposalId: payload.proposalId,
-    proposalVersionHash: payload.proposalVersionHash,
-    decisionResultHash: payload.decisionResultHash,
-    circleId: payload.circleId,
-    executionPlan: encodeExecutionPlan(payload.executionPlan),
-  };
+  switch (payload.type) {
+    case 'InitiativeCreated':
+      return {
+        decisionId: payload.decisionId,
+        proposalId: payload.proposalId,
+        proposalVersionHash: payload.proposalVersionHash,
+        decisionResultHash: payload.decisionResultHash,
+        circleId: payload.circleId,
+        executionPlan: encodeExecutionPlan(payload.executionPlan),
+      };
+    case 'InitiativeActivated':
+      return {
+        ratificationEventId: payload.ratificationEventId,
+        ratificationEventHash: payload.ratificationEventHash,
+      };
+    case 'MilestonePlanned':
+      return {
+        milestoneId: payload.milestoneId,
+        title: payload.title,
+        completionCriterion: payload.completionCriterion,
+        dueAt: payload.dueAt,
+      };
+    case 'TaskOffered':
+      return {
+        taskId: payload.taskId,
+        milestoneId: payload.milestoneId,
+        offeredTo: payload.offeredTo,
+        title: payload.title,
+        description: payload.description,
+        effortMinutes: payload.effortMinutes,
+        dueAt: payload.dueAt,
+        dependsOn: [...payload.dependsOn],
+      };
+    case 'TaskAccepted':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+      };
+    case 'TaskRejected':
+    case 'TaskReassignmentRequested':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        reason: payload.reason,
+      };
+    case 'TaskReoffered':
+      return {
+        taskId: payload.taskId,
+        previousOfferId: payload.previousOfferId,
+        offeredTo: payload.offeredTo,
+      };
+  }
 }
 
 function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload {
-  if (type !== 'InitiativeCreated') {
-    throw new WorkspaceCodecError('eventType', `${type} no es un evento de iniciativa`);
+  switch (type) {
+    case 'InitiativeCreated':
+      return {
+        type,
+        decisionId: decisionId(str(body, 'decisionId', type)),
+        proposalId: proposalId(str(body, 'proposalId', type)),
+        proposalVersionHash: toHash(str(body, 'proposalVersionHash', type)),
+        decisionResultHash: toHash(str(body, 'decisionResultHash', type)),
+        circleId: circleId(str(body, 'circleId', type)),
+        executionPlan: decodeExecutionPlan(
+          obj(body, 'executionPlan', type),
+          `${type}.executionPlan`,
+        ),
+      };
+    case 'InitiativeActivated':
+      return {
+        type,
+        ratificationEventId: eventId(str(body, 'ratificationEventId', type)),
+        ratificationEventHash: toHash(str(body, 'ratificationEventHash', type)),
+      };
+    case 'MilestonePlanned':
+      return {
+        type,
+        milestoneId: milestoneId(str(body, 'milestoneId', type)),
+        title: str(body, 'title', type),
+        completionCriterion: str(body, 'completionCriterion', type),
+        dueAt: instant(int(body, 'dueAt', type)),
+      };
+    case 'TaskOffered':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        milestoneId: milestoneId(str(body, 'milestoneId', type)),
+        offeredTo: memberId(str(body, 'offeredTo', type)),
+        title: str(body, 'title', type),
+        description: str(body, 'description', type),
+        effortMinutes: int(body, 'effortMinutes', type),
+        dueAt: instant(int(body, 'dueAt', type)),
+        dependsOn: stringArray(body, 'dependsOn', type).map(taskId),
+      };
+    case 'TaskAccepted':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+      };
+    case 'TaskRejected':
+    case 'TaskReassignmentRequested':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        reason: taskResponseReason(body, 'reason', type),
+      };
+    case 'TaskReoffered':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        previousOfferId: eventId(str(body, 'previousOfferId', type)),
+        offeredTo: memberId(str(body, 'offeredTo', type)),
+      };
+    default:
+      throw new WorkspaceCodecError('eventType', `${type} no es un evento de iniciativa`);
   }
-  return {
-    type,
-    decisionId: decisionId(str(body, 'decisionId', type)),
-    proposalId: proposalId(str(body, 'proposalId', type)),
-    proposalVersionHash: toHash(str(body, 'proposalVersionHash', type)),
-    decisionResultHash: toHash(str(body, 'decisionResultHash', type)),
-    circleId: circleId(str(body, 'circleId', type)),
-    executionPlan: decodeExecutionPlan(obj(body, 'executionPlan', type), `${type}.executionPlan`),
-  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════

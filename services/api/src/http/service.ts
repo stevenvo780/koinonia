@@ -28,6 +28,7 @@ import {
   closeDecisionBy,
   computeResult,
   type DecisionConfig,
+  type DecisionEvent,
   decisionId,
   type DecisionLog,
   type DecisionResult,
@@ -81,6 +82,19 @@ import {
   verifyInitiativeLog,
   versionAt,
   ballotId as toBallotId,
+  ratifyDecisionBy,
+  activateInitiative,
+  acceptTaskBy,
+  offerTaskBy,
+  planMilestoneBy,
+  milestoneId,
+  rejectTaskBy,
+  reofferTaskBy,
+  requestTaskReassignmentBy,
+  taskId,
+  type InitiativeEvent,
+  type InitiativeLog,
+  type TaskResponseReason,
 } from '@koinonia/domain';
 
 import { withTransaction, type PgClient, type PgPool } from '../db/client.js';
@@ -91,6 +105,7 @@ import {
 } from '../decision/repository.js';
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
 import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
+import { IdempotencyConflictError, type AppendResult } from '../ledger/types.js';
 import { verifyLedger, type LedgerVerification } from '../ledger/verify.js';
 import {
   listAggregateIds,
@@ -107,7 +122,12 @@ import {
   PROPOSAL_AGGREGATE_TYPE,
   INITIATIVE_AGGREGATE_TYPE,
 } from '../workspace/repository.js';
-import { allMembers, type MemberRecord, sha256Hex } from './identity.js';
+import {
+  allMembers,
+  findActiveMemberInCircleForShare,
+  type MemberRecord,
+  sha256Hex,
+} from './identity.js';
 import type { Ports } from './ports.js';
 
 /** El actor anónimo con el que se atienden las lecturas públicas. */
@@ -659,7 +679,7 @@ export async function abrirDecision(
     const plannedInitiativeId = initiativeId(deps.ports.random.opaqueId());
     const seedAdmin = toHex(deps.ports.random.bytes(32));
     const seedCommitment: Hash = await hashText(seedAdmin);
-    const electorate = await congelarPadron(at, await allMembers(client));
+    const electorate = await congelarPadron(at, await allMembers(client, at));
     if (electorate.censusSize < 1) {
       throw new ServicioError('SIN_PADRON', 409, 'no hay nadie que pueda decidir todavía');
     }
@@ -976,6 +996,627 @@ export async function cerrarDecision(
   });
 }
 
+/** Ratifica y activa en el mismo corte del ledger; una decisión histórica sólo se ratifica. */
+export async function ratificarDecision(
+  deps: ServicioDeps,
+  actor: Actor,
+  decisionIdRaw: string,
+  input: { readonly requestId: string },
+): Promise<DecisionState> {
+  return withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+
+    // Ambos namespaces se leen antes de consumir reloj o azar. El request público identifica la
+    // ratificación; el interno identifica su consecuencia atómica sobre la iniciativa.
+    const previousDecision = await readAppendRequestWithin(client, input.requestId);
+    const previousActivation = await readAppendRequestWithin(
+      client,
+      input.requestId,
+      'internal:initiative-activation:v1',
+    );
+    if (previousDecision !== undefined && previousDecision.aggregateId !== decisionIdRaw) {
+      throw new IdempotencyConflictError(
+        input.requestId,
+        `ya pertenece a la decisión ${previousDecision.aggregateId}, no a ${decisionIdRaw}`,
+      );
+    }
+    const log = await loadDecisionLog(client, decisionIdRaw);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa decisión');
+    const state = replay(log);
+    const config = state.config;
+    if (config === undefined)
+      throw new ServicioError('ILLEGAL_TRANSITION', 409, 'esa decisión no abrió');
+    if (actor.memberId === undefined) {
+      throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'ratificar exige identidad');
+    }
+    // Una ratificación tiene un solo corte temporal. Si la membresía se comprobara con un
+    // instante y el evento se fechara con otro, una retirada entre ambas lecturas permitiría
+    // atribuir un acto posterior a quien ya no era miembro. El mismo `at` gobierna elegibilidad y
+    // ambos hechos del commit compuesto.
+    const at = ahora(deps);
+    const current = await findActiveMemberInCircleForShare(
+      client,
+      actor.memberId,
+      config.circleId,
+      at,
+    );
+    if (current === undefined) {
+      throw new ServicioError(
+        'UNAUTHORIZED_NOT_IN_CIRCLE',
+        403,
+        'no pertenecés actualmente a este círculo',
+      );
+    }
+    const currentActor: Actor = {
+      memberId: current.memberId,
+      roles: current.roles,
+      circles: current.circles,
+    };
+
+    // Incluso un replay es una lectura autenticada del acto procedimental: un cambio vivo de rol o
+    // círculo se respeta, y el administrador técnico no gana soberanía por conocer el UUID.
+    authorize(currentActor, 'decision:ratify', { kind: 'decision', circleId: config.circleId });
+    const frozen = await planCongeladoDeDecision(client, state);
+
+    if (previousDecision !== undefined) {
+      const stored = previousDecision.events[0];
+      const original = stored === undefined ? undefined : log[stored.event.seq];
+      if (
+        previousDecision.aggregateId !== decisionIdRaw ||
+        previousDecision.events.length !== 1 ||
+        stored?.event.aggregateType !== DECISION_AGGREGATE_TYPE ||
+        stored.event.eventType !== 'DecisionRatified' ||
+        stored.event.actor !== current.memberId ||
+        original?.payload.type !== 'DecisionRatified' ||
+        original.actor !== current.memberId
+      ) {
+        throw new IdempotencyConflictError(
+          input.requestId,
+          'ya pertenece a otra decisión, actor u operación; usá una clave nueva',
+        );
+      }
+      if (state.status !== 'Ratified') {
+        throw new ServicioError(
+          'INTEGRITY_RATIFICATION_ATOMICITY',
+          500,
+          'la clave registra una ratificación que el estado de la decisión no conserva',
+        );
+      }
+      if (frozen !== undefined && previousActivation === undefined) {
+        throw new ServicioError(
+          'INTEGRITY_RATIFICATION_ATOMICITY',
+          500,
+          'la ratificación pública existe pero falta su activación interna atómica',
+        );
+      }
+      await assertRatificationActivation(
+        client,
+        log,
+        state,
+        original,
+        frozen,
+        previousActivation,
+        input.requestId,
+      );
+      return state;
+    }
+
+    if (previousActivation !== undefined) {
+      const stored = previousActivation.events[0];
+      if (
+        frozen !== undefined &&
+        previousActivation.aggregateId === frozen.initiativeId &&
+        previousActivation.events.length === 1 &&
+        stored?.event.aggregateType === INITIATIVE_AGGREGATE_TYPE &&
+        stored.event.eventType === 'InitiativeActivated'
+      ) {
+        throw new ServicioError(
+          'INTEGRITY_RATIFICATION_ATOMICITY',
+          500,
+          'la activación interna existe pero falta su ratificación pública atómica',
+        );
+      }
+      throw new IdempotencyConflictError(
+        input.requestId,
+        'ya pertenece a otra activación interna sin esta ratificación pública',
+      );
+    }
+
+    // Una clave nueva puede consultar idempotentemente una decisión ya ratificada, pero sólo
+    // después de demostrar que el enlace atómico existente sigue completo y exacto.
+    if (state.status === 'Ratified') {
+      const ratification = log.find((event) => event.payload.type === 'DecisionRatified');
+      if (ratification === undefined) {
+        throw new ServicioError(
+          'INTEGRITY_RATIFICATION_ATOMICITY',
+          500,
+          'el estado ratificado no conserva su evento de ratificación',
+        );
+      }
+      await assertRatificationActivation(client, log, state, ratification, frozen, undefined);
+      return state;
+    }
+
+    const next = await ratifyDecisionBy(log, {
+      eventId: nuevoEventId(deps),
+      at,
+      by: currentActor,
+    });
+    const ratification = next.at(-1);
+    if (ratification === undefined) throw new Error('la ratificación no produjo evento');
+
+    let activated: Awaited<ReturnType<typeof activateInitiative>> | undefined;
+    if (frozen !== undefined) {
+      const initiativeLog = await loadInitiativeLog(client, frozen.initiativeId);
+      if (initiativeLog.length === 0) {
+        throw new ServicioError(
+          'INTEGRITY_APPROVED_INITIATIVE_MISSING',
+          500,
+          'la decisión nueva no conserva su iniciativa provisional',
+        );
+      }
+      const result = await computeResult(log);
+      const provisional = await verifyInitiativeLog(initiativeLog);
+      await assertInitiativeMatches(provisional, state, result, frozen);
+      if (provisional.activatedAt !== undefined) {
+        throw new ServicioError(
+          'INTEGRITY_INITIATIVE_LINK_MISMATCH',
+          500,
+          'la iniciativa ya está activa aunque la decisión todavía no fue ratificada',
+        );
+      }
+      activated = await activateInitiative(
+        initiativeLog,
+        { eventId: nuevoEventId(deps), at, actor: 'system' },
+        { ratificationEventId: ratification.eventId, ratificationEventHash: ratification.hash },
+      );
+    }
+    await persistDecisionLogWithin(client, next, { requestId: input.requestId });
+    if (activated !== undefined) {
+      await persistInitiativeLogWithin(client, activated, {
+        requestId: input.requestId,
+        requestScope: 'internal:initiative-activation:v1',
+      });
+    }
+    return replay(next);
+  });
+}
+
+async function assertRatificationActivation(
+  client: PgClient,
+  decisionLog: DecisionLog,
+  decision: DecisionState,
+  ratification: DecisionEvent,
+  frozen: PlanCongeladoDecision | undefined,
+  activationRequest: AppendResult | undefined,
+  replayRequestId?: string,
+): Promise<void> {
+  if (ratification.payload.type !== 'DecisionRatified') {
+    throw new ServicioError(
+      'INTEGRITY_RATIFICATION_ATOMICITY',
+      500,
+      'el evento enlazado no es una ratificación',
+    );
+  }
+  if (frozen === undefined) {
+    if (activationRequest !== undefined) {
+      throw new ServicioError(
+        'INTEGRITY_RATIFICATION_ATOMICITY',
+        500,
+        'una decisión histórica sin iniciativa tiene una activación interna inesperada',
+      );
+    }
+    return;
+  }
+
+  const initiativeLog = await loadInitiativeLog(client, frozen.initiativeId);
+  if (initiativeLog.length === 0) {
+    throw new ServicioError(
+      'INTEGRITY_APPROVED_INITIATIVE_MISSING',
+      500,
+      'la ratificación no conserva la iniciativa que debía activar',
+    );
+  }
+  const initiative = await verifyInitiativeLog(initiativeLog);
+  await assertInitiativeMatches(initiative, decision, await computeResult(decisionLog), frozen);
+  const activation = initiativeLog.find((event) => event.payload.type === 'InitiativeActivated');
+  if (
+    activation?.payload.type !== 'InitiativeActivated' ||
+    activation.actor !== 'system' ||
+    activation.payload.ratificationEventId !== ratification.eventId ||
+    activation.payload.ratificationEventHash !== ratification.hash ||
+    activation.occurredAt !== ratification.occurredAt ||
+    initiative.activatedAt !== ratification.occurredAt ||
+    initiative.ratificationEventId !== ratification.eventId ||
+    initiative.ratificationEventHash !== ratification.hash
+  ) {
+    throw new ServicioError(
+      'INTEGRITY_RATIFICATION_ATOMICITY',
+      500,
+      'DecisionRatified e InitiativeActivated no forman el mismo enlace verificable',
+    );
+  }
+
+  // En un replay con la clave original también se exige la mitad interna exacta. Una ausencia no
+  // se interpreta como «ya estaba hecho»: evidencia un commit compuesto incompleto.
+  if (activationRequest !== undefined) {
+    const stored = activationRequest.events[0];
+    const original = stored === undefined ? undefined : initiativeLog[stored.event.seq];
+    if (
+      activationRequest.aggregateId !== frozen.initiativeId ||
+      activationRequest.events.length !== 1 ||
+      stored?.event.aggregateType !== INITIATIVE_AGGREGATE_TYPE ||
+      stored.event.eventType !== 'InitiativeActivated' ||
+      stored.event.actor !== undefined ||
+      original?.eventId !== activation.eventId ||
+      original.payload.type !== 'InitiativeActivated'
+    ) {
+      throw new IdempotencyConflictError(
+        replayRequestId ?? '00000000-0000-4000-8000-000000000000',
+        'el namespace interno ya pertenece a otra activación',
+      );
+    }
+  }
+}
+
+interface InitiativeMutation {
+  /** El tipo es parte de la intención durable: una clave no cambia de operación al reintentarse. */
+  readonly eventType:
+    | 'MilestonePlanned'
+    | 'TaskOffered'
+    | 'TaskAccepted'
+    | 'TaskRejected'
+    | 'TaskReassignmentRequested'
+    | 'TaskReoffered';
+  /** Sólo para órdenes que ofrecen trabajo. Se bloquea y relee antes de construir el evento. */
+  readonly recipientId?: MemberId;
+  /** Compara únicamente entradas del cliente; IDs e instante generados se recuperan del evento. */
+  readonly matchesReplay: (event: InitiativeEvent) => boolean;
+  /** Revalida la capacidad viva del actor aun cuando el evento ya exista y no vaya a reescribirse. */
+  readonly reauthorizeReplay: (state: InitiativeState, current: Actor) => void;
+  readonly run: (
+    log: InitiativeLog,
+    current: Actor,
+    at: Instant,
+    recipient: Actor | undefined,
+  ) => Promise<InitiativeLog>;
+}
+
+function rejectInitiativeReplay(requestId: string, detail: string): never {
+  throw new IdempotencyConflictError(requestId, detail);
+}
+
+/**
+ * Comprueba el comando público que ya selló una clave sin volver a generar su eventId, taskId,
+ * milestoneId ni instante. El `seq` del ledger es también el índice del evento en el log de dominio
+ * (ledger 0 ↔ dominio 1), por lo que la recuperación no depende de buscar un identificador nuevo.
+ */
+function assertInitiativeReplay(
+  previous: AppendResult,
+  initiativeIdRaw: string,
+  requestId: string,
+  actorId: MemberId,
+  mutation: InitiativeMutation,
+  log: InitiativeLog,
+): void {
+  const stored = previous.events[0];
+  const isSingleExpectedEvent =
+    previous.aggregateId === initiativeIdRaw &&
+    previous.events.length === 1 &&
+    stored !== undefined &&
+    stored.event.aggregateType === INITIATIVE_AGGREGATE_TYPE &&
+    stored.event.eventType === mutation.eventType &&
+    stored.event.actor === actorId;
+  if (!isSingleExpectedEvent) {
+    rejectInitiativeReplay(
+      requestId,
+      'ya pertenece a otra iniciativa, actor u operación; usá una clave nueva',
+    );
+  }
+
+  const original = log[stored.event.seq];
+  if (
+    original === undefined ||
+    original.actor !== actorId ||
+    original.payload.type !== mutation.eventType ||
+    !mutation.matchesReplay(original)
+  ) {
+    rejectInitiativeReplay(
+      requestId,
+      'no describe los mismos datos que la operación original; usá una clave nueva',
+    );
+  }
+}
+
+async function mutateInitiative(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  requestId: string,
+  mutation: InitiativeMutation,
+): Promise<InitiativeState> {
+  return withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+
+    // Debe ser la primera lectura específica de la orden: un replay no consume azar ni reloj y
+    // conserva exactamente los identificadores que ya están en el ledger.
+    const previous = await readAppendRequestWithin(client, requestId);
+    if (previous !== undefined && previous.aggregateId !== id) {
+      rejectInitiativeReplay(
+        requestId,
+        `ya pertenece a la iniciativa ${previous.aggregateId}, no a ${id}`,
+      );
+    }
+    const log = await loadInitiativeLog(client, id);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa iniciativa');
+    const state = await verifyInitiativeLog(log);
+    if (actor.memberId === undefined)
+      throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'requiere identidad');
+
+    const now = deps.ports.clock.now();
+    const member = await findActiveMemberInCircleForShare(
+      client,
+      actor.memberId,
+      state.circleId,
+      now,
+    );
+    if (member === undefined)
+      throw new ServicioError('UNAUTHORIZED_NOT_IN_CIRCLE', 403, 'no pertenecés al círculo');
+    const current: Actor = {
+      memberId: member.memberId,
+      roles: member.roles,
+      circles: member.circles,
+    };
+
+    if (previous !== undefined) {
+      assertInitiativeReplay(previous, id, requestId, member.memberId, mutation, log);
+      // La idempotencia conserva el resultado del comando, no una autorización caducada. El actor
+      // y el cuerpo ya coincidieron semánticamente; antes de revelar el replay se vuelve a aplicar
+      // la capacidad vigente con los roles y círculos recién leídos de la bóveda.
+      mutation.reauthorizeReplay(state, current);
+      return state;
+    }
+
+    let recipient: Actor | undefined;
+    if (mutation.recipientId !== undefined) {
+      const currentRecipient = await findActiveMemberInCircleForShare(
+        client,
+        mutation.recipientId,
+        state.circleId,
+        now,
+      );
+      if (currentRecipient === undefined) {
+        throw new ServicioError(
+          'UNAUTHORIZED_NOT_IN_CIRCLE',
+          403,
+          'la persona destinataria no pertenece actualmente al círculo',
+        );
+      }
+      recipient = {
+        memberId: currentRecipient.memberId,
+        roles: currentRecipient.roles,
+        circles: currentRecipient.circles,
+      };
+    }
+
+    const next = await mutation.run(log, current, instant(now), recipient);
+    await persistInitiativeLogWithin(client, next, { requestId });
+    return verifyInitiativeLog(next);
+  });
+}
+
+export async function planificarHito(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  input: { requestId: string; titulo: string; criterioDeTerminacion: string; venceEn: number },
+): Promise<InitiativeState> {
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'MilestonePlanned',
+    matchesReplay: (event) =>
+      event.payload.type === 'MilestonePlanned' &&
+      event.payload.title === input.titulo &&
+      event.payload.completionCriterion === input.criterioDeTerminacion &&
+      event.payload.dueAt === input.venceEn,
+    reauthorizeReplay: (state, current) => {
+      authorize(current, 'initiative:plan', {
+        kind: 'initiative',
+        owner: state.executionPlan.responsibleId,
+        circleId: state.circleId,
+      });
+    },
+    run: (log, by, at) =>
+      planMilestoneBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          milestoneId: milestoneId(deps.ports.random.opaqueId()),
+          title: input.titulo,
+          completionCriterion: input.criterioDeTerminacion,
+          dueAt: instant(input.venceEn),
+        },
+      ),
+  });
+}
+
+export async function ofrecerTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  input: {
+    requestId: string;
+    hitoId: string;
+    destinatarioId: string;
+    titulo: string;
+    descripcion: string;
+    venceEn: number;
+    esfuerzoMinutos: number;
+    dependeDe: readonly string[];
+  },
+): Promise<InitiativeState> {
+  const recipientId = memberId(input.destinatarioId);
+  const milestone = milestoneId(input.hitoId);
+  const dependencies = input.dependeDe.map(taskId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskOffered',
+    recipientId,
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskOffered' &&
+      event.payload.milestoneId === milestone &&
+      event.payload.offeredTo === recipientId &&
+      event.payload.title === input.titulo &&
+      event.payload.description === input.descripcion &&
+      event.payload.dueAt === input.venceEn &&
+      event.payload.effortMinutes === input.esfuerzoMinutos &&
+      event.payload.dependsOn.length === dependencies.length &&
+      event.payload.dependsOn.every((dependency, index) => dependency === dependencies[index]),
+    reauthorizeReplay: (state, current) => {
+      authorize(current, 'task:offer', {
+        kind: 'task',
+        owner: state.executionPlan.responsibleId,
+        circleId: state.circleId,
+      });
+    },
+    run: (log, by, at, recipient) => {
+      if (recipient === undefined) throw new Error('la oferta no releyó su destinatario');
+      return offerTaskBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: taskId(deps.ports.random.opaqueId()),
+          milestoneId: milestone,
+          offeredTo: recipientId,
+          title: input.titulo,
+          description: input.descripcion,
+          effortMinutes: input.esfuerzoMinutos,
+          dueAt: instant(input.venceEn),
+          dependsOn: dependencies,
+          recipient,
+        },
+      );
+    },
+  });
+}
+
+export async function responderOfertaTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input:
+    | { requestId: string; offerId: string; revision: number; tipo: 'aceptar' }
+    | {
+        requestId: string;
+        offerId: string;
+        revision: number;
+        tipo: 'rechazar';
+        motivo: TaskResponseReason;
+      }
+    | {
+        requestId: string;
+        offerId: string;
+        revision: number;
+        tipo: 'pedir-reasignacion';
+        motivo: TaskResponseReason;
+      },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  const eventType =
+    input.tipo === 'aceptar'
+      ? 'TaskAccepted'
+      : input.tipo === 'rechazar'
+        ? 'TaskRejected'
+        : 'TaskReassignmentRequested';
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType,
+    matchesReplay: (event) => {
+      if (event.payload.type !== eventType) return false;
+      if (
+        event.payload.taskId !== task ||
+        event.payload.offerId !== offer ||
+        event.payload.expectedTaskSeq !== input.revision
+      ) {
+        return false;
+      }
+      if (event.payload.type === 'TaskAccepted') return input.tipo === 'aceptar';
+      return input.tipo !== 'aceptar' && event.payload.reason === input.motivo;
+    },
+    reauthorizeReplay: (state, current) => {
+      authorize(
+        current,
+        input.tipo === 'aceptar'
+          ? 'task:accept'
+          : input.tipo === 'rechazar'
+            ? 'task:reject'
+            : 'task:request-reassignment',
+        { kind: 'task', subject: current.memberId, circleId: state.circleId },
+      );
+    },
+    run: (log, by, at) => {
+      const meta = { eventId: nuevoEventId(deps), at, by };
+      switch (input.tipo) {
+        case 'aceptar':
+          return acceptTaskBy(log, meta, {
+            taskId: task,
+            offerId: offer,
+            expectedTaskSeq: input.revision,
+          });
+        case 'rechazar':
+          return rejectTaskBy(log, meta, {
+            taskId: task,
+            offerId: offer,
+            expectedTaskSeq: input.revision,
+            reason: input.motivo,
+          });
+        case 'pedir-reasignacion':
+          return requestTaskReassignmentBy(log, meta, {
+            taskId: task,
+            offerId: offer,
+            expectedTaskSeq: input.revision,
+            reason: input.motivo,
+          });
+      }
+    },
+  });
+}
+
+export async function reofrecerTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: { requestId: string; offerId: string; destinatarioId: string },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const previousOffer = eventId(input.offerId);
+  const recipientId = memberId(input.destinatarioId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskReoffered',
+    recipientId,
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskReoffered' &&
+      event.payload.taskId === task &&
+      event.payload.previousOfferId === previousOffer &&
+      event.payload.offeredTo === recipientId,
+    reauthorizeReplay: (state, current) => {
+      authorize(current, 'task:reoffer', {
+        kind: 'task',
+        owner: state.executionPlan.responsibleId,
+        circleId: state.circleId,
+      });
+    },
+    run: (log, by, at, recipient) => {
+      if (recipient === undefined) throw new Error('la reoferta no releyó su destinatario');
+      return reofferTaskBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        { taskId: task, previousOfferId: previousOffer, offeredTo: recipientId, recipient },
+      );
+    },
+  });
+}
+
 interface PlanCongeladoDecision {
   readonly initiativeId: ReturnType<typeof initiativeId>;
   readonly plan: ExecutionPlan;
@@ -1118,13 +1759,36 @@ export async function resultadoDeDecision(
 export interface IniciativaConId {
   readonly id: string;
   readonly state: InitiativeState;
+  readonly ratificableEn?: Instant;
+}
+
+async function ratificableEnDeIniciativa(
+  client: PgClient,
+  initiative: InitiativeState,
+): Promise<Instant | undefined> {
+  if (initiative.activatedAt !== undefined) return undefined;
+  const log = await loadDecisionLog(client, initiative.decisionId);
+  if (log.length === 0) return undefined;
+  const decision = replay(log);
+  if (
+    decision.config === undefined ||
+    decision.closedAt === undefined ||
+    decision.resultComputedAt === undefined
+  ) {
+    return undefined;
+  }
+  return instant(
+    Math.max(decision.closedAt, decision.resultComputedAt) + decision.config.window.challengeWindow,
+  );
 }
 
 export async function listarIniciativas(deps: ServicioDeps): Promise<readonly IniciativaConId[]> {
   return conCliente(deps.pool, async (client) => {
     const result: IniciativaConId[] = [];
     for (const id of await listAggregateIds(client, INITIATIVE_AGGREGATE_TYPE)) {
-      result.push({ id, state: await loadInitiativeState(client, id) });
+      const state = await loadInitiativeState(client, id);
+      const ratificableEn = await ratificableEnDeIniciativa(client, state);
+      result.push({ id, state, ...(ratificableEn === undefined ? {} : { ratificableEn }) });
     }
     return result;
   });
@@ -1134,7 +1798,9 @@ export async function verIniciativa(deps: ServicioDeps, id: string): Promise<Ini
   return conCliente(deps.pool, async (client) => {
     const log = await loadInitiativeLog(client, id);
     if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa iniciativa');
-    return { id, state: await loadInitiativeState(client, id) };
+    const state = await verifyInitiativeLog(log);
+    const ratificableEn = await ratificableEnDeIniciativa(client, state);
+    return { id, state, ...(ratificableEn === undefined ? {} : { ratificableEn }) };
   });
 }
 
@@ -1203,6 +1869,7 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
     let decisionesVerificadas = 0;
     const decisionIds = await listAggregateIds(client, DECISION_AGGREGATE_TYPE);
     const decisionStates = new Map<string, DecisionState>();
+    const ratificationEvents = new Map<string, DecisionEvent>();
     for (const id of decisionIds) {
       try {
         const log = await loadDecisionLog(client, id);
@@ -1224,6 +1891,8 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
           }
         }
         const state = replay(log);
+        const ratification = log.find((event) => event.payload.type === 'DecisionRatified');
+        if (ratification !== undefined) ratificationEvents.set(id, ratification);
         const config = state.config;
         if (config !== undefined) {
           const proposal = proposalStates.get(config.proposalId);
@@ -1268,6 +1937,28 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
               ejecucionRotas.push({
                 id,
                 motivo: 'la iniciativa no coincide con el id, vínculos o plan congelados',
+              });
+            } else if (state.status === 'Ratified') {
+              if (
+                ratification === undefined ||
+                initiative.activatedAt !== ratification.occurredAt ||
+                initiative.ratificationEventId !== ratification.eventId ||
+                initiative.ratificationEventHash !== ratification.hash
+              ) {
+                ejecucionRotas.push({
+                  id,
+                  motivo:
+                    'la decisión ratificada no tiene una InitiativeActivated enlazada al mismo evento y huella',
+                });
+              }
+            } else if (
+              initiative.activatedAt !== undefined ||
+              initiative.ratificationEventId !== undefined ||
+              initiative.ratificationEventHash !== undefined
+            ) {
+              ejecucionRotas.push({
+                id,
+                motivo: 'una iniciativa se activó sin que su decisión esté ratificada',
               });
             }
           } else if (linked.length !== 0 || frozenInitiative !== undefined) {
@@ -1337,6 +2028,31 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
           motivo:
             'toda iniciativa exige una decision aprobada que reserve exactamente su id, vinculos, resultado y plan',
         });
+      } else {
+        const ratification = ratificationEvents.get(decision.decisionId);
+        if (
+          decision.status === 'Ratified' &&
+          (ratification === undefined ||
+            initiative.activatedAt !== ratification.occurredAt ||
+            initiative.ratificationEventId !== ratification.eventId ||
+            initiative.ratificationEventHash !== ratification.hash)
+        ) {
+          ejecucionRotas.push({
+            id: initiative.initiativeId,
+            motivo:
+              'la activación no prueba en sentido inverso la ratificación exacta de su decisión',
+          });
+        } else if (
+          decision.status !== 'Ratified' &&
+          (initiative.activatedAt !== undefined ||
+            initiative.ratificationEventId !== undefined ||
+            initiative.ratificationEventHash !== undefined)
+        ) {
+          ejecucionRotas.push({
+            id: initiative.initiativeId,
+            motivo: 'la iniciativa afirma una activación que su decisión no ratificó',
+          });
+        }
       }
     }
 

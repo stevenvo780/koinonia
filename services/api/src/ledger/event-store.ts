@@ -88,6 +88,15 @@ export async function lockLedgerWithin(client: pg.PoolClient): Promise<void> {
 }
 
 const MAX_ATTEMPTS = 5;
+const REQUEST_SCOPE = /^[a-z0-9:._-]{1,80}$/u;
+
+function normalizedRequestScope(scope: string | undefined): string {
+  const value = scope ?? 'public';
+  if (!REQUEST_SCOPE.test(value)) {
+    throw new LedgerAppendError('requestScope debe tener entre 1 y 80 caracteres [a-z0-9:._-]');
+  }
+  return value;
+}
 
 interface EventRow {
   readonly leaf_index: string;
@@ -327,6 +336,7 @@ export async function append(
   if (command.events.length === 0) {
     throw new LedgerAppendError('un append sin eventos no es un append');
   }
+  normalizedRequestScope(command.requestScope);
   const maxAttempts = options.maxAttempts ?? MAX_ATTEMPTS;
   // No es `Math.random` por capricho: el jitter debe ser inyectable para que la prueba de
   // concurrencia sea determinista cuando quiera serlo.
@@ -348,7 +358,7 @@ export async function append(
         continue;
       }
       if (hasIdempotencyCollision(error)) {
-        const replay = await readIdempotentResult(pool, command.requestId);
+        const replay = await readIdempotentResult(pool, command.requestId, command.requestScope);
         if (replay !== undefined) {
           assertIdempotentCommand(command, replay);
           return replay;
@@ -383,15 +393,17 @@ export async function appendWithin(
   if (command.events.length === 0) {
     throw new LedgerAppendError('un append sin eventos no es un append');
   }
+  normalizedRequestScope(command.requestScope);
   return attemptAppend(client, command);
 }
 
 async function attemptAppend(client: pg.PoolClient, command: AppendCommand): Promise<AppendResult> {
+  const requestScope = normalizedRequestScope(command.requestScope);
   // (1) Cerrojo de escritura del ledger. Orden total; se libera al terminar la transacción.
   await lockLedgerWithin(client);
 
   // (2) Idempotencia (§3.5). Bajo el cerrojo no hay carrera entre esta lectura y la escritura final.
-  const replay = await readAppendRequestWithin(client, command.requestId);
+  const replay = await readAppendRequestWithin(client, command.requestId, requestScope);
   if (replay !== undefined) {
     assertIdempotentCommand(command, replay);
     return replay;
@@ -537,9 +549,10 @@ async function attemptAppend(client: pg.PoolClient, command: AppendCommand): Pro
   //     y como comparte transacción con el lote, «pasó» y «consta que pasó» no pueden divergir.
   await client.query(
     `INSERT INTO governance.append_request
-       (request_id, aggregate_id, first_leaf_index, event_count, head_seq, head_hash)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+       (request_scope, request_id, aggregate_id, first_leaf_index, event_count, head_seq, head_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
+      requestScope,
       command.requestId,
       command.aggregateId,
       firstLeafIndex.toString(),
@@ -760,6 +773,7 @@ async function insertEvents(client: PgClient, rows: readonly PendingRow[]): Prom
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 interface RequestRow {
+  readonly request_scope: string;
   readonly request_id: string;
   readonly aggregate_id: string;
   readonly first_leaf_index: string;
@@ -776,12 +790,14 @@ interface RequestRow {
 export async function readAppendRequestWithin(
   client: PgClient,
   requestId: string,
+  requestScope = 'public',
 ): Promise<AppendResult | undefined> {
+  const scope = normalizedRequestScope(requestScope);
   const { rows } = await client.query<RequestRow>(
-    `SELECT request_id, aggregate_id, first_leaf_index::text AS first_leaf_index,
+    `SELECT request_scope, request_id, aggregate_id, first_leaf_index::text AS first_leaf_index,
             event_count, head_seq, head_hash
-       FROM governance.append_request WHERE request_id = $1`,
-    [requestId],
+       FROM governance.append_request WHERE request_scope = $1 AND request_id = $2`,
+    [scope, requestId],
   );
   const row = rows[0];
   if (row === undefined) return undefined;
@@ -828,10 +844,11 @@ export async function readAppendRequestWithin(
 async function readIdempotentResult(
   pool: PgPool,
   requestId: string,
+  requestScope: string | undefined,
 ): Promise<AppendResult | undefined> {
   const client = await pool.connect();
   try {
-    return await readAppendRequestWithin(client, requestId);
+    return await readAppendRequestWithin(client, requestId, requestScope);
   } finally {
     client.release();
   }

@@ -83,6 +83,72 @@ export const MENSAJES: Readonly<Record<string, string>> = {
   IDEMPOTENCY_KEY_REUSED:
     'Esa clave ya quedó ligada a otra acción. No se escribió nada nuevo ni se cambió el historial.',
 
+  // ── Ratificación y ejecución ────────────────────────────────────────────────────────────────
+  CHALLENGE_WINDOW_OPEN:
+    'Todavía está abierto el tiempo para impugnar esta decisión. La iniciativa no puede empezar hasta que venza.',
+  OUTCOME_NOT_RATIFIABLE:
+    'Esta decisión no tiene un resultado que pueda ratificarse para empezar la iniciativa.',
+  OUTCOME_NOT_REJECTABLE: 'Esta decisión no está en un estado que permita registrar ese rechazo.',
+  RESULT_ALREADY_COMPUTED:
+    'El resultado ya fue publicado y no puede calcularse ni publicarse una segunda vez.',
+  RATIFICATION_REQUIRES_MEMBER:
+    'La ratificación debe hacerla una persona integrante vigente del grupo que tomó la decisión.',
+  INITIATIVE_ALREADY_ACTIVATED: 'Esta iniciativa ya está activa.',
+  INITIATIVE_ALREADY_CREATED: 'Esta iniciativa ya fue creada y no puede crearse de nuevo.',
+  INITIATIVE_GENESIS_REQUIRED:
+    'Falta el origen verificable de esta iniciativa; no se puede continuar con un historial incompleto.',
+  INITIATIVE_NOT_ACTIVE:
+    'Esta iniciativa todavía no está activa. Primero debe vencer la impugnación y ratificarse la decisión.',
+  INITIATIVE_REQUIRES_APPROVED:
+    'Sólo una decisión aprobada puede convertirse en una iniciativa activa.',
+  INITIATIVE_RESPONSIBLE_ONLY:
+    'Sólo la persona responsable inicial puede organizar los primeros hitos y ofrecer tareas.',
+  INITIATIVE_SYSTEM_ONLY:
+    'La creación y activación de una iniciativa son actos automáticos ligados a la decisión; una persona no puede forzarlos.',
+  NON_CONSECUTIVE_INITIATIVE_EVENT:
+    'El historial de esta iniciativa tiene un salto o un evento fuera de orden. No se escribió nada nuevo.',
+  INITIATIVE_MILESTONE_NOT_FOUND: 'No encontramos ese hito dentro de esta iniciativa.',
+  INITIATIVE_RESPONSIBLE_REQUIRED:
+    'Sólo la persona responsable inicial puede organizar los primeros hitos y ofrecer tareas.',
+  UNKNOWN_MILESTONE: 'No encontramos ese hito dentro de esta iniciativa.',
+  DUPLICATE_MILESTONE: 'Ese hito ya existe en esta iniciativa.',
+  MILESTONE_DUE_AFTER_REVIEW:
+    'La fecha del hito no puede pasar la revisión que la comunidad aprobó para esta iniciativa.',
+  MILESTONE_AFTER_REVIEW:
+    'La fecha del hito no puede pasar la revisión que la comunidad aprobó para esta iniciativa.',
+  DUPLICATE_TASK: 'Esa tarea ya existe en esta iniciativa.',
+  UNKNOWN_TASK: 'No encontramos esa tarea dentro de esta iniciativa.',
+  TASK_EFFORT_INVALID:
+    'El esfuerzo estimado debe ser un número entero entre un minuto y siete días.',
+  TASK_DUE_AFTER_MILESTONE: 'La fecha de la tarea no puede pasar la fecha límite de su hito.',
+  TASK_DEPENDENCY_NOT_FOUND:
+    'Una de las tareas de las que depende esta no existe en esta iniciativa.',
+  UNKNOWN_TASK_DEPENDENCY:
+    'Una de las tareas de las que depende esta no existe en esta iniciativa.',
+  TASK_DEPENDENCY_DUPLICATE: 'Una misma tarea no puede aparecer dos veces como dependencia.',
+  TASK_DEPENDENCY_SELF: 'Una tarea no puede depender de sí misma.',
+  TASK_SELF_DEPENDENCY: 'Una tarea no puede depender de sí misma.',
+  TASK_DEPENDENCY_CYCLE: 'Estas dependencias formarían un ciclo y nadie podría empezar.',
+  TOO_MANY_TASK_DEPENDENCIES:
+    'La tarea tiene demasiadas dependencias. Dividila en una parte más pequeña y verificable.',
+  STALE_TASK_OFFER: 'Esa oferta ya fue reemplazada. Revisá la oferta vigente antes de responder.',
+  STALE_TASK_REVISION:
+    'La tarea cambió mientras respondías. Revisá su estado vigente antes de volver a intentarlo.',
+  TASK_OFFER_NOT_PENDING: 'Esa oferta ya recibió una respuesta y no puede volver a responderse.',
+  TASK_OFFER_ALREADY_ANSWERED:
+    'Esa oferta ya recibió una respuesta y no puede volver a responderse.',
+  TASK_ACTOR_MISMATCH: 'Esta oferta está dirigida a otra persona y sólo ella puede responderla.',
+  INVALID_TASK_RESPONSE_REASON:
+    'Elegí uno de los motivos generales. Si no querés contarlo, podés elegir “Prefiero no publicar el motivo”.',
+  TASK_REASSIGNMENT_NOT_ALLOWED:
+    'Esta tarea no está asignada de una forma que permita pedir reasignación.',
+  TASK_REOFFER_NOT_ALLOWED:
+    'Sólo una tarea rechazada o con reasignación solicitada puede ofrecerse de nuevo.',
+  TASK_REOFFER_SAME_RECIPIENT:
+    'La nueva oferta debe dirigirse a otra persona; ofrecerla de nuevo a quien la rechazó no resuelve el bloqueo.',
+  TASK_OFFER_ID_REUSED:
+    'Esa identificación de oferta ya existe. No se escribió una oferta ambigua ni se reemplazó la anterior.',
+
   // ── Genéricos ───────────────────────────────────────────────────────────────────────────────
   NO_ENCONTRADO: 'No encontramos eso.',
   DATOS_INVALIDOS: 'Faltan datos o alguno no tiene la forma esperada.',

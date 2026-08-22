@@ -51,7 +51,7 @@ export interface PersistResult {
 export async function persistDecisionLog(
   pool: PgPool,
   log: DecisionLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<PersistResult> {
   const first = log[0];
   if (first === undefined) throw new DecisionPersistenceError('un log vacío no identifica nada');
@@ -99,6 +99,7 @@ export async function persistDecisionLog(
     events: pending.map(encodeDecisionEvent),
     expectedHead,
     requestId: options.requestId,
+    ...(options.requestScope === undefined ? {} : { requestScope: options.requestScope }),
   });
 
   return {
@@ -113,7 +114,7 @@ export async function persistDecisionLog(
 export async function persistDecisionLogWithin(
   client: PgPoolClient,
   log: DecisionLog,
-  options: { readonly requestId: string },
+  options: { readonly requestId: string; readonly requestScope?: string },
 ): Promise<PersistResult> {
   const first = log[0];
   if (first === undefined) throw new DecisionPersistenceError('un log vacío no identifica nada');
@@ -150,6 +151,7 @@ export async function persistDecisionLogWithin(
     events: pending.map(encodeDecisionEvent),
     expectedHead,
     requestId: options.requestId,
+    ...(options.requestScope === undefined ? {} : { requestScope: options.requestScope }),
   });
   return {
     decisionId,
