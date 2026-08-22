@@ -55,6 +55,8 @@ import {
   eventId,
   type Fraction,
   fraction,
+  type GradeId,
+  type GradeScale,
   hash as toHash,
   type Instant,
   instant,
@@ -70,6 +72,7 @@ import {
   type PrivacyMode,
   proposalId,
   type QuorumConfig,
+  type Score,
   type StratumKey,
   stratumKey,
   type StratumValue,
@@ -297,6 +300,14 @@ const TIE_BREAK_RULES: readonly TieBreakRule[] = [
   'higher-median',
   'fewer-rejections',
   'pairwise-head-to-head',
+  'higher-mean',
+  'fewer-zeros',
+  'more-fives',
+  'fewer-first-preferences-in-previous-rounds',
+  'more-excellent',
+  'fewer-reject',
+  'more-pairwise-wins',
+  'higher-min-margin',
   'earlier-proposal',
   'public-seed-lot',
   'lexicographic-hash',
@@ -366,13 +377,72 @@ function encMethod(method: DecisionMethod): JsonObject {
         silenceMeans: method.silenceMeans,
         minEngagement: encFraction(method.minEngagement),
       };
+    case 'score':
+      return {
+        kind: method.kind,
+        min: method.min,
+        max: method.max,
+        aggregator: method.aggregator,
+        noOpinionPolicy: method.noOpinionPolicy,
+        minCoverage: encFraction(method.minCoverage),
+        tieBreak: encTieBreak(method.tieBreak),
+      };
+    case 'irv':
+      return {
+        kind: method.kind,
+        exhaustedPolicy: method.exhaustedPolicy,
+        eliminationTieBreak: encTieBreak(method.eliminationTieBreak),
+        allowTruncation: method.allowTruncation,
+        tieBreak: encTieBreak(method.tieBreak),
+      };
+    case 'majority-judgment':
+      return {
+        kind: method.kind,
+        scale: method.scale.grades.map((grade) => ({ id: grade.id, label: grade.label })),
+        missingGradePolicy: method.missingGradePolicy,
+        tieBreak: encTieBreak(method.tieBreak),
+      };
+    case 'condorcet-schulze':
+      return {
+        kind: method.kind,
+        allowTruncation: method.allowTruncation,
+        truncatedMeans: method.truncatedMeans,
+        tieBreak: encTieBreak(method.tieBreak),
+      };
+    case 'deliberative-sortition':
+      return {
+        kind: method.kind,
+        sampleSize: method.sampleSize,
+        strata: [...method.strata],
+        allocation: method.allocation,
+        seedCommitment: method.seedCommitment,
+      };
   }
+}
+
+function decGradeScale(source: JsonObject, path: string): GradeScale {
+  const grades = arr(source, 'scale', path).map((raw, i) => {
+    const where = `${path}.scale[${String(i)}]`;
+    if (!isObject(raw)) throw new DecisionCodecError(where, 'se esperaba un objeto');
+    return { id: str(raw, 'id', where) as GradeId, label: str(raw, 'label', where) };
+  });
+  return { grades };
 }
 
 function decMethod(source: JsonObject, path: string): DecisionMethod {
   const kind = oneOf(
     str(source, 'kind', path),
-    ['simple-majority', 'supermajority', 'unanimity', 'sociocratic-consent'] as const,
+    [
+      'simple-majority',
+      'supermajority',
+      'unanimity',
+      'sociocratic-consent',
+      'score',
+      'irv',
+      'majority-judgment',
+      'condorcet-schulze',
+      'deliberative-sortition',
+    ] as const,
     `${path}.kind`,
   );
   switch (kind) {
@@ -412,6 +482,80 @@ function decMethod(source: JsonObject, path: string): DecisionMethod {
           `${path}.silenceMeans`,
         ),
         minEngagement: decFraction(source, 'minEngagement', path),
+      };
+    case 'score': {
+      // B.5 fija los cuatro literales; el decodificador los exige en vez de aceptarlos y acomodar.
+      const min = int(source, 'min', path);
+      const max = int(source, 'max', path);
+      if (min !== 0 || max !== 5) {
+        throw new DecisionCodecError(path, 'B.5 fija el rango de puntuación en 0–5');
+      }
+      return {
+        kind,
+        min: 0,
+        max: 5,
+        aggregator: oneOf(
+          str(source, 'aggregator', path),
+          ['median'] as const,
+          `${path}.aggregator`,
+        ),
+        noOpinionPolicy: oneOf(
+          str(source, 'noOpinionPolicy', path),
+          ['ignore'] as const,
+          `${path}.noOpinionPolicy`,
+        ),
+        minCoverage: decFraction(source, 'minCoverage', path),
+        tieBreak: decTieBreak(obj(source, 'tieBreak', path), `${path}.tieBreak`),
+      };
+    }
+    case 'irv':
+      return {
+        kind,
+        exhaustedPolicy: oneOf(
+          str(source, 'exhaustedPolicy', path),
+          ['reduce-quota', 'fixed-quota'] as const,
+          `${path}.exhaustedPolicy`,
+        ),
+        eliminationTieBreak: decTieBreak(
+          obj(source, 'eliminationTieBreak', path),
+          `${path}.eliminationTieBreak`,
+        ),
+        allowTruncation: bool(source, 'allowTruncation', path),
+        tieBreak: decTieBreak(obj(source, 'tieBreak', path), `${path}.tieBreak`),
+      };
+    case 'majority-judgment':
+      return {
+        kind,
+        scale: decGradeScale(source, path),
+        missingGradePolicy: oneOf(
+          str(source, 'missingGradePolicy', path),
+          ['worst', 'reject-ballot'] as const,
+          `${path}.missingGradePolicy`,
+        ),
+        tieBreak: decTieBreak(obj(source, 'tieBreak', path), `${path}.tieBreak`),
+      };
+    case 'condorcet-schulze':
+      return {
+        kind,
+        allowTruncation: bool(source, 'allowTruncation', path),
+        truncatedMeans: oneOf(
+          str(source, 'truncatedMeans', path),
+          ['tied-last'] as const,
+          `${path}.truncatedMeans`,
+        ),
+        tieBreak: decTieBreak(obj(source, 'tieBreak', path), `${path}.tieBreak`),
+      };
+    case 'deliberative-sortition':
+      return {
+        kind,
+        sampleSize: int(source, 'sampleSize', path),
+        strata: strArray(source, 'strata', path).map(stratumKey),
+        allocation: oneOf(
+          str(source, 'allocation', path),
+          ['proportional', 'equal'] as const,
+          `${path}.allocation`,
+        ),
+        seedCommitment: toHash(str(source, 'seedCommitment', path)),
       };
   }
 }
@@ -634,13 +778,61 @@ function encBallotPayload(payload: BallotPayload): JsonObject {
         stance: payload.stance,
         ...(payload.objection === undefined ? {} : { objection: encObjection(payload.objection) }),
       };
+    case 'score': {
+      // `null` es «sin opinión» y **no** es `0` (B.5.a). El perfil canónico admite `null`, así que
+      // viaja tal cual: convertirlo a 0 al serializar hundiría en silencio a las opciones menos
+      // leídas, que es justo el sesgo que INV-50 vigila.
+      const scores: Record<string, JsonValue> = {};
+      for (const option of Object.keys(payload.scores).sort()) {
+        scores[option] = payload.scores[option as OptionId] ?? null;
+      }
+      return { kind: payload.kind, scores };
+    }
+    case 'ranking':
+      return { kind: payload.kind, order: [...payload.order] };
+    case 'grades': {
+      const grades: Record<string, JsonValue> = {};
+      for (const option of Object.keys(payload.grades).sort()) {
+        const grade = payload.grades[option as OptionId];
+        if (grade !== undefined) grades[option] = grade;
+      }
+      return { kind: payload.kind, grades };
+    }
   }
+}
+
+function decScores(source: JsonObject, path: string): Readonly<Record<OptionId, Score | null>> {
+  const out: Record<OptionId, Score | null> = {};
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    if (value === null) {
+      out[optionId(key)] = null;
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 5) {
+      throw new DecisionCodecError(`${path}.${key}`, 'la puntuación es un entero de 0 a 5 o null');
+    }
+    out[optionId(key)] = value as Score;
+  }
+  return out;
+}
+
+function decGrades(source: JsonObject, path: string): Readonly<Partial<Record<OptionId, GradeId>>> {
+  const out: Partial<Record<OptionId, GradeId>> = {};
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    if (typeof value !== 'string') {
+      throw new DecisionCodecError(`${path}.${key}`, 'una mención es el identificador de un grado');
+    }
+    out[optionId(key)] = value as GradeId;
+  }
+  return out;
 }
 
 function decBallotPayload(source: JsonObject, path: string): BallotPayload {
   const kind = oneOf(
     str(source, 'kind', path),
-    ['abstain', 'binary', 'consent'] as const,
+    ['abstain', 'binary', 'consent', 'score', 'ranking', 'grades'] as const,
     `${path}.kind`,
   );
   switch (kind) {
@@ -658,6 +850,12 @@ function decBallotPayload(source: JsonObject, path: string): BallotPayload {
           : { objection: decObjection(objection, `${path}.objection`) }),
       };
     }
+    case 'score':
+      return { kind, scores: decScores(obj(source, 'scores', path), `${path}.scores`) };
+    case 'ranking':
+      return { kind, order: strArray(source, 'order', path).map(optionId) };
+    case 'grades':
+      return { kind, grades: decGrades(obj(source, 'grades', path), `${path}.grades`) };
   }
 }
 
@@ -787,6 +985,8 @@ const OUTCOME_KINDS: readonly OutcomeKind[] = [
   'approved',
   'rejected',
   'no-quorum',
+  'winner',
+  'sample',
   'needs-new-round',
 ];
 

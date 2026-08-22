@@ -27,14 +27,29 @@
  * inventa una preferencia que nadie expresó.
  */
 
-import { type DecisionConfig, type DecisionMethod, isThresholdMethod } from './config.js';
+import {
+  type DecisionConfig,
+  type DecisionMethod,
+  type GradeId,
+  isThresholdMethod,
+} from './config.js';
 import { type Electorate, isEligible } from './electorate.js';
 import { InvalidBallotError } from './errors.js';
-import type { BallotId, DecisionId, Hash, Instant, MemberId, ObjectionId } from './ids.js';
+import type {
+  BallotId,
+  DecisionId,
+  Hash,
+  Instant,
+  MemberId,
+  ObjectionId,
+  OptionId,
+} from './ids.js';
 import { type EffectiveWindow, isWithinWindow } from './window.js';
 
 /** Postura en el consentimiento sociocrático. */
 export type ConsentStance = 'consent' | 'concern' | 'object';
+
+export type Score = 0 | 1 | 2 | 3 | 4 | 5;
 
 /** Longitud mínima del argumento de una objeción, tras normalizar espacios (A.4). */
 export const MIN_OBJECTION_ARGUMENT_LENGTH = 40;
@@ -59,6 +74,12 @@ export type BallotPayload =
   | { readonly kind: 'abstain' }
   /** Sí/No para mayoría, supermayoría y unanimidad. */
   | { readonly kind: 'binary'; readonly approve: boolean }
+  /** Puntuación 0–5. `null` significa «sin opinión», no cero. */
+  | { readonly kind: 'score'; readonly scores: Readonly<Record<OptionId, Score | null>> }
+  /** Orden estricto, posiblemente parcial cuando el método lo permite. */
+  | { readonly kind: 'ranking'; readonly order: readonly OptionId[] }
+  /** Una mención por opción; con política `worst` se permiten claves omitidas. */
+  | { readonly kind: 'grades'; readonly grades: Readonly<Partial<Record<OptionId, GradeId>>> }
   /** Consentimiento sociocrático. `objection` es obligatoria ⟺ `stance === 'object'`. */
   | {
       readonly kind: 'consent';
@@ -98,7 +119,28 @@ export type BallotDraft = Omit<Ballot, 'castAt' | 'seq'>;
  * es para lo que existe.
  */
 export function acceptedPayloadKinds(method: DecisionMethod): readonly BallotPayloadKind[] {
-  return isThresholdMethod(method) ? (['binary', 'abstain'] as const) : (['consent'] as const);
+  if (isThresholdMethod(method)) return ['binary', 'abstain'] as const;
+  switch (method.kind) {
+    case 'sociocratic-consent':
+      return ['consent'] as const;
+    case 'score':
+      return ['score'] as const;
+    case 'irv':
+    case 'condorcet-schulze':
+      return ['ranking'] as const;
+    case 'majority-judgment':
+      return ['grades'] as const;
+    case 'deliberative-sortition':
+      return [] as const;
+  }
+}
+
+function payloadKeys(payload: Readonly<Record<string, unknown>>): readonly string[] {
+  return Object.keys(payload).sort();
+}
+
+function sameOptionKeys(actual: readonly string[], expected: readonly OptionId[]): boolean {
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
 
 /** Contexto de validación: lo que el estado de la decisión aporta a la papeleta. */
@@ -232,6 +274,90 @@ export function validateBallot(
       );
     }
     if (objection !== undefined) validateObjection(objection, ballot.round);
+  }
+
+  if (ballot.payload.kind === 'score') {
+    const keys = payloadKeys(ballot.payload.scores);
+    if (!sameOptionKeys(keys, config.options)) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'score debe traer exactamente todas las opciones vivas, sin claves extra (B.5)',
+      );
+    }
+    for (const option of config.options) {
+      const value = ballot.payload.scores[option];
+      if (
+        value === undefined ||
+        (value !== null && (!Number.isSafeInteger(value) || value < 0 || value > 5))
+      ) {
+        throw new InvalidBallotError(
+          'PAYLOAD_KIND_NOT_ACCEPTED',
+          `la puntuación de ${option} debe estar en [0,5] o ser null`,
+        );
+      }
+    }
+  }
+
+  if (ballot.payload.kind === 'ranking') {
+    const order = ballot.payload.order;
+    const unique = new Set(order);
+    if (order.length === 0 || unique.size !== order.length) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'el ranking debe ser un orden estricto no vacío, sin opciones repetidas',
+      );
+    }
+    if (order.some((option) => !config.options.includes(option))) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'el ranking contiene una opción que no pertenece a la decisión',
+      );
+    }
+    const method = config.method;
+    if (
+      (method.kind === 'irv' || method.kind === 'condorcet-schulze') &&
+      !method.allowTruncation &&
+      order.length !== config.options.length
+    ) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'el método no permite rankings truncados: deben aparecer todas las opciones',
+      );
+    }
+  }
+
+  if (ballot.payload.kind === 'grades') {
+    if (config.method.kind !== 'majority-judgment') {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'menciones en un método incompatible',
+      );
+    }
+    const keys = payloadKeys(ballot.payload.grades);
+    if (keys.some((key) => !config.options.includes(key as OptionId))) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'la papeleta de menciones contiene una opción ajena a la decisión',
+      );
+    }
+    if (
+      config.method.missingGradePolicy === 'reject-ballot' &&
+      !sameOptionKeys(keys, config.options)
+    ) {
+      throw new InvalidBallotError(
+        'PAYLOAD_KIND_NOT_ACCEPTED',
+        'majority-judgment exige una mención para cada opción (B.7.b)',
+      );
+    }
+    const gradeIds = new Set(config.method.scale.grades.map((grade) => grade.id));
+    for (const grade of Object.values(ballot.payload.grades)) {
+      if (grade === undefined || !gradeIds.has(grade)) {
+        throw new InvalidBallotError(
+          'PAYLOAD_KIND_NOT_ACCEPTED',
+          'la papeleta contiene una mención que no pertenece a la escala congelada',
+        );
+      }
+    }
   }
 }
 

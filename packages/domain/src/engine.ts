@@ -77,7 +77,12 @@ import {
   type WeightResolver,
 } from './tally/common.js';
 import { type ObjectionRecord, tallyConsent } from './tally/consent.js';
+import { tallyCondorcetSchulze } from './tally/condorcet-schulze.js';
+import { tallyIrv } from './tally/irv.js';
+import { tallyMajorityJudgment } from './tally/majority-judgment.js';
+import { tallyScore } from './tally/score.js';
 import { tallySimpleMajority } from './tally/simple-majority.js';
+import { tallySortition } from './tally/sortition.js';
 import { tallySupermajority } from './tally/supermajority.js';
 import { tallyUnanimity } from './tally/unanimity.js';
 import {
@@ -632,7 +637,11 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
         );
       }
       // INV-60: el desenlace tiene que ser coherente con el estado final.
-      if (state.outcomeKind !== 'approved') {
+      if (
+        state.outcomeKind !== 'approved' &&
+        state.outcomeKind !== 'winner' &&
+        state.outcomeKind !== 'sample'
+      ) {
         throw new PreconditionError(
           'OUTCOME_NOT_RATIFIABLE',
           `no se ratifica un desenlace ${state.outcomeKind}`,
@@ -645,7 +654,11 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
       if (state.outcomeKind === undefined) {
         throw new PreconditionError('NO_RESULT', 'no se rechaza lo que no se ha escrutado');
       }
-      if (state.outcomeKind === 'approved') {
+      if (
+        state.outcomeKind === 'approved' ||
+        state.outcomeKind === 'winner' ||
+        state.outcomeKind === 'sample'
+      ) {
         throw new PreconditionError(
           'OUTCOME_NOT_REJECTABLE',
           'INV-60: un desenlace aprobado no se cierra como rechazo',
@@ -959,12 +972,13 @@ function quorumSubject(
   };
 }
 
-function runMethod(
+async function runMethod(
   config: DecisionConfig,
   ballots: readonly EffectiveBallot[],
   round: number,
   objections: readonly ObjectionRecord[],
-): MethodTally {
+  seed: string | undefined,
+): Promise<MethodTally> {
   switch (config.method.kind) {
     case 'simple-majority':
       return tallySimpleMajority(config, ballots);
@@ -974,6 +988,16 @@ function runMethod(
       return tallyUnanimity(config, ballots);
     case 'sociocratic-consent':
       return tallyConsent(config, ballots, { round, objections });
+    case 'score':
+      return tallyScore(config, ballots);
+    case 'irv':
+      return tallyIrv(config, ballots, seed);
+    case 'majority-judgment':
+      return tallyMajorityJudgment(config, ballots);
+    case 'condorcet-schulze':
+      return tallyCondorcetSchulze(config, ballots, seed);
+    case 'deliberative-sortition':
+      return tallySortition(config, seed);
   }
 }
 
@@ -988,6 +1012,8 @@ export interface TallyInput {
   readonly proposalVersionHash?: Hash | undefined;
   readonly voided?: readonly BallotId[] | undefined;
   readonly objections?: readonly ObjectionRecord[] | undefined;
+  /** Material revelado `seedAdmin|beaconValue`; el motor deriva SHA-256 antes de usarlo. */
+  readonly seed?: string | undefined;
   /** Último `seq` leído del log. Es procedencia: queda fuera del `resultHash`. */
   readonly computedFromSeq: number;
   readonly resolver?: WeightResolver | undefined;
@@ -1039,8 +1065,12 @@ export async function tallyDecision(input: TallyInput): Promise<DecisionResult> 
     ),
   );
 
+  const publicSeed =
+    input.seed === undefined
+      ? undefined
+      : toHex(await sha256(new TextEncoder().encode(input.seed)));
   const method: MethodTally | undefined = quorum.passed
-    ? runMethod(config, ballots, context.round, input.objections ?? [])
+    ? await runMethod(config, ballots, context.round, input.objections ?? [], publicSeed)
     : undefined;
 
   const outcome: Outcome =
@@ -1100,6 +1130,7 @@ export async function computeResult(
     proposalVersionHash: state.proposalVersionHash ?? config.proposalVersionHash,
     voided: state.voided,
     objections: state.objections,
+    seed: state.seed,
     computedFromSeq: state.lastSeq,
     resolver,
   });
@@ -1284,6 +1315,11 @@ function passesFor(
       return den > 0 && input.approve === den;
     }
     case 'sociocratic-consent':
+    case 'score':
+    case 'irv':
+    case 'majority-judgment':
+    case 'condorcet-schulze':
+    case 'deliberative-sortition':
       return false;
   }
 }

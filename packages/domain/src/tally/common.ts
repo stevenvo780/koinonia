@@ -28,7 +28,7 @@
  * vacuidad). INV-52.
  */
 
-import { sha256, toHex } from '@koinonia/crypto';
+import { concatBytes, sha256, toHex } from '@koinonia/crypto';
 
 import { type Ballot, type BallotContext, type BallotPayload, isBallotValid } from '../ballot.js';
 import { hashCanonical, type JsonObject } from '../canonical.js';
@@ -322,6 +322,43 @@ export async function lexicographicHashOrder(
   return keyed.sort((a, b) => compareIds(a.digest, b.digest)).map((entry) => entry.option);
 }
 
+/** HMAC-SHA-256 mínimo sobre las primitivas auditadas del paquete crypto. */
+export async function hmacSha256Hex(key: string, message: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const blockSize = 64;
+  const encodedKey = encoder.encode(key);
+  const shortKey = encodedKey.length > blockSize ? await sha256(encodedKey) : encodedKey;
+  const padded = new Uint8Array(blockSize);
+  padded.set(shortKey);
+  const innerPad = new Uint8Array(blockSize);
+  const outerPad = new Uint8Array(blockSize);
+  for (let i = 0; i < blockSize; i++) {
+    const byte = padded[i] ?? 0;
+    innerPad[i] = byte ^ 0x36;
+    outerPad[i] = byte ^ 0x5c;
+  }
+  const inner = await sha256(concatBytes(innerPad, encoder.encode(message)));
+  return toHex(await sha256(concatBytes(outerPad, inner)));
+}
+
+/** Orden verificable por ticket HMAC; el identificador resuelve la colisión criptográfica. */
+export async function hmacOrder<T extends string>(
+  seed: string,
+  label: string,
+  values: readonly T[],
+): Promise<readonly { readonly value: T; readonly ticket: string }[]> {
+  const ticketed = await Promise.all(
+    values.map(async (value) => ({
+      value,
+      ticket: await hmacSha256Hex(seed, `${label}|${value}`),
+    })),
+  );
+  return ticketed.sort((a, b) => {
+    const ticketOrder = compareIds(a.ticket, b.ticket);
+    return ticketOrder === 0 ? compareIds(a.value, b.value) : ticketOrder;
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Índices de concentración (C.6, versión mínima)
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -367,6 +404,8 @@ export type Outcome =
   | { readonly kind: 'approved'; readonly option?: OptionId }
   | { readonly kind: 'rejected'; readonly reason: 'threshold-not-met' | 'objections-pending' }
   | { readonly kind: 'no-quorum'; readonly achieved: Fraction; readonly required: Fraction }
+  | { readonly kind: 'winner'; readonly option: OptionId; readonly tieBroken: boolean }
+  | { readonly kind: 'sample'; readonly selected: readonly MemberId[] }
   | { readonly kind: 'needs-new-round'; readonly nextRound: number };
 
 /** Un paso de la demostración. Debe poder renderizarse como una frase en español. */
@@ -463,6 +502,10 @@ function canonicalOutcome(outcome: Outcome): JsonObject {
         achieved: canonicalFraction(outcome.achieved),
         required: canonicalFraction(outcome.required),
       };
+    case 'winner':
+      return { kind: outcome.kind, option: outcome.option, tieBroken: outcome.tieBroken };
+    case 'sample':
+      return { kind: outcome.kind, selected: [...outcome.selected] };
     case 'needs-new-round':
       return { kind: outcome.kind, nextRound: outcome.nextRound };
   }

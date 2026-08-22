@@ -26,6 +26,7 @@ import type {
   MemberId,
   OptionId,
   ProposalId,
+  StratumKey,
   TopicId,
 } from './ids.js';
 import { isStrictlySorted } from './ids.js';
@@ -66,6 +67,14 @@ export type TieBreakRule =
   | 'higher-median'
   | 'fewer-rejections'
   | 'pairwise-head-to-head'
+  | 'higher-mean'
+  | 'fewer-zeros'
+  | 'more-fives'
+  | 'fewer-first-preferences-in-previous-rounds'
+  | 'more-excellent'
+  | 'fewer-reject'
+  | 'more-pairwise-wins'
+  | 'higher-min-margin'
   | 'earlier-proposal'
   | 'public-seed-lot'
   | 'lexicographic-hash';
@@ -91,13 +100,16 @@ export interface ObjectionAdmissibilityConfig {
   readonly panelDeadline: number;
 }
 
+/** Identificador de una mención verbal. El orden semántico vive en `GradeScale.grades`. */
+export type GradeId = string & { readonly __marca: 'GradeId' };
+
+export interface GradeScale {
+  /** De mejor a peor. Longitud entre 3 y 7. */
+  readonly grades: readonly { readonly id: GradeId; readonly label: string }[];
+}
+
 /**
- * Métodos de escrutinio implementados en esta entrega.
- *
- * Los seis restantes de A.3 —puntuación 0–5, rondas con eliminación, valoración por menciones,
- * comparación una contra una, y el sorteo deliberativo— llegan en la entrega siguiente. La unión es
- * el punto de extensión: añadir un `kind` hace que todos los `switch` exhaustivos del motor dejen de
- * compilar hasta que se implemente, que es exactamente lo que se quiere.
+ * Métodos de escrutinio del motor 30.
  */
 export type DecisionMethod =
   | {
@@ -130,6 +142,44 @@ export type DecisionMethod =
       readonly silenceMeans: 'consent' | 'not-participating';
       /** Fracción del círculo que debe manifestarse. Default 1/2. */
       readonly minEngagement: Fraction;
+    }
+  | {
+      readonly kind: 'score';
+      readonly min: 0;
+      readonly max: 5;
+      /** B.5: la mediana ponderada es la agregación normativa. */
+      readonly aggregator: 'median';
+      /** B.5.a: `null` es falta de opinión y queda fuera de numerador y denominador. */
+      readonly noOpinionPolicy: 'ignore';
+      readonly minCoverage: Fraction;
+      readonly tieBreak: TieBreakPolicy;
+    }
+  | {
+      readonly kind: 'irv';
+      readonly exhaustedPolicy: 'reduce-quota' | 'fixed-quota';
+      readonly eliminationTieBreak: TieBreakPolicy;
+      readonly allowTruncation: boolean;
+      readonly tieBreak: TieBreakPolicy;
+    }
+  | {
+      readonly kind: 'majority-judgment';
+      readonly scale: GradeScale;
+      readonly missingGradePolicy: 'worst' | 'reject-ballot';
+      readonly tieBreak: TieBreakPolicy;
+    }
+  | {
+      readonly kind: 'condorcet-schulze';
+      readonly allowTruncation: boolean;
+      /** B.8.b: las omitidas empatan en último lugar; nunca se inventa un orden entre ellas. */
+      readonly truncatedMeans: 'tied-last';
+      readonly tieBreak: TieBreakPolicy;
+    }
+  | {
+      readonly kind: 'deliberative-sortition';
+      readonly sampleSize: number;
+      readonly strata: readonly StratumKey[];
+      readonly allocation: 'proportional' | 'equal';
+      readonly seedCommitment: Hash;
     };
 
 export type DecisionMethodKind = DecisionMethod['kind'];
@@ -368,6 +418,46 @@ function canonicalMethod(method: DecisionMethod): JsonObject {
           },
         },
       };
+    case 'score':
+      return {
+        kind: method.kind,
+        min: method.min,
+        max: method.max,
+        aggregator: method.aggregator,
+        noOpinionPolicy: method.noOpinionPolicy,
+        minCoverage: canonicalFraction(method.minCoverage),
+        tieBreak: [...method.tieBreak.cascade],
+      };
+    case 'irv':
+      return {
+        kind: method.kind,
+        exhaustedPolicy: method.exhaustedPolicy,
+        eliminationTieBreak: [...method.eliminationTieBreak.cascade],
+        allowTruncation: method.allowTruncation,
+        tieBreak: [...method.tieBreak.cascade],
+      };
+    case 'majority-judgment':
+      return {
+        kind: method.kind,
+        scale: method.scale.grades.map((grade) => ({ id: grade.id, label: grade.label })),
+        missingGradePolicy: method.missingGradePolicy,
+        tieBreak: [...method.tieBreak.cascade],
+      };
+    case 'condorcet-schulze':
+      return {
+        kind: method.kind,
+        allowTruncation: method.allowTruncation,
+        truncatedMeans: method.truncatedMeans,
+        tieBreak: [...method.tieBreak.cascade],
+      };
+    case 'deliberative-sortition':
+      return {
+        kind: method.kind,
+        sampleSize: method.sampleSize,
+        strata: [...method.strata],
+        allocation: method.allocation,
+        seedCommitment: method.seedCommitment,
+      };
   }
 }
 
@@ -521,9 +611,12 @@ export function validateDecisionConfig(config: DecisionConfig): void {
     reject('TOPICS_NOT_SORTED', 'los temas deben venir ordenados y sin repetidos (A.1.1.1)');
   }
 
-  // Los cuatro métodos de esta entrega deciden sobre UNA propuesta. Binarizar tres o más opciones
-  // por separado cae en la paradoja de Anscombe y en la inconsistencia doctrinal (B.1).
-  if (config.options.length !== 1) {
+  // Los métodos binarios y el consentimiento deciden sobre UNA propuesta. Binarizar varias
+  // opciones por separado cae en la paradoja de Anscombe y en la inconsistencia doctrinal (B.1).
+  if (
+    (isThresholdMethod(config.method) || config.method.kind === 'sociocratic-consent') &&
+    config.options.length !== 1
+  ) {
     reject(
       'BINARY_METHOD_NEEDS_SINGLE_OPTION',
       `${config.method.kind} decide sobre una sola propuesta (sí/no); con 3+ opciones el motor ` +
@@ -625,6 +718,65 @@ function validateMethod(config: DecisionConfig): void {
           'CONSENT_CIRCLE_EMPTY',
           'el consentimiento se mide contra el círculo, y ningún miembro del padrón pertenece a ' +
             `${config.circleId}: el engagement sería 0/0`,
+        );
+      }
+      break;
+    }
+    case 'score': {
+      // El rango 0–5, el agregador `median` y `noOpinionPolicy: 'ignore'` son tipos literales
+      // (B.5, B.5.a, B.5.b): el compilador ya rechaza cualquier otro valor y una comprobación en
+      // tiempo de ejecución sería código muerto. Lo único abierto es la cobertura mínima.
+      requireProper(method.minCoverage, 'score.minCoverage');
+      break;
+    }
+    case 'irv': {
+      // `exhaustedPolicy` y `allowTruncation` son uniones literales cerradas: nada que validar en
+      // tiempo de ejecución. El veto de B.6.c (IRV no elige personas ni reforma estatutos) se
+      // comprueba con el resto de las reglas transversales, no aquí.
+      break;
+    }
+    case 'majority-judgment': {
+      if (method.scale.grades.length < 3 || method.scale.grades.length > 7) {
+        reject('FRACTION_OUT_OF_RANGE', 'la escala de menciones debe tener entre 3 y 7 grados');
+      }
+      const ids = method.scale.grades.map((grade) => grade.id);
+      if (new Set(ids).size !== ids.length || ids.some((id) => id === '')) {
+        reject(
+          'FRACTION_OUT_OF_RANGE',
+          'los identificadores de mención deben ser únicos y no vacíos',
+        );
+      }
+      for (const grade of method.scale.grades) {
+        if (grade.label.trim() === '' || grade.label.normalize('NFC') !== grade.label) {
+          reject('TEXT_NOT_CANONICAL', 'las etiquetas de mención deben ser NFC y no vacías');
+        }
+      }
+      break;
+    }
+    case 'condorcet-schulze': {
+      // `truncatedMeans` es el literal `'tied-last'` (B.8.b): el tipo ya impide `'ranked-last'`.
+      break;
+    }
+    case 'deliberative-sortition': {
+      if (!Number.isSafeInteger(method.sampleSize) || method.sampleSize < 1) {
+        reject('FRACTION_OUT_OF_RANGE', 'sampleSize debe ser un entero positivo');
+      }
+      if (!isStrictlySorted(method.strata)) {
+        reject(
+          'TOPICS_NOT_SORTED',
+          'los ejes de estratificación deben estar ordenados y sin repetidos',
+        );
+      }
+      if (method.sampleSize <= 20 && method.strata.length > 2) {
+        reject(
+          'FRACTION_OUT_OF_RANGE',
+          'ADR-0031 limita a dos ejes cruzados cuando sampleSize ≤ 20',
+        );
+      }
+      if (method.seedCommitment !== config.seedCommitment) {
+        reject(
+          'CONFIG_HASH_MISMATCH',
+          'el compromiso del sorteo debe coincidir con el de la decisión',
         );
       }
       break;

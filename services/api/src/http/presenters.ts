@@ -202,6 +202,12 @@ function miRespuestaEnPalabras(state: DecisionState, quien: MemberId): string | 
         : ultima.payload.stance === 'concern'
           ? 'Tengo una reserva'
           : 'Objeto';
+    case 'score':
+      return 'Puntué las opciones';
+    case 'ranking':
+      return 'Ordené las opciones por preferencia';
+    case 'grades':
+      return 'Valoré cada opción con una mención';
   }
 }
 
@@ -235,8 +241,24 @@ export function decisionDetalleDto(
   };
 }
 
+/**
+ * `Outcome` del motor → `Desenlace` del contrato HTTP.
+ *
+ * El motor 30 añadió `winner` (métodos de varias opciones) y `sample` (sorteo). El contrato público
+ * —`packages/contracts`— todavía no tiene palabras para ellos, y ampliarlo cambiaría la respuesta de
+ * la API sin que nadie haya pedido esa pantalla. Los dos casos se dicen «Aprobada», que es lo que la
+ * máquina de estados ya sostiene: `engine.ts` ratifica `winner` y `sample` por el mismo camino que
+ * `approved` y rechaza los tres por igual. La opción ganadora y la muestra sorteada no se pierden:
+ * viajan en el `Outcome` del resultado, que es lo que el verificador independiente lee.
+ */
 function desenlaceDe(outcome: Outcome): Desenlace {
-  return outcome.kind;
+  switch (outcome.kind) {
+    case 'winner':
+    case 'sample':
+      return 'approved';
+    default:
+      return outcome.kind;
+  }
 }
 
 /**

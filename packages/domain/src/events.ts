@@ -44,7 +44,8 @@ import type { DecisionEventType } from './state-machine.js';
 export type CloseCause = 'window' | 'early-irreversible' | 'full-turnout' | 'manual';
 
 /** Clase de desenlace, replicada en `ResultComputed` para poder indexar sin recomputar. */
-export type OutcomeKind = 'approved' | 'rejected' | 'no-quorum' | 'needs-new-round';
+export type OutcomeKind =
+  'approved' | 'rejected' | 'no-quorum' | 'winner' | 'sample' | 'needs-new-round';
 
 export type DecisionEventPayload =
   | { readonly type: 'DecisionDrafted'; readonly draft: DraftConfig }

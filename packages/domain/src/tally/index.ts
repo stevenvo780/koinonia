@@ -15,6 +15,8 @@ export {
   type EffectiveBallot,
   fractionEvidence,
   gini,
+  hmacOrder,
+  hmacSha256Hex,
   herfindahl,
   lastBallotPerVoter,
   lexicographicHashOrder,
@@ -47,3 +49,27 @@ export {
 export { tallySimpleMajority } from './simple-majority.js';
 export { tallySupermajority } from './supermajority.js';
 export { tallyUnanimity } from './unanimity.js';
+export {
+  condorcetWinner,
+  pairwiseMatrix,
+  schulze,
+  type SchulzeResult,
+  tallyCondorcetSchulze,
+} from './condorcet-schulze.js';
+export { type IrvRound, tallyIrv } from './irv.js';
+export {
+  majorityGrade,
+  majorityJudgmentProfiles,
+  type MajorityJudgmentProfile,
+  mjCompare,
+  tallyMajorityJudgment,
+  usableGradeBallots,
+} from './majority-judgment.js';
+export { scoreProfiles, type ScoreProfile, tallyScore, weightedMedian } from './score.js';
+export {
+  hamiltonQuotas,
+  type SortitionSelection,
+  type StratumQuota,
+  stratifiedSortition,
+  tallySortition,
+} from './sortition.js';
