@@ -339,25 +339,27 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 
 > **Qué es esta parte, y por qué está separada de la anterior.** Las contradicciones C4–C20 las
 > encontró una **revisión editorial**: alguien leyendo el corpus con atención y comparando documentos
-> entre sí. Los errores E1–E23 de abajo los encontró otra cosa: **alguien escribiendo el código**.
+> entre sí. Los errores E1–E35 de abajo los encontró otra cosa: **alguien escribiendo el código**.
 >
-> Hay dos rondas, contra dos especificaciones distintas:
+> Hay tres rondas, contra dos especificaciones distintas:
 >
 > | Ronda | Paquete | Spec | Errores | Pruebas en verde al terminar |
 > |---|---|---|---|---|
 > | 1ª | `packages/crypto` | `10-ledger-inmutable.md` | **E1–E9** — seis en la spec, dos incoherencias entre ADR, una divergencia elevada sin cerrar | 116 |
 > | 2ª | `packages/domain` | `30-decision-engine-spec.md` | **E10–E23** — catorce, todos dentro de la spec | 229 |
+> | 3ª | `packages/domain` (B.5–B.9) y `packages/consensus` | `30-decision-engine-spec.md` PARTE B, `01-decidim-loomio-polis.md` §3 | **E24–E35** — once en la spec, **una retirada por ser error propio**, más tres bugs del código (B1–B3) | 1 006 en todo el repositorio |
 >
-> **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones las tomó el arquitecto y son firmes. Cada
-> una está aplicada en el punto exacto del documento donde vivía el error, con una nota
-> **«Corregido tras la implementación (2026-08-21)»** que explica qué decía antes y qué rompía.
+> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera · **Autoridad:** las
+> resoluciones las tomó el arquitecto y son firmes. Cada una está aplicada en el punto exacto del
+> documento donde vivía el error, con una nota **«Corregido tras la implementación»** que explica qué
+> decía antes y qué rompía.
 >
-> **El dato acumulado, que es el hallazgo principal de esta parte: entre las dos especificaciones la
-> implementación ha encontrado ya unos 20 errores que ninguna revisión por lectura detectó** —seis en
-> la spec 10 y catorce en la spec 30—, y las dos habían pasado por la revisión editorial que produjo
-> C4–C20 de la parte 2. No es un accidente de un documento flojo: es lo que se puede esperar de
-> cualquier especificación no ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su
-> confirmación en la segunda ronda.
+> **El dato acumulado, que es el hallazgo principal de esta parte: la implementación ha encontrado ya
+> 31 errores que ninguna revisión por lectura detectó** —seis en la spec 10 y veinticinco en la spec
+> 30—, y las dos habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es un
+> accidente de un documento flojo: es lo que se puede esperar de cualquier especificación no
+> ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su confirmación en las rondas
+> segunda y tercera.
 
 ## El hecho metodológico, que importa más que los ocho errores
 
@@ -1049,6 +1051,295 @@ debe enunciar los dos. Aplicado en `30-...` §A.6.
 
 ---
 
+# Tercera ronda — métodos de escrutinio B.5–B.9 y consenso transversal (2026-08-22)
+
+Se implementaron los cinco métodos que faltaban de la PARTE B (`ADR-0047`) y el análisis de consenso
+tipo Pol.is en un paquete nuevo (`ADR-0048`). **Doce entradas: una retirada, once errores de spec, y
+tres bugs propios encontrados al implementar** que se registran aparte porque no son del documento
+sino del código, y son del tipo autodestructivo.
+
+**Lo nuevo de esta ronda, y por qué se registra el error propio.** La primera entrada, **E24, quedó
+RETIRADA**: se levantó como error de la especificación y resultó ser un **error del orquestador**. La
+spec tenía razón. Se deja **visible y tachada**, con la explicación de por qué se creyó lo contrario,
+porque un registro que borra sus propios errores deja de servir para aprender: el modo de fallo
+—«corregir» un documento correcto y anclar la corrección en un test— es exactamente el de C4, ahora en
+primera persona.
+
+**Dos patrones nuevos**, que no aparecían en las dos rondas anteriores:
+
+1. **La fórmula copiada entre dos vectores orientados al revés** (E25). El documento dice «misma
+   convención que B.7» y la convención **sí** es la misma; lo que no puede ser la misma es la
+   fórmula, porque los dos vectores están ordenados en sentidos opuestos. Copiarla devuelve
+   exactamente el valor contrario al que manda la convención. No falla, no lanza: elige la otra
+   opción.
+2. **El invariante afirmado al revés por quien escribe la spec.** No lleva ficha `E-NN` porque no
+   está en la spec 30 sino en la especificación **nueva** de esta ronda, que produjo un modelo y que
+   afirmó como invariantes que Majority Judgment satisface *later-no-harm* y el criterio de mayoría.
+   **Las dos son falsas**, y las refutó con contraejemplos numéricos el modelo que la implementó. El
+   detalle está en `ADR-0047`. Es el caso de `MODEL_CONTEXT.md` §4.2 en su forma útil: la salida de
+   un modelo es una hipótesis, y la verificó otro.
+
+## E24 — ~~la mediana par de B.7~~ · **RETIRADA: el error era del orquestador, no de la spec**
+
+> **Esta entrada no es un error de la especificación.** Se conserva tachada, con su explicación, en
+> vez de borrarse.
+
+**Lo que se afirmó.** Que B.7 y INV-49 eran incoherentes con la convención *lower middlemost* y que
+la mención mayoritaria con `W` par debía calcularse con `floor((W-1)/2)`. Se implementó así y se
+dejó **anclado por escrito en un test** —«la mediana par usa `floor((W-1)/2)` — contradice INV-49»—
+una contradicción con el documento normativo.
+
+**Por qué era falso.** La spec es coherente consigo misma y verifica su propia regla a mano: con las
+`W` menciones ordenadas **de mejor a peor** (`0` = mejor), `α = g_{⌊W/2⌋}`; con `W = 2` y
+`{Excelente, Rechazar}`, `α = g_1 = Rechazar`, que es la **peor** de las dos centrales, o sea la
+convención pesimista de Balinski–Laraki. `floor((W-1)/2)` sobre ese mismo vector devuelve
+`Excelente`, la mejor: es la convención contraria.
+
+**Resolución.** Se retira la ficha, se restituye `floor(W/2)` en B.7 y **se corrige la aserción del
+test**, amparado en `TESTING.md` §14 —«bug de test»— porque el documento normativo decía literalmente
+lo contrario de lo que el test afirmaba. Lo que sí queda vivo es **E25**, que es el error de verdad y
+que estaba al lado.
+
+**Lo que deja el episodio, y es lo que justifica no borrarla:** una directiva del orquestador llegó
+con forma de corrección, y **una corrección recibe menos escrutinio que una afirmación nueva**. Es la
+misma lección de C4, con los papeles invertidos. La regla que queda: **una corrección a un documento
+normativo se verifica contra el pasaje literal antes de implementarla**, igual que se verifica una
+cita.
+
+*Vive en:* `packages/domain/test/tally-majority-judgment.test.ts` › «INV-49 — con W par la mención
+mayoritaria es la PEOR de las dos centrales».
+
+## E25 — «misma convención que B.7» en B.5: la misma fórmula elige menciones contrarias
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §B.5 | la mediana ponderada es la «mediana inferior, **misma convención que B.7**» |
+| `30-...` §B.7 | mención mayoritaria = `g_{⌊W/2⌋}` sobre menciones ordenadas **de mejor a peor** |
+
+**El conflicto.** B.5 indexa las puntuaciones **de peor a mejor** (`0` … `5`) y B.7 indexa las
+menciones **de mejor a peor** (`0` = Excelente). La convención semántica —con `W` par, la **peor** de
+las dos centrales— es efectivamente la misma; **la fórmula no puede serlo**. Sobre un vector
+ascendente la peor de las dos centrales es la de índice **menor**, y la posición es `⌊(W−1)/2⌋`; sobre
+uno descendente es la de índice **mayor**, y la posición es `⌊W/2⌋`.
+
+**Por qué importaba.** Aplicar `⌊W/2⌋` en B.5, que es lo que la frase invita a hacer, devuelve la
+**mejor** de las dos centrales. No lanza ningún error y no rompe ningún tipo: cambia el ganador en
+todo perfil con peso par y puntuaciones centrales distintas, que es el caso corriente. Es el mismo
+modo de fallo que E1: el sistema hace algo razonable y equivocado, en silencio.
+
+**Resolución.** «Misma convención» vale **sólo para la semántica, nunca para el índice**. B.5 usa
+`⌊(W−1)/2⌋` y B.7 usa `⌊W/2⌋`, y las dos frases quedan enunciadas por la propiedad que producen —«la
+peor de las dos centrales»— y no por la fórmula. Aplicado en `30-...` §B.5 (líneas 1332 y 1370).
+
+*Vive en:* `packages/domain/src/tally/score.ts`, en la documentación de `weightedMedian`.
+
+## E26 — B.9 reparte las cuotas del sorteo con división en punto flotante, contra ADR-0027
+
+**El conflicto.** B.9 calcula cuotas y restos del reparto estratificado dividiendo en punto flotante.
+ADR-0027 prohíbe el punto flotante en toda comparación que decida un resultado, y por la jerarquía de
+`adr/README.md` el ADR manda sobre la spec 30.
+
+**Por qué importaba.** El reparto por mayores restos se decide **comparando restos**. Un resto
+calculado en coma flotante puede empatar donde no empata, o desempatar donde debería empatar, y el
+efecto es que **una persona entra a una comisión deliberativa y otra no** por el orden en que se
+acumularon las sumas. No hay forma de explicarle eso a nadie, y no habría forma de detectarlo:
+sucedería una vez.
+
+**Resolución.** Hamilton con **productos, cocientes y restos enteros**; el producto
+`sampleSize × peso` en `bigint`; los restos se comparan como enteros exactos y su orden se resuelve
+con el ticket verificable, no con redondeo. Aplicado en `30-...` §B.9.
+
+*Vive en:* `packages/domain/src/tally/sortition.ts`, `hamiltonQuotas`.
+
+## E27 — INV-55 afirmaba dos cosas incompatibles cuando `sampleSize > N`
+
+**El conflicto.** INV-55 exige a la vez `|muestra| = min(sampleSize, N)` y `Σ quota = sampleSize`. Si
+`sampleSize > N` las dos no pueden ser ciertas: la primera acota la muestra al padrón y la segunda
+manda repartir más plazas que personas hay.
+
+**Por qué importaba.** Es un invariante insatisfacible, el patrón 3 de la segunda ronda, y con la
+salida barata de siempre: debilitar el invariante hasta que pase y dejar la comprobación
+desactivada. El caso no es teórico —una comisión sorteada de 30 sobre un círculo de 12 es
+perfectamente posible— y ahí el motor tenía que hacer *algo* sin que el documento dijera qué.
+
+**Resolución.** **Se acota antes de repartir:** `sampleSize ← min(sampleSize, N)`, y a partir de ahí
+las dos igualdades se sostienen sin tocar ninguna. La `Proof` publica el tamaño solicitado y el
+efectivo, para que el recorte sea un hecho visible y no un silencio. Aplicado en `30-...` INV-55.
+
+## E28 — B.9.b manda redistribuir el faltante y su pseudocódigo no compara nunca cuota con tamaño
+
+**El conflicto.** B.9.b dice que si un estrato tiene menos miembros que su cuota, el faltante se
+redistribuye entre los demás. El pseudocódigo de la misma sección **no compara en ningún punto la
+cuota con el tamaño del estrato**, así que la regla es inimplementable tal como está escrita.
+
+**Por qué importaba.** Es la regla que decide qué pasa en el único caso en que el sorteo estratificado
+se comporta distinto de un sorteo simple. Sin ella, el motor devuelve una muestra más corta que la
+pedida y nadie se entera, o intenta tomar 8 de un estrato de 5 y falla por índice fuera de rango.
+
+**Resolución.** La cuota se recorta al tamaño del estrato (`min(⌊cuota⌋, |estrato|)`) y el faltante se
+reasigna en el orden de los restos, saltando los estratos ya llenos. Si aun así no se completa la
+muestra —porque el padrón entero es menor—, **falla con error tipado**; no devuelve una muestra corta
+como si nada. Aplicado en `30-...` §B.9.b.
+
+## E29 — B.9.c: `⌈n/3⌉` suplentes con `n` ambiguo
+
+**El conflicto.** B.9.c fija el número de suplentes en `⌈n/3⌉` sin decir qué es `n`: el tamaño de la
+muestra completa o la cuota del estrato. Las dos lecturas son gramaticalmente válidas y dan números
+muy distintos.
+
+**Por qué importaba.** Los suplentes son la defensa contra repetir el sorteo hasta que salga quien
+convenga. Si cada estrato calcula sus suplentes con un `n` distinto del que usó el vecino, la lista de
+suplentes deja de ser comparable y el argumento «son los siguientes tickets, sin sorteo nuevo» se
+debilita.
+
+**Resolución.** `n` es el **tamaño de la muestra ya acotado** (E27), igual para todos los estratos.
+Aplicado en `30-...` §B.9.c.
+
+## E30 — la cascada de desempate de IRV empieza por una regla que en la ronda 1 no hace nada
+
+**El conflicto.** B.6.b propone como primer criterio de desempate «menos primeras preferencias en
+rondas previas». En la ronda 1 **no hay rondas previas**: el criterio es un no-op.
+
+**Por qué importaba.** La ronda 1 es justamente donde el empate es más probable, porque es donde más
+opciones siguen vivas y donde los recuentos son más bajos. Una cascada cuyo primer escalón no hace
+nada en el caso más frecuente no es una cascada: es un escalón menos, y el desempate cae al
+siguiente sin que nadie lo haya decidido.
+
+**Resolución.** La regla se conserva en el catálogo —sirve de la ronda 2 en adelante— pero **deja de
+proponerse como primera red**: `DEFAULT_TIE_BREAK` es `['lexicographic-hash']`, que es además la
+última instancia implícita de toda cascada. El motor no puede prohibir configurarla primero, así que
+queda documentada como configuración legal e inútil. Aplicado en `30-...` §B.6.b.
+
+## E31 — B.6 usa dos formas incompatibles para el mismo `IrvRound`
+
+**El conflicto.** La PARTE B.6 define la estructura de una ronda de IRV de dos maneras distintas en
+dos pasajes, con campos que no coinciden. No hay forma de escribir un solo tipo que satisfaga las dos.
+
+**Por qué importaba.** `IrvRound` es lo que se publica en la `Proof`: es el objeto por el que un
+auditor rehace la eliminación paso a paso. Dos formas incompatibles significan que la mitad de las
+implementaciones posibles produce una prueba que la otra mitad no puede leer.
+
+**Resolución.** Se unifica en una sola forma, la que permite reconstruir la ronda completa —recuentos
+por opción, eliminada y transferencias—, y la otra se retira. Aplicado en `30-...` §B.6.
+
+## E32 — B.8 llama a `lexRank`, que no está definido en ninguna parte del documento
+
+**El conflicto.** El pseudocódigo de Condorcet/Schulze invoca `lexRank` para el desempate final. El
+identificador **no aparece definido en ningún punto de la especificación**.
+
+**Por qué importaba.** Es el último escalón de la cascada, el que garantiza que el escrutinio termina
+con un ganador y no con un empate irresoluble. Sin definición, cada implementación inventa el suyo, y
+dos implementaciones honestas devuelven ganadores distintos sobre la misma urna, que es el escenario
+que toda la PARTE B existe para impedir.
+
+**Resolución.** Se sustituye por `lexicographic-hash`, que **sí** está definido y ya es la última red
+del resto de métodos: orden por un hash que depende del `decisionId` y de la opción, reproducible por
+cualquiera. Aplicado en `30-...` §B.8.
+
+## E33 — B.8 exige la semilla revelada, y nada la hace llegar al escrutinio
+
+**El conflicto.** B.8 exige la semilla comprometida y ya revelada para los desempates por sorteo. Ni
+A.5 ni B.8 la hacen llegar al escrutinio de los métodos **que no son el sorteo**: la semilla viaja en
+el camino del sorteo estratificado y en ningún otro.
+
+**Por qué importaba.** Es la regla que el motor no puede verificar, patrón 2 de la segunda ronda. El
+implementador honesto tiene dos salidas: inventar un desempate determinista sin semilla —y entonces
+el desempate lo elige quien programó— o dejar el caso sin cubrir. Ninguna es lo que el documento
+quería.
+
+**Resolución.** La semilla revelada entra al escrutinio de **todos** los métodos que admitan una regla
+de desempate por sorteo, y **si falta, el escrutinio falla**: no cae a un desempate silencioso.
+Aplicado en `30-...` §A.5 y §B.8.
+
+## E34 — INV-43 exige que el ganador de Condorcet gane, y la spec nunca pide reportarlo
+
+**El conflicto.** INV-43 obliga a que, si existe ganador de Condorcet, el método lo elija. La
+especificación **no pide en ningún sitio publicarlo** en la `Proof`.
+
+**Por qué importaba.** Es la diferencia entre una prueba verificable y una que hay que creerse. Con el
+ganador de Condorcet reportado, la asamblea lee «X le gana uno contra uno a todas las demás» y lo
+comprueba con la tabla de enfrentamientos delante. Sin él, lo que se publica es «camino más fuerte
+143 contra 128», que es correcto, es el resultado del método, y **nadie fuera del equipo técnico
+puede comprobarlo**. Un resultado que sólo puede verificar quien lo calculó no es una prueba.
+
+**Resolución.** La `Proof` de B.8 publica la tabla de pares y **declara explícitamente** si hay
+ganador de Condorcet o si no lo hay; el camino más fuerte se publica además, no en lugar de.
+Aplicado en `30-...` §B.8 e INV-43.
+
+*Vive en:* `packages/domain/src/tally/condorcet-schulze.ts`.
+
+## E35 — `noOpinionPolicy: 'as-zero'` es el fallo que INV-50 tipifica como error
+
+**El conflicto.** A.3 admite `noOpinionPolicy: 'as-zero'` como opción de configuración: quien no
+califica una opción cuenta como si la hubiera puntuado con cero. INV-50 describe ese mismo
+comportamiento como el fallo ingenuo del voto por puntuación.
+
+**Por qué importaba.** Tratar la ausencia como un cero **hunde sistemáticamente a las propuestas menos
+conocidas**: cuanta menos gente la haya leído, más ceros acumula, y el método castiga la falta de
+exposición como si fuera rechazo. Es el sesgo que la cobertura mínima existe para neutralizar, y
+estaba disponible en un desplegable.
+
+**Resolución.** El documento no puede ofrecer como configuración lo que su propio invariante tipifica
+como error. `'as-zero'` se retira de A.3; la ausencia se trata por cobertura mínima y por las
+políticas que no inventan un juicio que nadie emitió. Aplicado en `30-...` §A.3 e INV-50.
+
+---
+
+## Tres bugs propios de la tercera ronda: no fallan, sabotean en silencio
+
+No son errores de la especificación sino del código escrito contra ella. Se registran aquí porque
+comparten la firma de E1 y de los tres de `services/api`: **no producen un fallo, producen un sistema
+que se sabotea a sí mismo sin avisar**, y los tres los encontró alguien auditando lo que otro agente
+había dejado escrito, no la suite en verde que ese agente entregó.
+
+### B1 — Majority Judgment ignoraba `missingGradePolicy: 'reject-ballot'`
+
+El escrutinio imputaba «Rechazar» a las opciones que nadie había calificado, incluso con la política
+configurada para descartar la papeleta entera. **Es exactamente el sesgo de E35, por la puerta de
+atrás:** la opción menos conocida acumula rechazos que nadie emitió. La suite estaba en verde porque
+ninguna prueba distinguía las dos políticas.
+
+La corrección devuelve la papeleta incompleta al margen en vez de rellenarla, lo que además preserva
+la precondición de `mjCompare` —que `W` sea idéntico para todas las opciones—, que rellenar rompía.
+
+*Vive en:* `packages/domain/src/tally/majority-judgment.ts`, `usableGradeBallots`, y su prueba en
+`packages/domain/test/tally-majority-judgment.test.ts` › «B.7.b — con reject-ballot la papeleta
+incompleta se descarta entera».
+
+### B2 — el codec de `services/api` no conocía las ocho reglas de desempate nuevas
+
+`TIE_BREAK_RULES` en `services/api/src/decision/codec.ts` conservaba las ocho reglas originales.
+Las ocho de los métodos nuevos —`higher-mean`, `fewer-zeros`, `more-fives`,
+`fewer-first-preferences-in-previous-rounds`, `more-excellent`, `fewer-reject`, `more-pairwise-wins`,
+`higher-min-margin`— **no estaban en la lista de valores admitidos al decodificar**.
+
+Consecuencia: **toda configuración de decisión que usara una de ellas habría sido rechazada al releer
+el ledger**, es decir al reconstruir el estado. Y **no daba ningún error de compilación**, porque la
+lista es un arreglo de literales y el dominio y el codec no comparten su fuente. El dominio aceptaba
+la configuración, la decisión se escribía, y la decisión moría al replay.
+
+Es el peor modo de fallo posible para un sistema de event sourcing: **el hecho está escrito y el
+sistema ya no puede leerlo**. La prueba obligatoria que deja es de ida y vuelta sobre **todas** las
+reglas, no sobre una muestra.
+
+### B3 — en `packages/consensus`, los índices de afirmación se permutaban dos veces
+
+El ranking de afirmaciones se construía pasando la permutación de columnas a una función que ya
+trabajaba en el orden de entrada. El resultado: **los números eran correctos y estaban bien ordenados,
+colgando de la afirmación equivocada** siempre que el orden canónico de columnas no fuera la
+identidad, es decir en cuanto dos afirmaciones tuvieran distinto número de respuestas — el caso
+corriente.
+
+Una salida así pasa cualquier revisión de plausibilidad: las cifras son verosímiles, el orden es
+monótono, la suma cuadra. Lo único que la delata es una prueba que siga a **cada afirmación con sus
+propios números** a través de una permutación, y esa prueba existe ahora.
+
+*Vive en:* `packages/consensus/src/index.ts`, en el comentario de `analizarConsenso`, y
+`packages/consensus/test/props/determinismo.test.ts` › «la traducción de índices es fiel: cada
+afirmación conserva SUS números».
+
+---
+
 ## Resumen del estado
 
 | # | Contradicción | Estado |
@@ -1113,25 +1404,58 @@ todos aplicados en el pasaje exacto con su nota «Corregido tras la implementaci
 | E22 | `WindowExtended` y el instante exacto del cierre: tres reglas distintas | `30-...` §D.2 vs §A.8.1 vs §A.8.2.5 | **Resuelta** — tick con `occurredAt = closesAt`; prórroga ilegal desde ese instante **inclusive** |
 | E23 | `turnout.fraction` sin definir: `C/N` o `\|E\|/N`; con delegación difieren | `30-...` §A.6 | **Resuelta** — `\|E\|/N`, y se publican `cast` y `represented` por separado |
 
+**Parte 3, tercera ronda — errores detectados al implementar los métodos B.5–B.9 y el consenso
+transversal (2026-08-22).** Once errores dentro de la spec 30, una entrada retirada y tres bugs
+propios del código.
+
+| # | Error | Dónde vivía | Estado |
+|---|---|---|---|
+| ~~E24~~ | ~~La mediana par de B.7 contradice *lower middlemost*~~ | — | **RETIRADA** — el error era del orquestador; la spec era coherente. Se conserva tachada |
+| E25 | «Misma convención que B.7» con los dos vectores orientados al revés | `30-...` §B.5 vs §B.7 | **Resuelta** — la semántica se comparte, la fórmula no: `⌊(W−1)/2⌋` y `⌊W/2⌋` |
+| E26 | Cuotas y restos del sorteo por división en punto flotante | `30-...` §B.9 vs ADR-0027 | **Resuelta** — Hamilton con enteros y `bigint`; manda el ADR |
+| E27 | `\|muestra\| = min(n,N)` y `Σ quota = n` a la vez | `30-...` INV-55 | **Resuelta** — se acota antes de repartir |
+| E28 | «Redistribuir el faltante» sin comparar nunca cuota con tamaño | `30-...` §B.9.b | **Resuelta** — recorte al tamaño y reasignación por restos; falla tipado si no alcanza |
+| E29 | `⌈n/3⌉` suplentes con `n` ambiguo | `30-...` §B.9.c | **Resuelta** — `n` es la muestra ya acotada |
+| E30 | La cascada de IRV empieza por un no-op en la ronda 1 | `30-...` §B.6.b | **Resuelta** — deja de proponerse como primera red; sigue en el catálogo |
+| E31 | Dos formas incompatibles del mismo `IrvRound` | `30-...` §B.6 | **Resuelta** — una sola forma, la que permite rehacer la ronda |
+| E32 | `lexRank` invocado y nunca definido | `30-...` §B.8 | **Resuelta** — `lexicographic-hash`, que sí está definido |
+| E33 | Semilla revelada exigida y nunca entregada al escrutinio | `30-...` §A.5 vs §B.8 | **Resuelta** — llega a todos los métodos; si falta, falla |
+| E34 | INV-43 exige que gane el ganador de Condorcet y nadie pide reportarlo | `30-...` §B.8 vs INV-43 | **Resuelta** — la `Proof` lo declara y publica la tabla de pares |
+| E35 | `noOpinionPolicy:'as-zero'` ofrecido como configuración e INV-50 lo tipifica como error | `30-...` §A.3 vs INV-50 | **Resuelta** — retirado de A.3 |
+| B1 | MJ ignoraba `reject-ballot` e imputaba «Rechazar» a lo no calificado | código, no spec | **Corregido** — bug autodestructivo |
+| B2 | El codec de la API no conocía las 8 reglas de desempate nuevas | código, no spec | **Corregido** — habría matado toda configuración nueva al replay |
+| B3 | Índices de afirmación permutados dos veces en `consensus` | código, no spec | **Corregido** — números correctos colgando de la afirmación equivocada |
+
 ### El dato acumulado
 
-**Entre las dos especificaciones, la implementación ha encontrado ya unos 20 errores que ninguna
-revisión por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un
-eslogan:
+**Entre las dos especificaciones, la implementación ha encontrado ya 31 errores que ninguna revisión
+por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un eslogan:
 
-| | Spec 10 (`crypto`) | Spec 30 (`domain`) | Total |
-|---|---|---|---|
-| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | **20** |
-| Incoherencias entre ADR y specs | 2 (E7, E8) | — | 2 |
-| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | 2 |
-| Divergencias elevadas sin cerrar | 1 (E9) | — | 1 |
-| **Entradas de la parte 3** | 11 | 14 | **25** |
+| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Total |
+|---|---:|---:|---:|---:|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | **31** |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | — | 1 |
+| Entradas **retiradas** (error propio) | — | — | 1 (E24) | 1 |
+| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | 3 |
+| **Entradas de la parte 3** | 11 | 14 | 15 | **40** |
 
-Las dos especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
-Ninguno de los 20 salió de esa revisión: **los 20 salieron de escribir el código y los tests**. Y la
+⚠ **La cifra sigue corta, y hay que decirlo.** Las rondas de `services/api`, `packages/anchor` y
+`packages/verifier-cli` produjeron **al menos cuatro hallazgos más** —la `RULE ON DELETE DO INSTEAD
+NOTHING` que volvía mudo el blindaje, el `ORDER BY tree_size` que ordenaba como texto,
+`count(*) = max(leaf_index)+1` ciego al truncamiento de la cola y el falso positivo de
+`directorySource()`— que **siguen sin ficha `E-NN`** y viven sólo en comentarios y nombres de test.
+Están descritos en `HANDOFF.md` §5.2 y §5.3 y su volcado sigue siendo la tarea 14 del plan de
+continuación. Con ellos el total real ronda los **44 hallazgos**, de los cuales unos **35** son
+errores de especificación.
+
+Las especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
+Ninguno de los 31 salió de esa revisión: **los 31 salieron de escribir el código y los tests**. Y la
 segunda ronda invierte la intuición cómoda de que un documento mejor deja menos errores: la spec 30
 —2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes, apéndice de decisiones numeradas— es
-el documento más cuidado del corpus y produjo **más del doble** que la spec 10.
+el documento más cuidado del corpus y produjo **más del doble** que la spec 10. La tercera ronda no
+la contradice: la misma spec 30, en la parte que menos se había ejercitado, dio otros once.
 
 Lo que predice los errores no es el descuido sino la **densidad de correspondencias internas**: la
 spec 30 ata catálogo de eventos ↔ máquina de estados ↔ métodos ↔ invariantes, y nueve de sus catorce

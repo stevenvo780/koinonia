@@ -13,7 +13,7 @@ Un archivo por decisión, numerado correlativamente y **nunca renumerado**. Una 
    afirmen sobre la ley, no sobre el diseño).
 6. Los documentos de investigación `01`, `02`, `03`, `11`.
 
-Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0045** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado.
+Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0045** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado. Los **0046–0048** cierran la deliberación estructurada, los métodos de escrutinio que faltaban y el análisis de consenso transversal.
 
 | ADR | Título | Estado | Resumen en una línea |
 |---|---|---|---|
@@ -62,6 +62,9 @@ Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0
 | [0043](0043-plan-de-ejecucion-congelado-e-iniciativa-atomica.md) | Plan congelado e iniciativa atómica | Aceptado | La versión incluye el plan; un resultado aprobado y su iniciativa única se escriben en el mismo commit. |
 | [0044](0044-ratificacion-activa-hitos-y-ofertas-de-tarea.md) | Ratificación, hitos y ofertas de tarea | Aceptado | Ratificar activa atómicamente la iniciativa; una oferta sólo se vuelve asignación al aceptarla. |
 | [0045](0045-seguimiento-capacidad-privada-y-entrega-revisable.md) | Seguimiento, capacidad privada y entrega revisable | Aceptado | Las tareas avanzan con pausas, evidencia y revisión; capacidad y supresión propia quedan privadas, autorizadas y auditables. |
+| [0046](0046-deliberacion-estructurada-por-etapas.md) | Deliberación por etapas, aportes en grafo y autoría diferida | Aceptado | Etapas como ventanas de escritura reales, aportes tipados con aristas obligatorias y grafo acíclico por construcción; la autoría se oculta frente a los pares, **nunca frente a quien administra**, y así se declara. |
+| [0047](0047-metodos-de-escrutinio-completos.md) | Métodos de escrutinio completos | Aceptado | Puntuación, IRV, valoración por menciones, Condorcet/Schulze y sorteo estratificado, con enteros exactos y tres anti-invariantes demostrados en positivo, nunca con `skip`. |
+| [0048](0048-consenso-transversal-como-agenda.md) | Consenso transversal como agenda | Aceptado | `packages/consensus` admite punto flotante porque su salida es agenda y **no puede alimentar un umbral ni un conteo**; invariancia a permutar personas demostrada, a permutar afirmaciones sólo observada. |
 
 ## Trazabilidad con los ADR propuestos en la investigación
 

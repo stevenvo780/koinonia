@@ -243,3 +243,85 @@ clave idempotente conservaba de hecho un permiso revocado. Para comandos políti
 revalidar no sólo contenido y actor histórico, sino también la capacidad viva si la respuesta vuelve
 a exponerse. En UI móvil, la clave de idempotencia pertenece a la intención del usuario y sobrevive a
 una respuesta perdida o a un 401 mientras la página siga abierta.
+
+## 8. Registro de ruteo — sesión 2026-08-22 (ADR-0046, ADR-0047 y ADR-0048)
+
+Primera sesión en la que **`delegar_a_cloud` funcionó de verdad** y el ruteo multiproveedor se
+ejecutó como estaba planeado, en vez de degradar a subagentes `task` por transporte. El runtime
+tampoco expuso contadores de tokens por tarea: se registra `n/d` en lugar de inventarlos.
+
+**Cómo leer la columna TESTS.** Las cifras son las que **reportó cada agente al entregar**. Las
+únicas verificadas por el orquestador al cerrar la sesión son las globales: **1 006 pruebas en 77
+ficheros**, con Docker real, repartidas en `crypto` 108, `domain` 481, `anchor` 80, `verifier-cli`
+34, `contracts` 24, `consensus` 65, `services/api` 53 y `tests/integration` 161.
+
+| TASK | TIPO | MODELO | TOKENS | RESULTADO | TESTS | REINTENTOS | ESCALAMIENTO |
+|---|---|---|---:|---|---|---:|---|
+| Rescate de ADR-0045 y verificación del verde | recuperación + verificación | subagente `task` | n/d | 2 commits; **falsó su propio verde** rompiendo `DOCKER_HOST` para demostrar que la suite no sobrevive sin Docker; corrigió además un `grep` mal escrito del orquestador | 798/798 con Docker real | 0 | — |
+| Spec de los métodos de escrutinio B.5–B.9 | especificación formal | `gemini/pro` | n/d | Entregada; **dos invariantes FALSOS**: afirmó que MJ satisface *later-no-harm* y el criterio de mayoría | — | 0 | Refutados por `codex/sol` al implementar |
+| Diseño del agregado de deliberación | arquitectura | `codex/gpt-5.6-terra`, high | n/d | Entregado; **sobre-diseñó** con cifrado umbral y NIZK, inviables sin dependencias de runtime | — | 0 | El orquestador lo bajó a commitment con nonce (ADR-0046) |
+| Spec de consenso tipo Pol.is | especificación | `minimax/MiniMax-M3` | n/d | Entregada y correcta | — | 0 | — |
+| Implementación de la deliberación | implementación crítica | subagente `task` | n/d | Entregado; **reportó el hueco de `actor: 'system'`** en vez de taparlo | 91 reportadas | 0 | — |
+| Seudónimo por deliberación y matriz de autorización | implementación crítica | `codex/gpt-5.6-terra`, high | n/d | Entregado; **se atacó a sí mismo con éxito** y demostró que el arreglo no resiste al administrador | 116 reportadas | 0 | El hueco quedó declarado en ADR-0046, no tapado |
+| Métodos de escrutinio, 1er intento | implementación crítica | `codex/gpt-5.6-sol`, high | n/d | **Paró y pidió autorización** en vez de meter un cast: el recorte del orquestador estaba mal. Refutó con contraejemplos los dos invariantes falsos de `gemini/pro` | — | 0 | Recorte corregido y relanzado |
+| Métodos de escrutinio, 2º intento | implementación crítica | `codex/gpt-5.6-sol`, high | n/d | **Timeout de transporte, pero el trabajo quedó escrito en disco** | — | 0 | Consolidado por un subagente auditor |
+| Consenso, implementación | implementación | `minimax/MiniMax-M3` | n/d | **Timeout**; `src/` escrito y utilizable, `test/` vacío | — | 0 | Consolidado por un subagente auditor |
+| Consolidación del escrutinio | auditoría + implementación | subagente `task` | n/d | 12 defectos del trabajo heredado y **2 bugs reales**; verificó sus propios tests por **mutación dirigida** y halló un fallo en su propia prueba | 1 006 totales | 0 | — |
+| Consolidación del consenso | auditoría + implementación | subagente `task` | n/d | 10 defectos, 3 graves; determinismo frente a permutar participantes **exacto por construcción** | 65 | 0 | — |
+| Revisión adversarial del esquema de seudónimo | adversarial read-only | `claude/opus` | n/d | **No ejecutada: timeout de transporte.** No se atribuye ningún resultado | — | 0 | **Queda pendiente**; ADR-0046 lo declara sin aprobar |
+
+### 8.1 Tres reglas de ruteo que deja la sesión
+
+**1. El trabajo SÍ sobrevive al timeout. Antes de relanzar nada, se inspecciona el disco.**
+
+Esto **corrige** lo que afirma `HANDOFF.md` §9 —«el trabajo NO sobrevive al timeout»—, que se
+estableció en la sesión del 2026-08-21 y hoy es falso. El MCP corta la llamada, pero **el CLI delegado
+sigue corriendo y escribiendo**. Las dos tareas que cayeron por timeout —los métodos de escrutinio y
+el consenso— **dejaron código utilizable en disco**, y una de ellas dejó el paquete entero salvo los
+tests.
+
+La pauta correcta, por tanto, no es «volver a lanzar»: es **inspeccionar el disco tras un timeout
+antes de relanzar nada**, y encargar la consolidación a un agente que **audite lo heredado en vez de
+rehacerlo**. Rehacer habría costado dos generaciones largas más y habría perdido los doce y diez
+defectos que la auditoría encontró precisamente por mirar código ajeno con desconfianza.
+
+**2. El umbral del transporte es por DURACIÓN, no por proveedor.**
+
+Las tres generaciones largas de **diseño** —miles de palabras cada una, lanzadas en paralelo a
+`gemini/pro`, `codex/terra` y `minimax`— **completaron sin problema**. Las dos **implementaciones
+largas que además corren tests** cayeron, una de Codex y otra de MiniMax. No hay un proveedor malo:
+hay un techo de tiempo de llamada, y lo que lo supera es ejecutar herramientas durante minutos, no
+escribir texto.
+
+> **Regla:** **diseño y revisión a `delegar_a_cloud`; implementación larga con pruebas a subagentes
+> `task`.** Esto también reasigna el reparto: las specs, las revisiones adversariales y los análisis
+> de contexto largo son el trabajo natural de los proveedores externos, y el ciclo
+> escribir-correr-arreglar es el de los subagentes.
+
+**3. Un modelo caro que se NIEGA a trabajar puede valer más que uno que entrega.**
+
+`codex/gpt-5.6-sol` no escribió una sola línea en su primer intento y **fue la entrega más valiosa de
+la ronda**: descubrió que el recorte de ficheros que le habían dado era imposible de cumplir, paró, y
+de paso refutó con contraejemplos numéricos los dos invariantes falsos que venían de otro modelo. Si
+hubiera «resuelto» el recorte con un cast, esos dos invariantes falsos habrían entrado al arnés como
+propiedades generales y el paso siguiente habría sido tocar el escrutinio hasta ponerlas en verde.
+
+Es la **regla 2 de §1** funcionando tal como está escrita —«si el agente necesita un fichero que no
+está en la lista, se para y se corrige el recorte, no se amplía por cuenta propia»—, y la primera vez
+que se puede señalar el episodio concreto en que pagó. La contrapartida declarada en §2 también se
+cumplió: **el recorte estaba mal y la culpa era de quien recortó**, no del agente.
+
+### 8.2 Lo que la sesión confirma de §4.1
+
+El patrón se repite por cuarta vez, ahora sobre una especificación producida por un modelo y no por
+una persona: **implementar encontró once errores de la spec 30 en la parte que menos se había
+ejercitado, y dos afirmaciones falsas de la spec nueva**. Ninguna revisión por lectura las había
+visto. Y los tres bugs propios de la ronda (`00-contradicciones-resueltas.md`, B1–B3) comparten otra
+vez la firma de E1: **no fallan, sabotean en silencio** — un histograma con rechazos que nadie emitió,
+un codec que mata la configuración al releerla, y unos números correctos colgando de la afirmación
+equivocada.
+
+Novedad de método que conviene repetir: **la consolidación del escrutinio verificó sus propios tests
+por mutación dirigida** —romper la implementación a propósito y comprobar que la prueba se pone en
+rojo— y así encontró un fallo en su propia prueba. Es la única técnica de la sesión que auditó al
+auditor.

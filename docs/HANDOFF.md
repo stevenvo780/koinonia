@@ -1,7 +1,7 @@
 # Handoff de sesión — Koinonía
 
-> **Fecha:** 2026-08-21 · **Destinatario:** la próxima sesión de trabajo, que no vio nada de lo
-> anterior.
+> **Fecha:** 2026-08-22 (actualiza el corte del 2026-08-21) · **Destinatario:** la próxima sesión de
+> trabajo, que no vio nada de lo anterior.
 >
 > Este documento es **autocontenido**. No hace falta haber estado en la sesión previa ni recordar
 > nada: aquí está el estado del repositorio, las decisiones vinculantes, lo que falta, lo que se
@@ -15,9 +15,14 @@
 
 ## 0. Verificación de este documento
 
-Todo lo verificable se comprobó contra el repositorio el 2026-08-21 antes de escribir y se volvió a
-actualizar después de integrar ADR-0045. Las cifras de pruebas y rutas de esta sección sustituyen las
-del corte anterior. Lo que no se pudo verificar se marca explícitamente como *no verificado*.
+Todo lo verificable se comprobó contra el repositorio el 2026-08-22, después de integrar ADR-0046,
+ADR-0047 y ADR-0048. Las cifras de pruebas y rutas de esta sección sustituyen las del corte anterior.
+Lo que no se pudo verificar se marca explícitamente como *no verificado*.
+
+⚠ **Nada de git se verificó en esta actualización.** La escribió un agente de documentación mientras
+otro agente commiteaba en paralelo, con prohibición expresa de ejecutar cualquier comando de git.
+Todos los datos de commit, rama y árbol de trabajo de §2.1 son **los del corte anterior** y hay que
+volver a comprobarlos antes de apoyarse en ellos.
 
 ---
 
@@ -57,13 +62,13 @@ Quien reduzca el proyecto a «votar en línea» va a construir la parte fácil y
 
 ### 2.1 Identificación
 
-| Dato | Valor verificado |
+| Dato | Valor |
 |---|---|
-| Rama | `main` |
-| Último commit funcional | `286db3d` — *Seguimiento, capacidad privada y entrega revisable (ADR-0045)* |
-| Árbol de trabajo | Limpio (`git status --porcelain` sin salida) |
-| Remoto | **Ninguno configurado** (`git remote -v` vacío); `main` sin upstream. El repositorio existe **sólo en disco local** |
-| Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` |
+| Rama | `main` *(no reverificado el 2026-08-22)* |
+| Último commit funcional | `286db3d` — *Seguimiento, capacidad privada y entrega revisable (ADR-0045)*. **El trabajo de ADR-0046 a ADR-0048 se estaba commiteando mientras se escribía esto: el hash resultante no está registrado aquí** |
+| Árbol de trabajo | *No verificado el 2026-08-22* |
+| Remoto | **Ninguno configurado** en el corte anterior; `main` sin upstream. El repositorio existe **sólo en disco local**. Sigue siendo el riesgo de custodia más grave del proyecto |
+| Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` · **9 proyectos** en el workspace (era 8; entra `@koinonia/consensus`) |
 | Licencia | AGPL-3.0-or-later |
 
 Últimos commits relevantes:
@@ -93,18 +98,24 @@ d731607 Capa de persistencia del ledger en services/api sobre PostgreSQL
 > Como **no hay remoto**, un `git clean` o un borrado del directorio habría destruido el trabajo sin
 > copia posible. **Configurar un remoto es la tarea de infraestructura más urgente del proyecto.**
 
-### 2.2 Resultado real de los comandos (ejecutados el 2026-08-22)
+### 2.2 Resultado real de los comandos (ejecutados el 2026-08-22, tras ADR-0046/0047/0048)
 
-Medición hecha sobre `286db3d`, en este orden, con la salida copiada literalmente:
+Salida copiada literalmente:
 
 | Comando | Salida | Detalle |
 |---|---|---|
-| `pnpm install` | **código 0** | `Scope: all 8 workspace projects` · `Already up to date` · `Done in 321ms using pnpm v11.20.0` |
-| `docker compose -f infra/docker/docker-compose.yml up -d` | **código 0** | `Container koinonia-postgres Running` |
-| `pnpm run build` | **código 0** | `tsc --build`, sin diagnósticos |
+| `docker compose … ps` | **código 0** | `koinonia-postgres … Up 16 hours (healthy)`, puerto `55432` |
 | `pnpm run typecheck` | **código 0** | `tsconfig.check.json` + `contracts`/`api` + `tests/e2e`, sin diagnósticos |
-| `pnpm run lint` | **código 0** | `All matched files use Prettier code style!` · `Pureza del dominio: correcta (packages/domain y packages/crypto sin dependencias de runtime).` |
-| `KOINONIA_REQUIRE_DOCKER=1 pnpm run test` | **código 0** | `Test Files  61 passed (61)` · `Tests  798 passed (798)` · `Duration 9.03s` |
+| `pnpm run lint` | **código 0** | `All matched files use Prettier code style!` · `Pureza del dominio: correcta (packages/domain, packages/crypto y packages/consensus sin dependencias de runtime).` |
+| `KOINONIA_REQUIRE_DOCKER=1 pnpm run test` | **código 0** | `Test Files  77 passed (77)` · `Tests  1006 passed (1006)` · `Duration 8.02s` |
+
+**No re-ejecutados en esta actualización:** `pnpm install` y `pnpm run build`. Sus resultados son los
+del corte anterior y no deben leerse como medición de hoy. El dato que sí cambió y sí está
+comprobado es el alcance del workspace: **9 proyectos**, porque entra `@koinonia/consensus`.
+
+**Un dato nuevo del linter de pureza, que importa:** `scripts/check-domain-purity.mjs` ya cubre
+`packages/consensus`. El paquete admite punto flotante (ADR-0048) pero **no admite dependencias de
+runtime**, igual que `domain` y `crypto`.
 
 **Docker arrancó de verdad.** No es una inferencia del código de salida; se comprobó por tres vías
 independientes:
@@ -114,47 +125,47 @@ independientes:
 2. Muestreando `docker ps` cada segundo **durante** la corrida se observaron hasta **10 contenedores
    `postgres:16-alpine` simultáneos** (1 del compose + 9 levantados por Testcontainers). Los 16
    ficheros de `tests/integration/` están dentro del glob `tests/**/*.test.ts` de `vitest.config.ts`,
-   y hay exactamente 61 ficheros `*.test.ts` en el repositorio: los 61 que corrieron **son** todos,
-   integración incluida.
+   y hoy hay exactamente **77** ficheros `*.test.ts` en el repositorio: los 77 que corrieron **son**
+   todos, integración incluida.
 3. **Prueba de falsación**, que es la que de verdad cierra la cuestión: con `DOCKER_HOST` apuntando a
    un puerto muerto y `KOINONIA_REQUIRE_DOCKER=1`, la suite **falla** —
    `Error: Testcontainers no pudo levantar Docker: Could not find a working container runtime
    strategy. KOINONIA_REQUIRE_DOCKER=1 exige que corran de verdad.` en
    `tests/integration/helpers/api-env.ts:131`. Un verde que sobreviviera a romper Docker sería un
-   verde vacío; éste no sobrevive, luego no lo es.
+   verde vacío; éste no sobrevive, luego no lo es. La falsación la ejecutó el subagente de rescate de
+   ADR-0045 **sobre su propio verde**, que es la forma correcta de usarla.
 
-El resultado **coincide exactamente** con el corte anterior: 798 tests en 61 ficheros, sin delta.
+**Delta sobre el corte anterior: +208 pruebas y +16 ficheros** (de 798 en 61 a **1 006 en 77**).
 
-**No reverificado hoy:** los extremos a extremo (`pnpm e2e`) **no se volvieron a ejecutar** en esta
-sesión. Las cifras de §2.4 son las del corte del 2026-08-21 y se conservan como tales; no deben
-leerse como medición del 2026-08-22.
+**No reverificado hoy:** los extremos a extremo (`pnpm e2e`) **no se volvieron a ejecutar**. Las
+cifras de §2.4 son las del corte del 2026-08-21, y además **ningún escenario E2E cubre lo que se
+añadió hoy**: deliberación, escrutinio nuevo y consenso no tienen interfaz, así que tampoco tienen
+extremo a extremo.
 
 ### 2.3 Desglose por paquete (verificado uno por uno)
 
 | Paquete | Tests | Qué contiene |
 |---|---:|---|
 | `packages/crypto` | **108** | Canonicalización JCS (RFC 8785), SHA-256 sobre WebCrypto, cadena de hashes por agregado, Merkle RFC 6962 con pruebas de inclusión y de consistencia. Sin dependencias de runtime. |
-| `packages/domain` | **338** | `DecisionEngine` puro y agregados de trabajo: plan versionado, iniciativa enlazada, ratificación, hitos y la máquina completa de tareas con CAS, pausas, evidencia, entrega y revisión. Propiedades con fast-check y semillas fijas. |
+| `packages/domain` | **481** | `DecisionEngine` puro, agregados de trabajo y, nuevo hoy: **los cinco métodos de escrutinio que faltaban** (`src/tally/`: score, IRV, valoración por menciones, Condorcet/Schulze y sorteo estratificado) y **el agregado de deliberación** (`src/deliberation/`: etapas como ventanas, grafo tipado, compromiso de autoría y seudónimo por deliberación). Propiedades con fast-check y semillas fijas. |
 | `packages/anchor` | **80** | `AnchorProvider` enchufable, OpenTimestamps (clase `blockchain`), git firmado con SSH —no GPG— (clase `vcs`), correo a testigos (clase `human-witness`), política de quórum **2 de 3 clases de independencia**. |
 | `packages/verifier-cli` | **34** | Verificador independiente, en español, que **no depende de nuestro servidor**. También detecta `eventId` global duplicado aunque el índice SQL haya sido retirado. |
 | `packages/contracts` | **24** | Esquemas Zod compartidos, incluida la frontera estricta y self-only de solicitud de supresión. |
+| **`packages/consensus`** | **65** | **Paquete nuevo (ADR-0048).** Análisis de consenso transversal: PCA determinista por *power iteration*, k-means con inicialización *furthest-first*, estadísticos con Laplace y afirmaciones puente por `GIC = ∏ p̂`. Admite punto flotante porque su salida es agenda; **sin dependencias de runtime**. |
 | `services/api` | **53** unitarios **+ 161** de integración | Event store append-only, replay idempotente, capacidad cifrada, aperturas privadas autenticadas y supresión física ligada a solicitud propia, commits multiagregado, CAS y auditoría interna. |
 | `apps/web` | vía E2E | Next.js PWA. Sin suite unitaria propia, por decisión (`TESTING.md` §1). |
-| | **798** | **en 61 ficheros** |
+| | **1 006** | **en 77 ficheros** |
 
-`packages/domain` declara **60** llamadas `fc.property`/`fc.asyncProperty`, incluidas las invariantes
-de transiciones y referencias causales de tareas. Recontado el 2026-08-22: **13 `fc.property` + 47
-`fc.asyncProperty` = 60**, repartidas en `ids` (2), `fraction` (2), `window` (2), `electorate` (1),
-`ballot` (1), `props/invariants` (3) y `props/initiative-invariants` (2) para las síncronas, y el
-resto asíncronas. Comprobación:
+`packages/domain` declara **102** llamadas `fc.property`/`fc.asyncProperty` (eran 60 en el corte
+anterior), y `packages/consensus` otras **11**, con semilla fija `20260822`. Comprobación:
 
 ```sh
-grep -roh -E "fc\.(property|asyncProperty)" packages/domain/test | wc -l   # 60
+grep -roh -E "fc\.(property|asyncProperty)" packages/domain/test | wc -l      # 102
+grep -roh -E "fc\.(property|asyncProperty)" packages/consensus/test | wc -l   # 11
 ```
 
 **Cuidado con el patrón al recontar:** `fc\.\(async\)\?property` **no sirve** —busca
-`fc.asyncproperty` en minúscula y se deja fuera las 47 asíncronas, devolviendo 13. La `P` de
-`asyncProperty` es mayúscula.
+`fc.asyncproperty` en minúscula y deja fuera las asíncronas. La `P` de `asyncProperty` es mayúscula.
 
 ### 2.4 Extremo a extremo
 
@@ -204,6 +215,11 @@ tocar esto debe mantener esa decisión.
 | `0009_event_id_unico.sql` | Índice único global de identidades causales de eventos |
 | `0010_private_material.sql` | Aperturas textuales restringidas con ciphertext de longitud fija |
 
+**Sin cambios en este incremento.** ADR-0046, ADR-0047 y ADR-0048 **no añaden ninguna migración**:
+los métodos de escrutinio viven en el dominio, la deliberación todavía no tiene persistencia propia y
+`packages/consensus` no toca la base. La única frontera de API que se tocó es el codec de
+configuración de decisiones (§5, bug B2), que no cambia el esquema.
+
 ---
 
 ## 3. Documentación existente y jerarquía normativa
@@ -230,7 +246,7 @@ revés, y no «se anota la tensión»: se corrige el research.
 |---|---|
 | `docs/GOVERNANCE.md` | Máxima autoridad. Reglas de gobierno del proyecto y del colectivo. |
 | `docs/THREAT_MODEL.md` | Modelo de amenaza. Segunda autoridad. Ver C18 en §4. |
-| `docs/adr/` | **45 ADR** (`0001`–`0045`) **+ `README.md`** de índice. 46 ficheros en total. |
+| `docs/adr/` | **48 ADR** (`0001`–`0048`) **+ `README.md`** de índice. 49 ficheros en total. Los tres últimos son de hoy: **0046** deliberación por etapas, **0047** métodos de escrutinio completos, **0048** consenso transversal como agenda. |
 | `docs/research/30-decision-engine-spec.md` | Especificación del motor de decisiones. La única pieza de `research/` con rango normativo. ~2 600 líneas, 60 invariantes (`INV-01`–`INV-60`), 7 anti-invariantes. |
 | `docs/PRODUCT.md` | Producto y alcance funcional. §6 diseña ejecución y seguimiento. |
 | `docs/ARCHITECTURE.md` | Arquitectura del sistema. |
@@ -241,7 +257,7 @@ revés, y no «se anota la tensión»: se corrige el research.
 
 | Fichero | Tema |
 |---|---|
-| `00-contradicciones-resueltas.md` | **Registro del proceso**: resoluciones R1–R3, contradicciones C4–C20, errores de implementación E1–E23. Es el documento a leer para entender *por qué* algo es como es. |
+| `00-contradicciones-resueltas.md` | **Registro del proceso**: resoluciones R1–R3, contradicciones C4–C20, errores de implementación **E1–E35** (con **E24 retirada** por ser error propio del orquestador) y tres bugs autodestructivos del código (B1–B3). Es el documento a leer para entender *por qué* algo es como es. |
 | `01-decidim-loomio-polis.md` | Plataformas existentes; incluye la especificación de consenso tipo Pol.is |
 | `02-sociocracia-ostrom.md` | Sociocracia y principios de Ostrom |
 | `03-deliberativa-sistemas-antipatrones.md` | Democracia deliberativa, teoría de sistemas, antipatrones, métricas |
@@ -323,20 +339,28 @@ metodológico más importante del proyecto.
 El registro está en **`docs/research/00-contradicciones-resueltas.md`, parte 3**. Su propia tabla de
 cierre («El dato acumulado») da el desglose:
 
-| | Spec 10 (`crypto`) | Spec 30 (`domain`) | Total |
-|---|---:|---:|---:|
-| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | **20** |
-| Incoherencias entre ADR y specs | 2 (E7, E8) | — | 2 |
-| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | 2 |
-| Divergencias elevadas sin cerrar | 1 (E9) | — | 1 |
-| **Entradas registradas** | 11 | 14 | **25** |
+| | Spec 10 (`crypto`) | Spec 30, 2ª ronda | Spec 30, 3ª ronda | Total |
+|---|---:|---:|---:|---:|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | **31** |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | — | 1 |
+| Entradas **retiradas** (error propio) | — | — | 1 (E24) | 1 |
+| Bugs autodestructivos del código | — | — | 3 (B1–B3) | 3 |
+| **Entradas registradas** | 11 | 14 | 15 | **40** |
 
-⚠ **El registro está desactualizado.** Se cerró tras la segunda ronda (`domain`). Las rondas de
-`services/api`, `packages/anchor` y `packages/verifier-cli` produjeron **al menos cuatro hallazgos
-más** —los tres de §5.2 puntos 2-4 y el bug del verificador de §5.3— que **sólo viven en comentarios
-de código y en nombres de test**, y no tienen ficha `E-NN`. Total real ≈ **29 hallazgos**, de los
-cuales ≈ 23 son errores de especificación. **Volcarlos al registro es trabajo pendiente** (§7,
-tarea 14).
+⚠ **El registro sigue incompleto, aunque menos.** La tercera ronda (2026-08-22, métodos B.5–B.9 y
+consenso) ya está volcada. Lo que **sigue sin ficha `E-NN`** son las rondas de `services/api`,
+`packages/anchor` y `packages/verifier-cli`: los tres hallazgos de §5.2 puntos 2-4 y el bug del
+verificador de §5.3, que sólo viven en comentarios de código y en nombres de test. Total real ≈ **44
+hallazgos**, de los cuales ≈ 35 son errores de especificación. **La tarea 14 de §7 queda abierta a
+medias.**
+
+**La tercera ronda añade un tipo de entrada que no existía: un error del propio orquestador.** E24 se
+registró como fallo de la spec y era una directiva equivocada; la spec tenía razón. Está **tachada,
+visible y explicada**, porque un registro que borra sus propios errores no sirve para aprender. Su
+lección es la de C4 con los papeles invertidos: **una corrección llega con forma de corrección y
+recibe menos escrutinio que una afirmación nueva.**
 
 El dato cualitativo importa más que la cifra: **la spec 30 es el documento más cuidado del corpus
 —2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes— y produjo más del doble de errores
@@ -431,20 +455,24 @@ Los dos matices que hacen honesto el resultado:
 
 | # | Tarea | Dónde está la spec | Notas |
 |---:|---|---|---|
-| **1** | **Métodos de escrutinio restantes**: score voting, IRV, Majority Judgment (Balinski-Laraki), Condorcet/Schulze, sorteo estratificado verificable | `30-decision-engine-spec.md` **PARTE B.5–B.9** | Invariantes ya escritos y **sin implementar**: `INV-42..51`, `INV-55..57`. ⚠ Incluye el **anti-invariante de no-monotonía de IRV**: el test debe **excluirlo por escrito**, con nombre y razón, **no ignorarlo en silencio** (`TESTING.md` §«El caso de IRV»). Meter IRV en la propiedad general y «arreglar» el motor hasta el verde introduciría un bug real. |
+| ~~**1**~~ | ~~**Métodos de escrutinio restantes**~~ | `30-...` **PARTE B.5–B.9** | **HECHO el 2026-08-22 (ADR-0047).** Los cinco implementados en `packages/domain/src/tally/` con aritmética exacta. El anti-invariante de IRV se probó **en positivo**, no con `skip`, y aparecieron **dos más** que la spec afirmaba al revés: MJ no satisface *later-no-harm* ni el criterio de mayoría fuerte. Doce erratas de spec registradas (E25–E35, más E24 retirada). |
 | **2** | **Democracia líquida** | `30-...` **PARTE C**, `INV-23..30` | Delegación temática, revocable; voto directo que anula; detección de ciclos; límite de profundidad; cap de concentración; índice HHI. **El punto de extensión ya existe** en el dominio y los eventos `DelegationGranted`/`DelegationRevoked` **ya están en el codec y en la máquina de estados** (`state-machine.ts:131`), pero son **inalcanzables**: el motor rechaza la delegación. |
 | **3** | **OpenTimestamps contra un calendario real** | `packages/anchor/src/ots/` | La **verificación** está completa y probada, pero **`httpCalendar()` (`ots/calendar.ts:55`) nunca se ha ejecutado contra `a.pool.opentimestamps.org`**. Hay que correrlo **una vez** y contrastar el `.ots` con el cliente oficial `ots verify`. Faltan **reintentos con backoff** y **envío a varios calendarios**. |
 | **4** | **`GitForgeClient` sin implementar** | `packages/anchor/src/providers/signed-git.ts:72` | Faltan los clientes de **Codeberg** y **GitHub**. Y, sobre todo, **comprobar que las dos forjas devuelven el MISMO objeto**: ahí es donde se detecta un `push --force` en una sola. El propio fichero lo marca (`:162` «VERIFICAR: `GitForgeClient` no tiene implementación real»). |
 | **5** | **Transporte de correo** | `packages/anchor/src/providers/witness-email.ts` | Falta **SMTP con DKIM**, gestión de **rebotes** y **recogida por IMAP**. Lo que sostiene la garantía —**verificar los acuses firmados**— **sí está**. |
-| **6** | **Ejecución, evaluación y aprendizaje** | `PRODUCT.md` §6 · ADR-0043–0045 · `03-deliberativa-sistemas-antipatrones.md` | **Seguimiento integrado:** iniciativa atómica, ratificación, hitos, consentimiento de tareas, capacidad privada, inicio, pausas, ayuda, evidencia restringida, entrega y revisión append-only. **Siguiente (ADR-0046):** contrastar criterios congelados, registrar resultado real y aprendizajes recuperables; una votación ni completar tareas declaran éxito por sí solos. |
-| **7** | **Consenso tipo Pol.is** | `01-decidim-loomio-polis.md` | Matriz participantes × afirmaciones, **PCA + k-means**, afirmaciones puente con `GIC(c) = ∏ p̂_a(g,c)` (fórmula literal en `:140`). **NO EMPEZADO.** |
+| **6** | **Evaluación y aprendizaje** | `PRODUCT.md` §6 · ADR-0043–0045 · `03-deliberativa-sistemas-antipatrones.md` | **Seguimiento integrado:** iniciativa atómica, ratificación, hitos, consentimiento de tareas, capacidad privada, inicio, pausas, ayuda, evidencia restringida, entrega y revisión append-only. **Falta el cierre:** contrastar criterios congelados, registrar resultado real y aprendizajes recuperables; ni una votación ni completar tareas declaran éxito por sí solos. ⚠ **Corrección:** el corte anterior reservaba «ADR-0046» para esto. **ADR-0046 acabó siendo la deliberación por etapas**, así que esta tarea sigue abierta y **sin número de ADR asignado**. |
+| ~~**7**~~ | ~~**Consenso tipo Pol.is**~~ | `01-decidim-loomio-polis.md` · ADR-0038 | **HECHO A MEDIAS el 2026-08-22 (ADR-0048).** El cálculo existe en `packages/consensus` con 65 pruebas y determinismo demostrado frente a permutar participantes. **Lo que falta está en la tarea 15:** cinco divergencias con ADR-0038, dos de ellas funcionales, y ninguna conexión con el ledger. |
 | **8** | **Asistente de acción sistémica** | `03-deliberativa-sistemas-antipatrones.md` §3.1 | Las **27 preguntas literales** del formulario de teoría del cambio **ya están redactadas** (`:85-125`), con la frase de cierre generada. Sólo dos preguntas son obligatorias (1 y 11). **NO EMPEZADO.** |
 | **9** | **Tests propios de `packages/contracts`** | — | **COMPLETADO y mantenido:** 16 pruebas de esquemas y conversión temporal. Ampliarlos con cada contrato nuevo. |
 | **10** | **Decidir qué se hace con `checkpoint.firm`** | `0001_governance_ledger.sql:210` | Es **una columna que no puede ser verdad**: (a) es redundante con el quórum calculado sobre los recibos, (b) **puede contradecirlo en silencio**, y (c) el rol `koinonia_app` sólo tiene `SELECT, INSERT` sobre `governance.checkpoint` (`0003_roles_and_grants.sql:43`), así que **nunca puede ponerse a `true`**. Lo autoritativo es el evento **`AnclajeEstadoPublicado`** (`packages/anchor/src/events.ts:25`). Decisión pendiente: eliminarla o documentarla como no autoritativa. |
 | **11** | **Mutation testing con Stryker** | `TESTING.md` §10 | Umbrales **definidos**, **nunca ejecutado**. Nota de la propia spec: en `contracts` casi todo son tipos, que Stryker no muta. |
 | **12** | **WebKit / Safari móvil** | §2.4 de este documento | ⚠ **El consejo de Playwright (`apt-get install libicu74 …`) no aplica en esta máquina**: es **CachyOS/Arch**, sin `apt-get`, y `sudo` pide contraseña. Salidas reales: **(a)** correrlo en **CI**, donde `playwright install --with-deps` ya está configurado (`.github/workflows/ci.yml:111`); **(b)** un contenedor Ubuntu; **(c)** en Arch, los equivalentes son `icu`/`libxml2`/`flite`/`libmanette`, pero harían falta las versiones **antiguas** (ICU **74**, `libxml2.so.2`) que Arch ya no distribuye — probablemente vía AUR. **La opción (a) es la sensata.** |
 | **13** | **Métricas de salud democrática** | `03-deliberativa-sistemas-antipatrones.md` §6 | Las **cinco** definidas: tasa de cumplimiento de acuerdos y **deuda de acuerdos**; **HHI** de concentración de voz; **cobertura del padrón desagregada por estrato**; **rotación del núcleo activo**; **razón deliberación/votación**. **Ninguna implementada.** ⚠ **Ninguna mide «engagement», deliberadamente** (ver ADR-0040: prohibición de métricas de actividad individual). |
-| **14** | **Volcar al registro los hallazgos de las rondas 3 y 4** | `00-contradicciones-resueltas.md` parte 3 | Los cuatro hallazgos de §5.2-5.3 posteriores a `domain` **no tienen ficha `E-NN`**. Además, la cifra «unos 20» de ese documento y de `TESTING.md` §Principio rector quedó corta, y la tabla de `MODEL_CONTEXT.md` §3 conserva conteos históricos (crypto 116, domain 229) que hoy son 108 y 255. |
+| **14** | **Volcar al registro los hallazgos de `api`, `anchor` y `verifier-cli`** | `00-contradicciones-resueltas.md` parte 3 | **Abierta a medias.** La ronda de escrutinio y consenso ya está volcada (E24–E35 y B1–B3, y el acumulado corregido a 31 errores de spec). **Siguen sin ficha `E-NN`** los cuatro hallazgos de §5.2-5.3 posteriores a `domain`. Además, `TESTING.md` §Principio rector conserva la cifra «unos 20» y la tabla de `MODEL_CONTEXT.md` §3 conserva conteos históricos (crypto 116, domain 229) que hoy son 108 y 481. |
+| **15** | **Cerrar las cinco divergencias entre `packages/consensus` y ADR-0038** | ADR-0048 §«Divergencias» · ADR-0038 | Tres son de implementación (imputación por la media en vez de factorización enmascarada; `k` hasta 12 y no hasta 5; sin histéresis). **Dos son funcionales y bloquean el uso:** no existe el **umbral de no-facción** (silueta < ~0,25 ⇒ `FaccionesNoDetectadas`), que es lo que la pantalla «Consenso» promete como resultado posible, ni el **filtro `z₁ > 1,2816`** sobre las afirmaciones puente. Además **nada conecta el paquete con el ledger**: no hay snapshot, ni hash de entrada, ni `AgendaDeConsensoCongelada`. **Hasta cerrarlo, la salida no se presenta a la asamblea.** |
+| **16** | **Revisión adversarial del esquema de seudónimo de ADR-0046** | ADR-0046 §«El hueco declarado» | **No ejecutada.** Los intentos del 2026-08-22 cayeron por timeout de transporte y **no se atribuye ningún resultado a ellos**. El esquema fue atacado con éxito por el mismo agente que lo implementó —de ahí salió el párrafo del administrador—, pero eso **no es revisión independiente**. Es la tarea de mayor prioridad de las que deja la sesión, porque el ADR está aceptado con un hueco declarado y sin escrutinio externo. |
+| **17** | **Las siete pantallas que faltan** | `PRODUCT.md` §4 | El producto define **14 pantallas** y hoy existen **7**: inicio, problemas, propuestas, decisiones, iniciativas, mis tareas y verificar (15 ficheros `page.tsx`, contando detalle y creación, más el proxy). **Faltan: deliberaciones, consenso, círculos y comisiones, reuniones, normas, delegaciones e historial.** Las dos primeras dejan sin interfaz los dos agregados que se acaban de construir, de modo que hoy sólo son alcanzables desde el dominio. |
+| **18** | **La constitución digital versionada** | `GOVERNANCE.md` §6 | **Diseñada y sin una línea de código.** «Las reglas son datos versionados»: convierte las normas del colectivo en objetos con su decisión de origen, su fecha de revisión y su procedimiento de reforma —incluido el problema del arranque, que §6 ya resuelve—. De ella cuelga la pantalla «Normas» de la tarea 17. |
 
 ---
 
@@ -460,19 +488,24 @@ Se pagaron en esta sesión. No son preferencias de estilo.
 | **Instruir explícitamente: «si un test revela un bug, arreglá la implementación, nunca la aserción»** | Junto con «**prefiero un informe honesto de lo roto a un verde inventado**». **Funcionó**: varios agentes reportaron lo que no pudieron hacer en vez de fingirlo. |
 | **Mandar a los implementadores que reporten errores de la spec** | **Es lo más valioso que entregan** (§5). |
 | **Pedir escritura por pasadas** | Crear el fichero con las primeras secciones y luego añadir. En documentos largos evita perderlo todo si el agente aborta. *(Este handoff se escribió así.)* |
+| **Tras un timeout, inspeccionar el disco ANTES de relanzar** | *(2026-08-22)* El trabajo **sí** sobrevive: el MCP corta la llamada, el CLI sigue escribiendo. Las dos tareas caídas dejaron código utilizable. Relanzar a ciegas habría duplicado el gasto y perdido lo ya escrito. **Y la consolidación se encarga a un agente que audite lo heredado, no que lo rehaga.** |
+| **Diseño y revisión a `delegar_a_cloud`; implementación larga con pruebas a subagentes `task`** | *(2026-08-22)* El techo del transporte es de **duración**, no de proveedor ni de palabras: tres generaciones largas de diseño completaron en paralelo, y cayeron las dos implementaciones que además corrían tests durante minutos. |
+| **Un agente que se niega a trabajar puede ser la entrega más valiosa** | *(2026-08-22)* `codex/gpt-5.6-sol` no escribió una línea en su primer intento: paró porque el recorte de ficheros era imposible, y de paso refutó dos invariantes falsos que venían de otro modelo. Es la regla 2 de `MODEL_CONTEXT.md` §1 funcionando; **no hay que penalizar el «no se puede», hay que corregir el recorte.** |
 
 ---
 
-## 9. INFRAESTRUCTURA ROTA — corregir antes de continuar
+## 9. Transporte de delegación — historia del fallo y diagnóstico vigente
 
-**Esta sección es la razón por la que se interrumpió la sesión.**
+**Vigente:** el transporte **funciona** y su único límite conocido es la **duración** de la llamada.
+Ir directo al «Diagnóstico corregido el 2026-08-22», dos apartados más abajo; lo que viene primero es
+el historial, que se conserva para no volver a diagnosticar mal lo mismo.
 
-### `delegar_a_cloud` (MCP `cloud-offload`) es hoy inservible para trabajo real
+### Historial — `delegar_a_cloud` (MCP `cloud-offload`) fue inservible durante dos sesiones
 
-| Proveedor | Fallo observado |
+| Proveedor | Fallo observado (2026-08-21) |
 |---|---|
-| `codex/gpt-5.6-sol`, `codex/gpt-5.6-terra` | **`invalid ID token format`** — es la **autenticación del CLI de Codex**, que está rota. **Hay que re-autenticar el CLI.** |
-| `gemini/pro`, `gemini/flash`, `minimax/MiniMax-M3` | **`MCP error -32001: Request timed out`** en todo lo que no sea trivial. |
+| `codex/gpt-5.6-sol`, `codex/gpt-5.6-terra` | **`invalid ID token format`** — autenticación del CLI de Codex rota. **Ya no se reproduce.** |
+| `gemini/pro`, `gemini/flash`, `minimax/MiniMax-M3` | **`MCP error -32001: Request timed out`** en todo lo que no fuera trivial. |
 
 **Actualización durante ADR-0044:** en el runtime actual `delegar_a_cloud` y el MCP
 `cloud-offload` ni siquiera aparecen en el catálogo de herramientas. Se hicieron **cero llamadas** a
@@ -486,34 +519,46 @@ en el catálogo de herramientas y **los tres proveedores respondieron** a una ll
 `invalid ID token format` que la tabla de arriba atribuía a Codex. El fallo de catálogo de ADR-0044 y
 la autenticación rota de Codex **ya no se reproducen**.
 
-**Queda pendiente medir el umbral de generación larga.** Lo único demostrado hoy es que el transporte
-sobrevive a una llamada trivial; **no** se ha vuelto a probar el límite que describen los dos
-párrafos siguientes (los ≥600 palabras que reventaban). Hasta que ese umbral se mida de nuevo, la
-tabla de fallos y el dato del umbral **siguen siendo el supuesto operativo**: planificar delegaciones
-largas como si aún reventaran, y confirmarlo antes de apoyarse en ellas.
+### Diagnóstico corregido el 2026-08-22 — el transporte funciona, y falla por duración
 
-**Dato empírico del umbral.** La **única** llamada que completó fue a `minimax/MiniMax-M3` con una
-salida de **~15 líneas** (crear un esqueleto de directorios). **Todo lo que pedía ≥600 palabras de
-generación reventó, incluso troceado.** Se probó a **2800**, a **2000** y a **600-900** palabras: los
-tres fallaron.
+La sesión del 2026-08-22 usó `delegar_a_cloud` en serio por primera vez y **corrige dos afirmaciones
+de esta sección que eran falsas**. El detalle está en `MODEL_CONTEXT.md` §8.1.
 
-**El trabajo NO sobrevive al timeout.** Comprobado: tras un timeout se **inspeccionó el disco** y **no
-había quedado nada escrito**. El proceso **no continúa en background**.
+**Corrección 1 — el trabajo SÍ sobrevive al timeout.** Esta sección afirmaba, en mayúsculas, que
+«tras un timeout se inspeccionó el disco y no había quedado nada escrito». **Hoy es falso.** El MCP
+corta la llamada, pero **el CLI delegado sigue corriendo y escribiendo**. Las dos tareas que cayeron
+por timeout —los métodos de escrutinio y el paquete de consenso— **dejaron código utilizable en
+disco**; una de ellas dejó el paquete completo salvo los tests.
 
-**Dato útil para el arreglo.** Los CLIs delegados **sí tienen herramientas reales de `bash` y
-`write`** — la llamada que funcionó **creó directorios y ficheros en disco**. Es decir: el patrón
-«**escribí el resultado a disco y devolveme 5 líneas**» **es viable y ahorraría contexto**, **pero no
-salva el timeout**, porque el timeout cubre la llamada entera **incluida la generación**.
+> **La pauta correcta ante un timeout es inspeccionar el disco ANTES de relanzar nada**, y encargar
+> la consolidación a un agente que **audite lo heredado en vez de rehacerlo**. Rehacer habría costado
+> dos generaciones largas más y habría perdido los veintidós defectos que las dos auditorías
+> encontraron precisamente por mirar código ajeno con desconfianza.
 
-**Lo que haría falta:**
+**Corrección 2 — el umbral es por DURACIÓN de la llamada, no por proveedor ni por número de
+palabras.** Las **tres generaciones largas de diseño** —miles de palabras cada una, lanzadas en
+paralelo a `gemini/pro`, `codex/gpt-5.6-terra` y `minimax/MiniMax-M3`— **completaron sin problema**,
+lo que refuta el «todo lo que pedía ≥600 palabras reventó» del corte anterior. Lo que cayó fueron las
+**dos implementaciones largas que además corren tests**, una de Codex y otra de MiniMax. No hay
+proveedor malo: hay un techo de tiempo de llamada, y lo que lo supera es ejecutar herramientas durante
+minutos, no escribir texto.
+
+> **Regla de reparto que queda: diseño, especificación y revisión adversarial a `delegar_a_cloud`;
+> implementación larga con pruebas a subagentes `task`.**
+
+**Lo que sigue haciendo falta**, sin cambios respecto al corte anterior:
 
 1. **Timeout configurable y mucho más largo.**
 2. Preferiblemente, **un modo asíncrono de lanzar-y-consultar**: que `delegar_a_cloud` devuelva un
-   **identificador de trabajo inmediatamente**, que el proceso **siga corriendo y escribiendo a
-   disco aunque el cliente MCP abandone**, y que exista **una segunda herramienta** para consultar
-   el estado y recoger el resultado.
+   **identificador de trabajo inmediatamente** y que exista **una segunda herramienta** para consultar
+   el estado y recoger el resultado. Ahora se sabe que el proceso **sí sigue vivo**, así que este
+   modo asíncrono es sobre todo una forma de dejar de perder la salida, no de salvar el trabajo.
 
-### Consecuencia real sobre esta sesión
+**Lo que quedó sin ejecutar por transporte en esta sesión:** la **revisión adversarial independiente
+del esquema de seudónimo** de ADR-0046 (`claude/opus`). **No se atribuye ningún resultado a esa
+llamada**, y la tarea 16 de §7 la deja explícitamente abierta.
+
+### Consecuencia real sobre la sesión del 2026-08-21
 
 El plan de ruteo declarado al inicio —**`gemini/pro`** para investigación de contexto largo,
 **`codex/sol` con `effort: high`** para la criptografía, **`codex/terra`** para la teoría de la
@@ -521,9 +566,10 @@ elección social, **`gemini/flash`** para la normativa— **no sobrevivió al co
 infraestructura**. **Todo terminó ejecutándose en subagentes `task`.**
 
 El **presupuesto abundante de MiniMax**, destinado a **QA exploratorio masivo** y a la **matriz de
-navegadores**, quedó **sin usar por transporte, no por criterio**.
-
-> **Cuando el transporte funcione, ese es el primer trabajo que debe irse a MiniMax.**
+navegadores**, quedó entonces **sin usar por transporte, no por criterio**. El 2026-08-22 MiniMax ya
+entregó una especificación correcta y un paquete completo, así que ese pendiente **ya no es de
+transporte**: el QA exploratorio masivo y la matriz de navegadores siguen siendo el trabajo natural
+para él, y ahora sí se le puede encargar.
 
 ---
 
@@ -541,18 +587,25 @@ navegadores**, quedó **sin usar por transporte, no por criterio**.
    KOINONIA_REQUIRE_DOCKER=1 pnpm test
    ```
 
-   **Confirmar `Tests 798 passed (798)` en `61` ficheros.** Si no da 798 en verde, **el primer
+   **Confirmar `Tests 1006 passed (1006)` en `77` ficheros.** Si no da 1 006 en verde, **el primer
    trabajo es averiguar por qué**, no seguir adelante. La variable `KOINONIA_REQUIRE_DOCKER=1` es
    obligatoria: sin ella, la ausencia de Docker se convierte en una suite saltada y en un verde que
    no probó nada.
 
-4. **Sólo entonces**, continuar la tarea 6 de §7 con ADR-0046: evaluación contrastada contra los
-   criterios congelados, resultado real derivado y aprendizajes institucionales recuperables. La
-   evaluación debe poder declarar fracaso o resultado inconcluso aunque queden tareas abiertas, y
-   debe cerrar la iniciativa sin convertir actividad individual en reputación.
+4. **Comprobar el estado de git antes que nada más.** Esta actualización se escribió con la
+   prohibición de tocar git mientras otro agente commiteaba: **rama, commit y limpieza del árbol no
+   están verificados** (§0 y §2.1). Y **sigue sin haber remoto configurado**, que es el riesgo de
+   custodia más grave del proyecto.
+
+5. **Sólo entonces**, elegir entre las dos cosas que la sesión del 2026-08-22 dejó más urgentes:
+   la **tarea 16** —revisión adversarial independiente del esquema de seudónimo de ADR-0046, que está
+   aceptado con un hueco declarado y sin escrutinio externo— o la **tarea 15** —cerrar las dos
+   divergencias funcionales entre `packages/consensus` y ADR-0038, sin las cuales la salida del
+   análisis no puede presentarse a la asamblea—.
 
 Antes de delegar cualquier cosa: leer `docs/MODEL_CONTEXT.md` §1 —los **siete campos** obligatorios de
-toda delegación— y §8 de este documento.
+toda delegación—, su **§8** (registro de ruteo del 2026-08-22, con las tres reglas nuevas) y §8 de
+este documento.
 
 ---
 
@@ -571,10 +624,14 @@ repositorio** y aquí figuran ya corregidos. Esta tabla conserva la comparación
 | 5 | WebKit: instalar «`libicu74 libxml2 libflite1 libmanette-0.2-0`» | Son los **nombres Debian** que sugiere Playwright, **no instalables aquí**: el sistema es **CachyOS/Arch**, sin `apt-get` (`--with-deps` aborta con `spawn apt-get ENOENT`) y `sudo` pide contraseña | `/etc/os-release`; `ldd` sobre `webkit-2336` da los sonames reales (§2.4). Salida sensata: **CI**. |
 | 6 | `packages/domain`: «**40 propiedades** fast-check» | **60** `fc.property`/`fc.asyncProperty` | El 40 procede de `MODEL_CONTEXT.md` §3, escrito cuando `domain` tenía 229 pruebas (hoy 255). La semilla `30_000_821` **sí** es exacta. **Corregido el 2026-08-22:** esta fila decía **44** y contradecía el **60** de §2.3 y del resumen de abajo. El recuento real es **60** (13 síncronas + 47 asíncronas), luego el valor equivocado era el 44 de esta fila; §2.3 era correcto. |
 
-**Estado vigente tras ADR-0045:** rama `main`; **798 tests en 61 ficheros**, incluidos **161** contra
-PostgreSQL 16 real; desglose (**108 / 338 / 80 / 34 / 24 / 53 + 161**); **45 ADR + README**;
-migraciones **0001–0010**; **44 escenarios** E2E verdes en Chromium y los cuatro nuevos verdes
-también en Firefox y Chrome móvil; **60** llamadas `fc.property`/`fc.asyncProperty` en dominio;
-**15** páginas Next más el proxy; licencia
-**AGPL-3.0-or-later**. Siguen vigentes la compuerta C6, las 27 preguntas, la fórmula GIC y las cinco
-métricas definidas.
+**Estado vigente tras ADR-0048** (medido el 2026-08-22): **1 006 tests en 77 ficheros**, incluidos
+**161** contra PostgreSQL 16 real; desglose por paquete
+(**108 / 481 / 80 / 34 / 24 / 65 / 53 + 161**); **9 proyectos** en el workspace; **48 ADR + README**;
+migraciones **0001–0010**, sin cambios; **102** llamadas `fc.property`/`fc.asyncProperty` en dominio y
+**11** en consenso; **15** páginas Next más el proxy —**7 de las 14 pantallas** que define el
+producto—; licencia **AGPL-3.0-or-later**. Siguen vigentes la compuerta C6, las 27 preguntas, la
+fórmula GIC y las cinco métricas definidas. **Rama, commit y limpieza del árbol: sin verificar**
+(§0).
+
+Las cifras E2E de §2.4 son del corte del 2026-08-21 y no se re-midieron; nada de lo añadido hoy tiene
+cobertura E2E, porque nada de lo añadido hoy tiene interfaz.
