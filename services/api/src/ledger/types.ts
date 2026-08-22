@@ -129,3 +129,14 @@ export class LedgerAppendError extends Error {
     this.name = 'LedgerAppendError';
   }
 }
+
+/** La clave ya existe, pero describe otro lote: nunca se trata como un replay exitoso. */
+export class IdempotencyConflictError extends LedgerAppendError {
+  readonly requestId: string;
+
+  constructor(requestId: string, detail: string) {
+    super(`la clave de idempotencia ${requestId} ${detail}`);
+    this.name = 'IdempotencyConflictError';
+    this.requestId = requestId;
+  }
+}

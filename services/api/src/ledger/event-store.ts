@@ -61,6 +61,7 @@ import {
   type AppendedEvent,
   type AppendResult,
   HeadConflictError,
+  IdempotencyConflictError,
   LEDGER_OPENED,
   LedgerAppendError,
   type LedgerEventDraft,
@@ -74,6 +75,17 @@ import {
  * orden total dejaría de serlo y la densidad del `leaf_index` sería una coincidencia.
  */
 export const LEDGER_WRITE_LOCK = '7311064281559162001';
+
+/**
+ * Toma el cerrojo global del ledger dentro de una transaccion ya abierta.
+ *
+ * Es deliberadamente publica: las operaciones que coordinan mas de un agregado deben inmovilizar
+ * el corte antes de leer cualquiera de ellos. PostgreSQL hace este cerrojo reentrante dentro de la
+ * misma transaccion, por lo que los `appendWithin` posteriores conservan el mismo orden total.
+ */
+export async function lockLedgerWithin(client: pg.PoolClient): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [LEDGER_WRITE_LOCK]);
+}
 
 const MAX_ATTEMPTS = 5;
 
@@ -337,7 +349,10 @@ export async function append(
       }
       if (hasIdempotencyCollision(error)) {
         const replay = await readIdempotentResult(pool, command.requestId);
-        if (replay !== undefined) return replay;
+        if (replay !== undefined) {
+          assertIdempotentCommand(command, replay);
+          return replay;
+        }
       }
       throw error;
     }
@@ -373,11 +388,14 @@ export async function appendWithin(
 
 async function attemptAppend(client: pg.PoolClient, command: AppendCommand): Promise<AppendResult> {
   // (1) Cerrojo de escritura del ledger. Orden total; se libera al terminar la transacción.
-  await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [LEDGER_WRITE_LOCK]);
+  await lockLedgerWithin(client);
 
   // (2) Idempotencia (§3.5). Bajo el cerrojo no hay carrera entre esta lectura y la escritura final.
-  const replay = await readIdempotentResultOn(client, command.requestId);
-  if (replay !== undefined) return replay;
+  const replay = await readAppendRequestWithin(client, command.requestId);
+  if (replay !== undefined) {
+    assertIdempotentCommand(command, replay);
+    return replay;
+  }
 
   // (3) Cabeza del agregado y cabeza de la espina, en una sola consulta.
   const { rows } = await client.query<HeadRow>(
@@ -558,6 +576,72 @@ async function attemptAppend(client: pg.PoolClient, command: AppendCommand): Pro
   };
 }
 
+/**
+ * Una clave no identifica una intención por sí sola: es sólo la etiqueta que el cliente vuelve a
+ * mandar si perdió la respuesta. Por eso un replay es seguro únicamente si vuelve a describir el
+ * MISMO lote ya sellado. Comparar sólo el agregado convertía cualquier segunda orden con la misma
+ * clave (por ejemplo una papeleta usada como el cierre) en un no-op silencioso.
+ *
+ * `expectedHead` se deja fuera de la comparación deliberadamente. Un reintento legítimo conserva
+ * la intención aunque su expectativa ya haya quedado obsoleta por el primer commit; la identidad
+ * del comando es su agregado, tipo y preimagen efectiva de cada evento.
+ */
+function assertIdempotentCommand(command: AppendCommand, replay: AppendResult): void {
+  if (replay.aggregateId !== command.aggregateId) {
+    throw new IdempotencyConflictError(
+      command.requestId,
+      `ya pertenece al agregado ${replay.aggregateId}, no a ${command.aggregateId}`,
+    );
+  }
+  if (replay.head.aggregateType !== command.aggregateType) {
+    throw new IdempotencyConflictError(
+      command.requestId,
+      `ya selló tipo ${replay.head.aggregateType}, no ${command.aggregateType}`,
+    );
+  }
+  if (replay.events.length !== command.events.length) {
+    throw new IdempotencyConflictError(
+      command.requestId,
+      `ya selló ${String(replay.events.length)} eventos, no los ${String(command.events.length)} solicitados`,
+    );
+  }
+
+  for (const [index, draft] of command.events.entries()) {
+    const stored = replay.events[index];
+    if (stored === undefined) {
+      throw new IdempotencyConflictError(
+        command.requestId,
+        `no conserva el evento ${String(index)}`,
+      );
+    }
+    const event = stored.event;
+    const effectiveVersion = draft.eventVersion ?? 1;
+    const requestedPayload = canonicalize(draft.payload, LEDGER_PROFILE);
+    const mismatch =
+      event.aggregateId !== command.aggregateId
+        ? 'aggregateId'
+        : event.aggregateType !== command.aggregateType
+          ? 'aggregateType'
+          : event.eventType !== draft.eventType
+            ? 'eventType'
+            : event.eventVersion !== effectiveVersion
+              ? 'eventVersion'
+              : event.occurredAt !== draft.occurredAt
+                ? 'occurredAt'
+                : event.actor !== draft.actor
+                  ? 'actor'
+                  : stored.payloadText !== requestedPayload
+                    ? 'payload canónico'
+                    : undefined;
+    if (mismatch !== undefined) {
+      throw new IdempotencyConflictError(
+        command.requestId,
+        `no es replay del mismo comando: difiere ${mismatch} en el evento ${String(index)}`,
+      );
+    }
+  }
+}
+
 function assertExpectation(command: AppendCommand, current: AggregateHead | undefined): void {
   const expected = command.expectedHead;
   if (expected.kind === 'any') return;
@@ -684,7 +768,12 @@ interface RequestRow {
   readonly head_hash: Uint8Array;
 }
 
-async function readIdempotentResultOn(
+/**
+ * Recupera el append que una clave de idempotencia ya sello, usando la misma conexion/corte del
+ * llamante. Las operaciones compuestas lo consultan bajo el cerrojo antes de generar identificadores
+ * nuevos: asi un reintento puede devolver el agregado original sin derivarlo de datos personales.
+ */
+export async function readAppendRequestWithin(
   client: PgClient,
   requestId: string,
 ): Promise<AppendResult | undefined> {
@@ -742,7 +831,7 @@ async function readIdempotentResult(
 ): Promise<AppendResult | undefined> {
   const client = await pool.connect();
   try {
-    return await readIdempotentResultOn(client, requestId);
+    return await readAppendRequestWithin(client, requestId);
   } finally {
     client.release();
   }

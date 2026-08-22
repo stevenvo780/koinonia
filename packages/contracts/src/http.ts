@@ -140,11 +140,26 @@ export type ProblemaDetalle = z.infer<typeof problemaDetalle>;
 // Propuestas
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+export const criterioExito = z.object({
+  descripcion: z.string().min(20).max(500),
+  fuenteDeVerificacion: z.string().min(5).max(500),
+});
+export type CriterioExito = z.infer<typeof criterioExito>;
+
+export const planEjecucion = z.object({
+  objetivo: z.string().min(20).max(1000),
+  responsableId: opaqueId,
+  revisarEn: instantMs,
+  criteriosDeExito: z.array(criterioExito).min(1).max(10),
+});
+export type PlanEjecucion = z.infer<typeof planEjecucion>;
+
 export const crearPropuesta = z.object({
   requestId,
   problemaId: opaqueId,
   titulo: z.string().min(10).max(140),
   cuerpo: z.string().min(50, 'Una propuesta necesita decir qué se hace, concretamente.').max(4000),
+  plan: planEjecucion,
 });
 export type CrearPropuesta = z.infer<typeof crearPropuesta>;
 
@@ -153,6 +168,7 @@ export const enmendarPropuesta = z.object({
   titulo: z.string().min(10).max(140),
   cuerpo: z.string().min(50).max(4000),
   motivo: z.string().min(20, 'Decí qué cambia y por qué.').max(1000),
+  plan: planEjecucion,
 });
 export type EnmendarPropuesta = z.infer<typeof enmendarPropuesta>;
 
@@ -161,12 +177,14 @@ export const versionPropuesta = z.object({
   titulo: z.string(),
   cuerpo: z.string(),
   /**
-   * La huella del texto exacto. En pantalla **no se llama así**: se muestra como «comprobante de
-   * esta versión» y se explica en una frase (PRODUCT §7).
+   * La huella del texto y el plan exactos. En pantalla **no se llama así**: se muestra como
+   * «comprobante de esta versión» y se explica en una frase (PRODUCT §7).
    */
   huella: hash64,
   cuando: instantMs,
   motivo: z.string().optional(),
+  /** Ausente sólo en versiones históricas creadas antes de que el plan fuera obligatorio. */
+  plan: planEjecucion.optional(),
 });
 export type VersionPropuesta = z.infer<typeof versionPropuesta>;
 
@@ -274,6 +292,8 @@ export type DecisionResumen = z.infer<typeof decisionResumen>;
 
 export const decisionDetalle = decisionResumen.extend({
   cuerpoVersion: z.string(),
+  /** Ausente únicamente en decisiones históricas; toda decisión nueva lo congela al abrir. */
+  plan: planEjecucion.optional(),
   /** Si vos podías decidir aquí. Falso para quien no estaba en la lista congelada. */
   puedoDecidir: z.boolean(),
   /** Tu respuesta vigente, si emitiste alguna. Se puede cambiar hasta el cierre. */
@@ -310,6 +330,8 @@ export const DESENLACE_EN_PALABRAS: Readonly<Record<Desenlace, string>> = {
 
 export const resultadoDecision = z.object({
   decisionId: opaqueId,
+  /** Presente únicamente cuando el cierre aprobado creó su iniciativa. */
+  iniciativaId: opaqueId.optional(),
   desenlace,
   desenlaceEnPalabras: z.string(),
   /** Por qué salió lo que salió, en una frase larga y sin jerga. */
@@ -329,6 +351,32 @@ export const resultadoDecision = z.object({
   comprobanteLista: hash64,
 });
 export type ResultadoDecision = z.infer<typeof resultadoDecision>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Iniciativas
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const estadoIniciativa = z.enum(['por-empezar']);
+export type EstadoIniciativa = z.infer<typeof estadoIniciativa>;
+
+export const iniciativaResumen = z.object({
+  id: opaqueId,
+  decisionId: opaqueId,
+  propuestaId: opaqueId,
+  circuloId: opaqueId,
+  objetivo: z.string(),
+  responsableId: opaqueId,
+  revisarEn: instantMs,
+  criteriosDeExito: z.array(criterioExito),
+  estado: estadoIniciativa,
+  creadaEn: instantMs,
+  comprobanteDecision: hash64,
+  comprobanteVersion: hash64,
+});
+export type IniciativaResumen = z.infer<typeof iniciativaResumen>;
+
+export const iniciativaDetalle = iniciativaResumen;
+export type IniciativaDetalle = z.infer<typeof iniciativaDetalle>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Integridad
@@ -376,6 +424,7 @@ export const portada = z.object({
   primerDia: z.boolean(),
   problemas: z.number().int().nonnegative(),
   propuestas: z.number().int().nonnegative(),
+  iniciativasActivas: z.number().int().nonnegative(),
   decisionesAbiertas: z.array(decisionResumen),
   ultimasCerradas: z.array(decisionResumen),
   /** **Una sola** cosa pendiente. Si hay más, se elige la más urgente. */

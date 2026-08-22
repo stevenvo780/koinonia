@@ -81,6 +81,29 @@ export default function Resultado(): ReactNode {
         </ol>
       </section>
 
+      {aprobada && resultado.iniciativaId !== undefined && (
+        <section aria-labelledby="siguiente-paso-titulo">
+          <h2 id="siguiente-paso-titulo">El siguiente paso</h2>
+          <p>
+            La decisión ya tiene una iniciativa para seguir el cambio acordado. Está{' '}
+            <strong>por empezar</strong> mientras termina la revisión: todavía no es una orden de
+            iniciar trabajo irreversible.
+          </p>
+          <p>
+            <Link className="boton" href={`/iniciativas/${resultado.iniciativaId}`}>
+              Ver la iniciativa y cómo se comprobará
+            </Link>
+          </p>
+        </section>
+      )}
+
+      {aprobada && resultado.iniciativaId === undefined && (
+        <AvisoHistorico>
+          Esta es una decisión histórica: fue aprobada antes de que las decisiones crearan una
+          iniciativa automáticamente. No vamos a inventar un seguimiento que no quedó registrado.
+        </AvisoHistorico>
+      )}
+
       {resultado.tablas.map((tabla) => (
         <section key={tabla.titulo} aria-labelledby={`tabla-${tabla.titulo}`}>
           <h2 id={`tabla-${tabla.titulo}`}>{tabla.titulo}</h2>
@@ -135,5 +158,14 @@ export default function Resultado(): ReactNode {
         </details>
       </section>
     </>
+  );
+}
+
+function AvisoHistorico({ children }: { readonly children: ReactNode }): ReactNode {
+  return (
+    <div className="aviso atencion" role="note">
+      <strong>Sin iniciativa vinculada: </strong>
+      {children}
+    </div>
   );
 }

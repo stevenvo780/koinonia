@@ -143,6 +143,34 @@ function requireConfig(state: DecisionState): DecisionConfig {
   return state.config;
 }
 
+/**
+ * Comprueba que la apertura congela exactamente el asunto descrito por el borrador.
+ *
+ * Los dos campos de ADR-0043 son opcionales para poder reproducir decisiones anteriores a ese ADR,
+ * pero en una decisión nueva forman una sola referencia: reservar una iniciativa sin congelar el plan
+ * (o viceversa) dejaría ambiguo qué mandato se ejecutará si la propuesta resulta aprobada.
+ */
+function assertDraftMatchesOpening(draft: DraftConfig, config: DecisionConfig): void {
+  if (draft.proposalId !== config.proposalId) {
+    throw new PreconditionError(
+      'DRAFT_PROPOSAL_ID_MISMATCH',
+      'DecisionOpened debe conservar el proposalId exacto de DecisionDrafted',
+    );
+  }
+  if (draft.proposalVersionHash !== config.proposalVersionHash) {
+    throw new PreconditionError(
+      'DRAFT_PROPOSAL_VERSION_MISMATCH',
+      'DecisionOpened debe conservar el proposalVersionHash exacto de DecisionDrafted',
+    );
+  }
+  if ((draft.plannedInitiativeId === undefined) !== (draft.executionPlanHash === undefined)) {
+    throw new PreconditionError(
+      'DRAFT_EXECUTION_PLAN_INCOMPLETE',
+      'ADR-0043 exige conservar juntos plannedInitiativeId y executionPlanHash',
+    );
+  }
+}
+
 /** Ventana vigente: la de la configuración, con el cierre desplazado por las prórrogas. */
 export function currentWindow(state: DecisionState): EffectiveWindow {
   const config = requireConfig(state);
@@ -206,6 +234,12 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
       if (config.decisionId !== state.decisionId) {
         throw new PreconditionError('WRONG_AGGREGATE', 'la configuración es de otra decisión');
       }
+      if (state.draft === undefined) {
+        throw new PreconditionError('NO_DRAFT', 'no se puede abrir una decisión sin borrador');
+      }
+      // Esta comprobación vive en el plegado, no sólo en la ruta HTTP: todo replay y toda
+      // verificación del log rechazan una apertura que cambie silenciosamente el asunto decidido.
+      assertDraftMatchesOpening(state.draft, config);
       // A.2: el instante de congelación del padrón ES el de la apertura.
       if (config.electorate.frozenAt !== event.occurredAt) {
         throw new PreconditionError(

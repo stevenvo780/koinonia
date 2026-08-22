@@ -139,6 +139,19 @@ export default function Inicio(): ReactNode {
             </section>
           )}
 
+          {portada.iniciativasActivas > 0 && (
+            <section aria-labelledby="iniciativas-titulo">
+              <h2 id="iniciativas-titulo">Cambios por seguir</h2>
+              <p>
+                Hay {portada.iniciativasActivas}{' '}
+                {portada.iniciativasActivas === 1
+                  ? 'iniciativa por revisar'
+                  : 'iniciativas por revisar'}
+                . <Link href="/iniciativas">Ver los acuerdos y cómo se comprobarán</Link>.
+              </p>
+            </section>
+          )}
+
           <p>
             Hay {portada.problemas}{' '}
             {portada.problemas === 1 ? 'problema escrito' : 'problemas escritos'} y{' '}

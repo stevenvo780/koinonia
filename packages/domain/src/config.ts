@@ -22,6 +22,7 @@ import type {
   DelegationId,
   Hash,
   Instant,
+  InitiativeId,
   MemberId,
   OptionId,
   ProposalId,
@@ -251,6 +252,10 @@ export type ConstituentAct = 'reform-student-statute' | 'revoke-mandate' | 'diss
 export interface DraftConfig {
   readonly proposalId: ProposalId;
   readonly proposalVersionHash: Hash;
+  /** Identificador opaco reservado para la iniciativa si el resultado queda aprobado. */
+  readonly plannedInitiativeId?: InitiativeId;
+  /** Plan exacto que las personas ven junto con esta version de la propuesta. */
+  readonly executionPlanHash?: Hash;
   /** Resumen legible del asunto. Sin datos personales. */
   readonly summary: string;
 }

@@ -19,6 +19,7 @@ import {
   append,
   appendWithin,
   HeadConflictError,
+  LedgerAppendError,
   readHead,
   readStream,
   verifyAggregate,
@@ -285,6 +286,35 @@ describe.skipIf(!env.ok)(`idempotencia por request_id${skipNote(env)}`, () => {
 
     const stream = await readStream(pool, aggregateId);
     expect(stream).toHaveLength(1);
+  });
+
+  it('la misma clave, agregado y un payload distinto se denuncia y conserva la historia', async () => {
+    const aggregateId = id32('idempotencia-payload-distinto');
+    const rid = requestId('idempotencia-payload-distinto');
+    const original = {
+      aggregateId,
+      aggregateType: 'propuesta' as const,
+      expectedHead: { kind: 'new' } as const,
+      requestId: rid,
+      events: [{ eventType: 'PropuestaAbierta', occurredAt: iso(0), payload: { voto: 'si' } }],
+    };
+    await append(pool, original);
+    const before = await readStream(pool, aggregateId);
+
+    await expect(
+      append(pool, {
+        ...original,
+        events: [{ ...original.events[0]!, payload: { voto: 'no' } }],
+      }),
+    ).rejects.toBeInstanceOf(LedgerAppendError);
+    await expect(
+      append(pool, {
+        ...original,
+        events: [{ ...original.events[0]!, payload: { voto: 'no' } }],
+      }),
+    ).rejects.toThrow(/no es replay del mismo comando.*payload canónico/u);
+
+    expect(await readStream(pool, aggregateId)).toEqual(before);
   });
 
   it('el reintento devuelve el resultado ya registrado, no un error', async () => {

@@ -150,6 +150,29 @@ export async function crearProblemaPorApi(
 
 export const CIRCULO_ESPACIOS = 'e5bac105b1e00000000000000000000b';
 
+/** Plan reutilizable cuando el escenario crea una propuesta directamente por API. */
+export function planDe(responsableId: string): {
+  readonly objetivo: string;
+  readonly responsableId: string;
+  readonly revisarEn: number;
+  readonly criteriosDeExito: readonly {
+    readonly descripcion: string;
+    readonly fuenteDeVerificacion: string;
+  }[];
+} {
+  return {
+    objetivo: 'Conseguir que la sala de estudio tenga un horario útil para la jornada nocturna.',
+    responsableId,
+    revisarEn: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    criteriosDeExito: [
+      {
+        descripcion: 'La sala abre hasta las nueve de la noche al menos tres días por semana.',
+        fuenteDeVerificacion: 'Horario oficial publicado por el Instituto',
+      },
+    ],
+  };
+}
+
 /** Sufijo único para que dos ejecuciones no choquen en la misma base. */
 export function marca(): string {
   return Math.random().toString(36).slice(2, 8);

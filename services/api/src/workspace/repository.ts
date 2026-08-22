@@ -18,16 +18,20 @@ import {
   type ProblemLog,
   type ProblemPayload,
   type ProblemState,
+  type InitiativeLog,
+  type InitiativePayload,
+  type InitiativeState,
   type ProposalLog,
   type ProposalPayload,
   type ProposalState,
   replayProblem,
+  verifyInitiativeLog,
   verifyChain,
   verifyProposalLog,
 } from '@koinonia/domain';
 
-import type { PgClient, PgPool } from '../db/client.js';
-import { append, readHead, readStream } from '../ledger/event-store.js';
+import type { PgClient, PgPool, PgPoolClient } from '../db/client.js';
+import { append, appendWithin, readHead, readStream } from '../ledger/event-store.js';
 import type {
   AggregateHead,
   ExpectedHead,
@@ -36,8 +40,11 @@ import type {
 } from '../ledger/types.js';
 import {
   decodeProblemEvent,
+  decodeInitiativeEvent,
   decodeProposalEvent,
   encodeProblemEvent,
+  encodeInitiativeEvent,
+  INITIATIVE_AGGREGATE_TYPE,
   encodeProposalEvent,
   PROBLEM_AGGREGATE_TYPE,
   PROPOSAL_AGGREGATE_TYPE,
@@ -75,6 +82,49 @@ const PROPOSAL_CODEC: Codec<ProposalPayload> = {
   decode: decodeProposalEvent,
 };
 
+const INITIATIVE_CODEC: Codec<InitiativePayload> = {
+  aggregateType: INITIATIVE_AGGREGATE_TYPE,
+  encode: encodeInitiativeEvent,
+  decode: decodeInitiativeEvent,
+};
+
+function pendingFor<P>(
+  log: ChainedLog<P>,
+  current: AggregateHead | undefined,
+): {
+  readonly aggregateId: string;
+  readonly current: AggregateHead | undefined;
+  readonly pending: readonly ChainedEvent<P>[];
+  readonly expectedHead: ExpectedHead;
+} {
+  const first = log[0];
+  if (first === undefined) throw new WorkspacePersistenceError('un log vacío no identifica nada');
+  const aggregateId = first.aggregateId;
+  const persisted = current === undefined ? 0 : current.seq + 1;
+  if (persisted > log.length) {
+    throw new WorkspacePersistenceError(
+      `el ledger tiene ${String(persisted)} eventos de ${aggregateId} y el log trae ` +
+        `${String(log.length)}: el log recibido es más corto que la historia ya escrita`,
+    );
+  }
+  const pending = log.slice(persisted);
+  for (const [offset, event] of pending.entries()) {
+    const expected = persisted + offset + 1;
+    if (event.seq !== expected) {
+      throw new WorkspacePersistenceError(
+        `el evento ${String(offset)} del tramo pendiente dice seq=${String(event.seq)} y le toca ` +
+          `${String(expected)}: el log no continúa donde el ledger se quedó`,
+      );
+    }
+    if (event.aggregateId !== aggregateId) {
+      throw new WorkspacePersistenceError('el log mezcla eventos de dos agregados');
+    }
+  }
+  const expectedHead: ExpectedHead =
+    current === undefined ? { kind: 'new' } : { kind: 'at', seq: current.seq, hash: current.hash };
+  return { aggregateId, current, pending, expectedHead };
+}
+
 async function persist<P>(
   pool: PgPool,
   log: ChainedLog<P>,
@@ -93,45 +143,56 @@ async function persist<P>(
     client.release();
   }
 
-  const persisted = current === undefined ? 0 : current.seq + 1;
-  if (persisted > log.length) {
-    throw new WorkspacePersistenceError(
-      `el ledger tiene ${String(persisted)} eventos de ${aggregateId} y el log trae ` +
-        `${String(log.length)}: el log recibido es más corto que la historia ya escrita`,
-    );
-  }
-  const pending = log.slice(persisted);
+  const prepared = pendingFor(log, current);
+  const pending = prepared.pending;
   if (pending.length === 0) {
     return { aggregateId, appended: 0, head: current, idempotentReplay: false };
   }
-
-  for (const [offset, event] of pending.entries()) {
-    const expected = persisted + offset + 1;
-    if (event.seq !== expected) {
-      throw new WorkspacePersistenceError(
-        `el evento ${String(offset)} del tramo pendiente dice seq=${String(event.seq)} y le toca ` +
-          `${String(expected)}: el log no continúa donde el ledger se quedó`,
-      );
-    }
-    if (event.aggregateId !== aggregateId) {
-      throw new WorkspacePersistenceError('el log mezcla eventos de dos agregados');
-    }
-  }
-
-  const expectedHead: ExpectedHead =
-    current === undefined ? { kind: 'new' } : { kind: 'at', seq: current.seq, hash: current.hash };
 
   const result = await append(pool, {
     aggregateId,
     aggregateType: codec.aggregateType,
     events: pending.map(codec.encode),
-    expectedHead,
+    expectedHead: prepared.expectedHead,
     requestId: options.requestId,
   });
 
   return {
     aggregateId,
     appended: result.idempotentReplay ? 0 : pending.length,
+    head: result.head,
+    idempotentReplay: result.idempotentReplay,
+  };
+}
+
+async function persistWithin<P>(
+  client: PgPoolClient,
+  log: ChainedLog<P>,
+  codec: Codec<P>,
+  options: { readonly requestId: string },
+): Promise<WorkspacePersistResult> {
+  const first = log[0];
+  if (first === undefined) throw new WorkspacePersistenceError('un log vacío no identifica nada');
+  const current = await readHead(client, first.aggregateId);
+  const prepared = pendingFor(log, current);
+  if (prepared.pending.length === 0) {
+    return {
+      aggregateId: prepared.aggregateId,
+      appended: 0,
+      head: prepared.current,
+      idempotentReplay: false,
+    };
+  }
+  const result = await appendWithin(client, {
+    aggregateId: prepared.aggregateId,
+    aggregateType: codec.aggregateType,
+    events: prepared.pending.map(codec.encode),
+    expectedHead: prepared.expectedHead,
+    requestId: options.requestId,
+  });
+  return {
+    aggregateId: prepared.aggregateId,
+    appended: result.idempotentReplay ? 0 : prepared.pending.length,
     head: result.head,
     idempotentReplay: result.idempotentReplay,
   };
@@ -183,6 +244,15 @@ export async function persistProposalLog(
   return persist(pool, log, PROPOSAL_CODEC, options);
 }
 
+/** Misma persistencia de propuesta, dentro de una transaccion coordinada por el servicio. */
+export async function persistProposalLogWithin(
+  client: PgPoolClient,
+  log: ProposalLog,
+  options: { readonly requestId: string },
+): Promise<WorkspacePersistResult> {
+  return persistWithin(client, log, PROPOSAL_CODEC, options);
+}
+
 export async function loadProposalLog(client: PgClient, proposalId: string): Promise<ProposalLog> {
   return load(client, proposalId, PROPOSAL_CODEC);
 }
@@ -196,6 +266,28 @@ export async function loadProposalState(
   proposalId: string,
 ): Promise<ProposalState> {
   return verifyProposalLog(await loadProposalLog(client, proposalId));
+}
+
+export async function persistInitiativeLogWithin(
+  client: PgPoolClient,
+  log: InitiativeLog,
+  options: { readonly requestId: string },
+): Promise<WorkspacePersistResult> {
+  return persistWithin(client, log, INITIATIVE_CODEC, options);
+}
+
+export async function loadInitiativeLog(
+  client: PgClient,
+  initiativeId: string,
+): Promise<InitiativeLog> {
+  return load(client, initiativeId, INITIATIVE_CODEC);
+}
+
+export async function loadInitiativeState(
+  client: PgClient,
+  initiativeId: string,
+): Promise<InitiativeState> {
+  return verifyInitiativeLog(await loadInitiativeLog(client, initiativeId));
 }
 
 /** Identificadores de todos los agregados de un tipo, en orden de nacimiento. */
@@ -214,4 +306,4 @@ export async function listAggregateIds(
   return rows.map((row) => row.aggregate_id.trimEnd());
 }
 
-export { PROBLEM_AGGREGATE_TYPE, PROPOSAL_AGGREGATE_TYPE };
+export { INITIATIVE_AGGREGATE_TYPE, PROBLEM_AGGREGATE_TYPE, PROPOSAL_AGGREGATE_TYPE };

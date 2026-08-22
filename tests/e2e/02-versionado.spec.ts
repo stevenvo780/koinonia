@@ -1,12 +1,13 @@
 /**
  * ESCENARIO 2 — Versionado.
  *
- * V1 → V2 → votar sobre la V2 → comprobar que la V1 sigue intacta e íntegra.
+ * V1 con plan → V2 → abrir sobre V2 → V3 cambiando sólo el plan → votar sobre la V2 congelada →
+ * comprobar que la V1 sigue intacta e íntegra.
  *
  * «Intacta» acá quiere decir tres cosas comprobadas por separado, porque cada una puede fallar sola:
  *
  *  1. El **texto** de la V1 en pantalla es palabra por palabra el que era antes de la enmienda.
- *  2. Su **comprobante** no cambió: si alguien le hubiera tocado una coma, cambiaría.
+ *  2. Su **comprobante** no cambió: protege tanto el texto como el plan de ejecución.
  *  3. La pantalla de comprobación sigue en verde, es decir, la V1 **verifica** después de la V2.
  */
 
@@ -57,6 +58,13 @@ test('la V1 sigue intacta e íntegra después de que existe la V2 y se vota sobr
   await page.goto(`/propuestas/nueva?problema=${problemaId}`);
   await page.getByLabel('¿Qué se propone, en una frase?').fill('Publicar un mapa de lecturas');
   await page.getByLabel('¿Qué se hace, concretamente?').fill(TEXTO_V1);
+  await page
+    .getByLabel('¿Qué debería cambiar si esto sale bien?')
+    .fill('Quienes empiezan la carrera encuentran un recorrido de lectura claro y comprobable.');
+  await page
+    .getByLabel('¿Qué tendría que pasar para decir que funcionó?')
+    .fill('El mapa queda publicado y al menos veinte estudiantes reportan haberlo consultado.');
+  await page.getByLabel('¿Dónde lo comprobamos?').fill('Página publicada y registro de consultas');
   await page.getByRole('button', { name: 'Guardar la propuesta' }).click();
 
   await expect(page.getByRole('heading', { name: /^Versión 1/u })).toBeVisible();
@@ -115,12 +123,37 @@ test('la V1 sigue intacta e íntegra después de que existe la V2 y se vota sobr
   // La decisión se abre sobre la versión vigente, que es la V2.
   expect(decision.huellaVersion).toBe(comprobanteV2);
 
+  // Cambiar únicamente el plan también crea una versión. La V2 ya congelada por la decisión no
+  // cambia por eso: se sigue decidiendo el texto y el plan que estaban a la vista al abrir.
+  await page.getByRole('button', { name: 'Enmendar mi propuesta' }).click();
+  await page
+    .getByLabel('¿Qué debería cambiar si esto sale bien?')
+    .fill(
+      'Quienes empiezan hasta cuarto semestre encuentran y usan un recorrido de lectura claro.',
+    );
+  await page
+    .getByLabel('¿Qué cambia y por qué?')
+    .fill('Sólo cambia el resultado observable del plan; el texto de la propuesta sigue intacto.');
+  await page.getByRole('button', { name: 'Guardar la versión nueva' }).click();
+  const bloqueV3 = page.locator('article.version').filter({ hasText: 'Versión 3' });
+  await expect(bloqueV3.locator('p.texto')).toHaveText(TEXTO_V2);
+  const comprobanteV3 = ((await bloqueV3.locator('code.comprobante').textContent()) ?? '').trim();
+  expect(comprobanteV3).toMatch(/^[0-9a-f]{64}$/u);
+  expect(comprobanteV3).not.toBe(comprobanteV2);
+
+  const decisionCongelada = await apiDirecta(sara);
+  const detalleCongelado = await decisionCongelada.get(`/decisiones/${decision.id}`);
+  expect(((await detalleCongelado.json()) as { huellaVersion: string }).huellaVersion).toBe(
+    comprobanteV2,
+  );
+  await decisionCongelada.dispose();
+
   await page.goto(`/decisiones/${decision.id}`);
   await page.getByRole('radio', { name: 'Sí', exact: true }).check();
   await page.getByRole('button', { name: 'Enviar mi respuesta' }).click();
   await expect(page.getByText('Quedó registrado')).toBeVisible();
 
-  // ── 4. Una respuesta sobre la V1 se rechaza: consentir un texto es consentir ESE texto ──────
+  // ── 4. Una respuesta sobre la V1 se rechaza: se decide ESE texto y ESE plan ─────────────────
   const apiSara = await apiDirecta(sara);
   const vieja = await apiSara.post(`/decisiones/${decision.id}/papeletas`, {
     data: {
@@ -137,6 +170,8 @@ test('la V1 sigue intacta e íntegra después de que existe la V2 y se vota sobr
   await page.goto('/verificar');
   await expect(page.getByText('El historial está completo y sin alteraciones')).toBeVisible();
   await expect(
-    page.getByText('La versión 1 sigue siendo palabra por palabra la que era', { exact: false }),
+    page.getByText('La versión 1 conserva sus palabras, responsable, fecha y criterios', {
+      exact: false,
+    }),
   ).toBeVisible();
 });

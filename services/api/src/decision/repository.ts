@@ -21,8 +21,8 @@ import {
   verifyLog,
 } from '@koinonia/domain';
 
-import type { PgClient, PgPool } from '../db/client.js';
-import { append, readHead, readStream } from '../ledger/event-store.js';
+import type { PgClient, PgPool, PgPoolClient } from '../db/client.js';
+import { append, appendWithin, readHead, readStream } from '../ledger/event-store.js';
 import type { AggregateHead, ExpectedHead } from '../ledger/types.js';
 import { DECISION_AGGREGATE_TYPE, decodeDecisionEvent, encodeDecisionEvent } from './codec.js';
 
@@ -101,6 +101,56 @@ export async function persistDecisionLog(
     requestId: options.requestId,
   });
 
+  return {
+    decisionId,
+    appended: result.idempotentReplay ? 0 : pending.length,
+    head: result.head,
+    idempotentReplay: result.idempotentReplay,
+  };
+}
+
+/** Misma persistencia, dentro de la transaccion coordinada por el servicio de aplicacion. */
+export async function persistDecisionLogWithin(
+  client: PgPoolClient,
+  log: DecisionLog,
+  options: { readonly requestId: string },
+): Promise<PersistResult> {
+  const first = log[0];
+  if (first === undefined) throw new DecisionPersistenceError('un log vacío no identifica nada');
+  const decisionId: string = first.decisionId;
+  const current = await readHead(client, decisionId);
+  const persisted = current === undefined ? 0 : current.seq + 1;
+  if (persisted > log.length) {
+    throw new DecisionPersistenceError(
+      `el ledger tiene ${String(persisted)} eventos de ${decisionId} y el log trae ${String(log.length)}: ` +
+        'el log recibido es más corto que la historia ya escrita',
+    );
+  }
+  const pending: readonly DecisionEvent[] = log.slice(persisted);
+  if (pending.length === 0) {
+    return { decisionId, appended: 0, head: current, idempotentReplay: false };
+  }
+  for (const [offset, event] of pending.entries()) {
+    const expectedDomainSeq = persisted + offset + 1;
+    if (event.seq !== expectedDomainSeq) {
+      throw new DecisionPersistenceError(
+        `el evento ${String(offset)} del tramo pendiente dice seq=${String(event.seq)} y le toca ` +
+          `${String(expectedDomainSeq)}: el log no continúa donde el ledger se quedó`,
+      );
+    }
+    if (event.decisionId !== decisionId) {
+      throw new DecisionPersistenceError('el log mezcla eventos de dos decisiones');
+    }
+  }
+  const expectedHead: ExpectedHead =
+    current === undefined ? { kind: 'new' } : { kind: 'at', seq: current.seq, hash: current.hash };
+  const result = await appendWithin(client, {
+    aggregateId: decisionId,
+    aggregateType: DECISION_AGGREGATE_TYPE,
+    events: pending.map(encodeDecisionEvent),
+    expectedHead,
+    requestId: options.requestId,
+  });
   return {
     decisionId,
     appended: result.idempotentReplay ? 0 : pending.length,

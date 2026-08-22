@@ -12,14 +12,16 @@
  */
 
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 
 import {
   apiDirecta,
+  avanzarReloj,
   type Cuenta,
   crearProblemaPorApi,
   entrarPorApi,
   marca,
+  planDe,
   ponerSesionEnNavegador,
   requestId,
 } from './ayudas.js';
@@ -33,6 +35,8 @@ const sufijo = marca();
 let problemaId: string;
 let propuestaId: string;
 let decisionId: string;
+let iniciativaId: string;
+let resultadoDecisionId: string;
 
 /** Términos que no pueden aparecer en pantalla nunca (PRODUCT §7, ADR-0041). */
 const JERGA_PROHIBIDA = [
@@ -81,6 +85,16 @@ async function revisar(page: Page, ruta: string): Promise<void> {
   }
 }
 
+async function tabularHasta(page: Page, destino: Locator, maximo = 40): Promise<void> {
+  for (let intento = 0; intento < maximo; intento++) {
+    await page.keyboard.press('Tab');
+    if (await destino.evaluate((elemento) => elemento.ownerDocument.activeElement === elemento)) {
+      return;
+    }
+  }
+  throw new Error(`no se alcanzó el control con Tab después de ${String(maximo)} intentos`);
+}
+
 test.beforeAll(async () => {
   sara = await entrarPorApi(`sara.a11y.${sufijo}@udea.edu.co`);
   lucia = await entrarPorApi(CORREO_FACILITADORA);
@@ -108,17 +122,49 @@ test.beforeAll(async () => {
       cuerpo:
         'Un texto de propuesta suficientemente largo para que la pantalla tenga contenido real ' +
         'y la revisión no pase por estar mirando una página en blanco.',
+      plan: planDe(sara.miembroId),
     },
   });
   propuestaId = ((await propuesta.json()) as { id: string }).id;
   await api.dispose();
 
   const apiLucia = await apiDirecta(lucia);
-  const abierta = await apiLucia.post('/decisiones', {
+  const primera = await apiLucia.post('/decisiones', {
+    data: { requestId: requestId(), propuestaId, metodo: 'simple-majority', duracionHoras: 1 },
+  });
+  expect(primera.status(), await primera.text()).toBe(201);
+  const decisionCerrada = (await primera.json()) as { id: string; huellaVersion: string };
+  resultadoDecisionId = decisionCerrada.id;
+  await apiLucia.dispose();
+
+  // La lista y el detalle de iniciativas también son parte de la superficie accesible. Creamos
+  // una de verdad y dejamos una segunda decisión abierta para el recorrido de teclado posterior.
+  for (const cuenta of [sara, lucia]) {
+    const cliente = await apiDirecta(cuenta);
+    const papeleta = await cliente.post(`/decisiones/${decisionCerrada.id}/papeletas`, {
+      data: {
+        requestId: requestId(),
+        huellaVersion: decisionCerrada.huellaVersion,
+        respuesta: { tipo: 'binary', aprueba: true },
+      },
+    });
+    expect(papeleta.status(), await papeleta.text()).toBe(201);
+    await cliente.dispose();
+  }
+  await avanzarReloj(61 * 60 * 1000);
+  const cierreApi = await apiDirecta(lucia);
+  const cierre = await cierreApi.post(`/decisiones/${decisionCerrada.id}/cerrar`, {
+    data: { requestId: requestId() },
+  });
+  expect(cierre.status(), await cierre.text()).toBe(200);
+  iniciativaId = ((await cierre.json()) as { iniciativaId: string }).iniciativaId;
+
+  const abierta = await cierreApi.post('/decisiones', {
     data: { requestId: requestId(), propuestaId, metodo: 'sociocratic-consent', duracionHoras: 24 },
   });
+  expect(abierta.status(), await abierta.text()).toBe(201);
   decisionId = ((await abierta.json()) as { id: string }).id;
-  await apiLucia.dispose();
+  await cierreApi.dispose();
 });
 
 test('Inicio, incluido el estado vacío del primer día', async ({ page }) => {
@@ -153,6 +199,18 @@ test('Decisión: emitir la respuesta', async ({ page }) => {
   await revisar(page, `/decisiones/${decisionId}`);
 });
 
+test('Iniciativas: lista', async ({ page }) => {
+  await revisar(page, '/iniciativas');
+});
+
+test('Iniciativa: detalle y criterios de evaluación', async ({ page }) => {
+  await revisar(page, `/iniciativas/${iniciativaId}`);
+});
+
+test('Resultado: traza y vínculo con su iniciativa', async ({ page }) => {
+  await revisar(page, `/decisiones/${resultadoDecisionId}/resultado`);
+});
+
 test('Verificar integridad', async ({ page }) => {
   await revisar(page, '/verificar');
 });
@@ -171,16 +229,16 @@ test('el flujo de emitir una respuesta se recorre entero con el teclado', async 
   await page.keyboard.press('Tab');
   await expect(page.locator(':focus')).toHaveText('Saltar al contenido');
 
-  // Se llega a la primera opción de la papeleta sólo con el teclado y se marca con la barra.
+  // Se llega a la primera opción de la papeleta usando únicamente Tab y se marca con la barra.
   const opcion = page.getByRole('radio', { name: /^Sin objeción/u });
-  await opcion.focus();
+  await tabularHasta(page, opcion);
   await expect(opcion).toBeFocused();
   await page.keyboard.press('Space');
   await expect(opcion).toBeChecked();
 
   // Y el botón de enviar se alcanza tabulando y se activa con Enter.
   const enviar = page.getByRole('button', { name: /respuesta/u });
-  await enviar.focus();
+  await tabularHasta(page, enviar);
   await expect(enviar).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByText('Quedó registrado')).toBeVisible();

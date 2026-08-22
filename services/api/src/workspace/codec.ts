@@ -17,14 +17,20 @@ import {
   type ChainedInput,
   circleId,
   decisionId,
+  type ExecutionPlan,
   type EvidenceCertainty,
   EVIDENCE_CERTAINTIES,
   eventId,
   hash as toHash,
+  type InitiativePayload,
+  type InitiativeEvent,
+  initiativeId,
+  instant,
   memberId,
   type ProblemPayload,
   type ProblemStatus,
   type ProposalPayload,
+  proposalId,
 } from '@koinonia/domain';
 
 import { instantToIso, isoToInstant } from '../decision/codec.js';
@@ -33,6 +39,7 @@ import type { LedgerEventDraft, StoredEvent } from '../ledger/types.js';
 /** Tipos de agregado en el ledger. Cumplen `^#?[a-z][a-z0-9_]*$`. */
 export const PROBLEM_AGGREGATE_TYPE = 'problem';
 export const PROPOSAL_AGGREGATE_TYPE = 'proposal';
+export const INITIATIVE_AGGREGATE_TYPE = 'initiative';
 export const WORKSPACE_EVENT_VERSION = 1;
 
 export class WorkspaceCodecError extends Error {
@@ -79,6 +86,52 @@ function int(source: JsonObject, key: string, path: string): number {
     throw new WorkspaceCodecError(`${path}.${key}`, 'se esperaba un entero seguro');
   }
   return value;
+}
+
+function obj(source: JsonObject, key: string, path: string): JsonObject {
+  const value = source[key];
+  if (!isObject(value)) {
+    throw new WorkspaceCodecError(`${path}.${key}`, 'se esperaba un objeto');
+  }
+  return value;
+}
+
+function arr(source: JsonObject, key: string, path: string): readonly JsonValue[] {
+  const value = source[key];
+  if (!Array.isArray(value)) {
+    throw new WorkspaceCodecError(`${path}.${key}`, 'se esperaba un arreglo');
+  }
+  return value as readonly JsonValue[];
+}
+
+function encodeExecutionPlan(plan: ExecutionPlan): JsonObject {
+  return {
+    objective: plan.objective,
+    responsibleId: plan.responsibleId,
+    reviewAt: plan.reviewAt,
+    successCriteria: plan.successCriteria.map((criterion) => ({
+      description: criterion.description,
+      evidenceSource: criterion.evidenceSource,
+    })),
+  };
+}
+
+function decodeExecutionPlan(source: JsonObject, path: string): ExecutionPlan {
+  return {
+    objective: str(source, 'objective', path),
+    responsibleId: memberId(str(source, 'responsibleId', path)),
+    reviewAt: instant(int(source, 'reviewAt', path)),
+    successCriteria: arr(source, 'successCriteria', path).map((raw, index) => {
+      const criterionPath = `${path}.successCriteria[${String(index)}]`;
+      if (!isObject(raw)) {
+        throw new WorkspaceCodecError(criterionPath, 'se esperaba un objeto');
+      }
+      return {
+        description: str(raw, 'description', criterionPath),
+        evidenceSource: str(raw, 'evidenceSource', criterionPath),
+      };
+    }),
+  };
 }
 
 function oneOf<T extends string>(value: string, allowed: readonly T[], path: string): T {
@@ -167,6 +220,12 @@ function encodeProposalBody(payload: ProposalPayload): JsonObject {
         title: payload.title,
         body: payload.body,
         versionHash: payload.versionHash,
+        ...(payload.executionPlan === undefined
+          ? {}
+          : { executionPlan: encodeExecutionPlan(payload.executionPlan) }),
+        ...(payload.executionPlanHash === undefined
+          ? {}
+          : { executionPlanHash: payload.executionPlanHash }),
       };
     case 'ProposalAmended':
       return {
@@ -175,6 +234,12 @@ function encodeProposalBody(payload: ProposalPayload): JsonObject {
         body: payload.body,
         versionHash: payload.versionHash,
         rationale: payload.rationale,
+        ...(payload.executionPlan === undefined
+          ? {}
+          : { executionPlan: encodeExecutionPlan(payload.executionPlan) }),
+        ...(payload.executionPlanHash === undefined
+          ? {}
+          : { executionPlanHash: payload.executionPlanHash }),
       };
     case 'DecisionLinked':
       return { decisionId: payload.decisionId, versionHash: payload.versionHash };
@@ -183,7 +248,9 @@ function encodeProposalBody(payload: ProposalPayload): JsonObject {
 
 function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
   switch (type) {
-    case 'ProposalDrafted':
+    case 'ProposalDrafted': {
+      const executionPlan = body['executionPlan'];
+      const executionPlanHash = optStr(body, 'executionPlanHash', type);
       return {
         type,
         problemId: str(body, 'problemId', type),
@@ -191,8 +258,22 @@ function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
         title: str(body, 'title', type),
         body: str(body, 'body', type),
         versionHash: toHash(str(body, 'versionHash', type)),
+        ...(executionPlan === undefined
+          ? {}
+          : {
+              executionPlan: decodeExecutionPlan(
+                obj(body, 'executionPlan', type),
+                `${type}.executionPlan`,
+              ),
+            }),
+        ...(executionPlanHash === undefined
+          ? {}
+          : { executionPlanHash: toHash(executionPlanHash) }),
       };
-    case 'ProposalAmended':
+    }
+    case 'ProposalAmended': {
+      const executionPlan = body['executionPlan'];
+      const executionPlanHash = optStr(body, 'executionPlanHash', type);
       return {
         type,
         version: int(body, 'version', type),
@@ -200,7 +281,19 @@ function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
         body: str(body, 'body', type),
         versionHash: toHash(str(body, 'versionHash', type)),
         rationale: str(body, 'rationale', type),
+        ...(executionPlan === undefined
+          ? {}
+          : {
+              executionPlan: decodeExecutionPlan(
+                obj(body, 'executionPlan', type),
+                `${type}.executionPlan`,
+              ),
+            }),
+        ...(executionPlanHash === undefined
+          ? {}
+          : { executionPlanHash: toHash(executionPlanHash) }),
       };
+    }
     case 'DecisionLinked':
       return {
         type,
@@ -210,6 +303,36 @@ function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
     default:
       throw new WorkspaceCodecError('eventType', `${type} no es un evento de propuesta`);
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Iniciativa
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
+  return {
+    decisionId: payload.decisionId,
+    proposalId: payload.proposalId,
+    proposalVersionHash: payload.proposalVersionHash,
+    decisionResultHash: payload.decisionResultHash,
+    circleId: payload.circleId,
+    executionPlan: encodeExecutionPlan(payload.executionPlan),
+  };
+}
+
+function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload {
+  if (type !== 'InitiativeCreated') {
+    throw new WorkspaceCodecError('eventType', `${type} no es un evento de iniciativa`);
+  }
+  return {
+    type,
+    decisionId: decisionId(str(body, 'decisionId', type)),
+    proposalId: proposalId(str(body, 'proposalId', type)),
+    proposalVersionHash: toHash(str(body, 'proposalVersionHash', type)),
+    decisionResultHash: toHash(str(body, 'decisionResultHash', type)),
+    circleId: circleId(str(body, 'circleId', type)),
+    executionPlan: decodeExecutionPlan(obj(body, 'executionPlan', type), `${type}.executionPlan`),
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -274,5 +397,20 @@ export function decodeProposalEvent(stored: StoredEvent): ChainedInput<ProposalP
     occurredAt: isoToInstant(event.occurredAt),
     actor: event.actor === undefined ? 'system' : memberId(event.actor),
     payload: decodeProposalBody(event.eventType, body),
+  };
+}
+
+export function encodeInitiativeEvent(event: InitiativeEvent): LedgerEventDraft {
+  return encode(event, encodeInitiativeBody);
+}
+
+export function decodeInitiativeEvent(stored: StoredEvent): ChainedInput<InitiativePayload> {
+  const { event, body, id } = decodeEnvelope(stored, INITIATIVE_AGGREGATE_TYPE);
+  return {
+    eventId: eventId(id),
+    aggregateId: initiativeId(event.aggregateId),
+    occurredAt: isoToInstant(event.occurredAt),
+    actor: event.actor === undefined ? 'system' : memberId(event.actor),
+    payload: decodeInitiativeBody(event.eventType, body),
   };
 }

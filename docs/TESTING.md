@@ -258,8 +258,9 @@ Nueve escenarios **obligatorios**. Si uno falla, no hay release.
    → votar desde varias sesiones → cerrar por ventana → computar → ventana de impugnación → ratificar.
    Se afirma: el `resultHash` publicado coincide con el recomputado; las cifras de la `Proof` cuadran
    con las papeletas; `cast` y `represented` se muestran por separado (`E23`).
-2. **Ejecución.** Un acuerdo ratificado aparece en el registro de acuerdos vigentes con su fecha de
-   revisión y sus criterios previos (ADR-0033), y el recordatorio queda programado.
+2. **Ejecución.** La propuesta exige plan previo; cambiar sólo el plan crea otra versión; una decisión
+   aprobada crea exactamente una iniciativa enlazada con fecha y criterios, y el resultado conduce a
+   ella. Abrir y cerrar se recorren también desde la interfaz de facilitación (ADR-0043).
 3. **Inmutabilidad.** Se altera el ledger **por debajo de la aplicación** —`UPDATE` directo sobre el
    payload de un evento intermedio— y la verificación **lo denuncia**: señala el `seq` exacto donde se
    rompe la cadena y la decisión queda en cuarentena. La prueba simétrica es igual de obligatoria: sin

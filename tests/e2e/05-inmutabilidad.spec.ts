@@ -24,6 +24,7 @@ import {
   entorno,
   entrarPorApi,
   marca,
+  planDe,
   requestId,
 } from './ayudas.js';
 
@@ -54,6 +55,7 @@ test.beforeAll(async () => {
       problemaId,
       titulo: 'Pedir que la sala abra hasta las 9 de la noche',
       cuerpo: TEXTO_ORIGINAL,
+      plan: planDe(andres.miembroId),
     },
   });
   expect(propuesta.status(), await propuesta.text()).toBe(201);

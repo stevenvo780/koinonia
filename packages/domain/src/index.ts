@@ -38,6 +38,8 @@ export {
   type Hash,
   type Instant,
   instant,
+  type InitiativeId,
+  initiativeId,
   isHash,
   isMemberId,
   isStrictlySorted,

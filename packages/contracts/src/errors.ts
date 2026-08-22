@@ -80,6 +80,8 @@ export const MENSAJES: Readonly<Record<string, string>> = {
   VERSION_UNCHANGED: 'El texto quedó igual que antes, así que no hay nada nuevo que guardar.',
   NO_RATIONALE:
     'Hay que decir qué cambia y por qué. Sin eso, «versión 2» es un número sin información.',
+  IDEMPOTENCY_KEY_REUSED:
+    'Esa clave ya quedó ligada a otra acción. No se escribió nada nuevo ni se cambió el historial.',
 
   // ── Genéricos ───────────────────────────────────────────────────────────────────────────────
   NO_ENCONTRADO: 'No encontramos eso.',

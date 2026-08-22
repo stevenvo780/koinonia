@@ -1,7 +1,8 @@
 /**
  * ESCENARIO 1 — Gobernanza completa.
  *
- * Problema → evidencia → propuesta → enmienda → abrir decisión → votar → resultado.
+ * Problema → evidencia → propuesta con plan → enmienda → abrir decisión → votar → resultado →
+ * iniciativa.
  * Todo por la interfaz, como lo haría Daniela desde el bus.
  */
 
@@ -95,6 +96,15 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
       'Radicar una petición a la Dirección del Instituto para que la sala de estudio abra hasta ' +
         'las 9:00 p.m. de lunes a viernes. La llave queda a cargo de una comisión estudiantil.',
     );
+  await page
+    .getByLabel('¿Qué debería cambiar si esto sale bien?')
+    .fill(
+      'Quienes estudian en la noche pueden usar la sala hasta las nueve sin quedar en el pasillo.',
+    );
+  await page
+    .getByLabel('¿Qué tendría que pasar para decir que funcionó?')
+    .fill('La sala permanece abierta hasta las nueve durante al menos cuatro semanas seguidas.');
+  await page.getByLabel('¿Dónde lo comprobamos?').fill('Registro semanal de apertura de la sala');
   await page.getByRole('button', { name: 'Guardar la propuesta' }).click();
 
   await expect(
@@ -122,21 +132,17 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /^Versión 2/u })).toBeVisible();
   await expect(page.getByRole('heading', { name: /^Versión 1/u })).toBeVisible();
 
-  // ── 6. Abrir la decisión (lo hace quien facilita, por API: es un encargo) ───────────────────
-  const apiLucia = await apiDirecta(lucia);
-  const abierta = await apiLucia.post('/decisiones', {
-    data: {
-      requestId: requestId(),
-      propuestaId,
-      metodo: 'sociocratic-consent',
-      duracionHoras: 1,
-    },
-  });
-  expect(abierta.status(), await abierta.text()).toBe(201);
-  const decisionId = ((await abierta.json()) as { id: string }).id;
-  await apiLucia.dispose();
+  // ── 6. Abrir la decisión desde la interfaz de facilitación ─────────────────────────────────
+  await ponerSesionEnNavegador(page, lucia);
+  await page.goto(`/propuestas/${propuestaId}`);
+  await page.getByLabel('¿Cómo se toma esta decisión?').selectOption('sociocratic-consent');
+  await page.getByLabel('¿Cuánto tiempo hay para responder?').fill('1');
+  await page.getByRole('button', { name: 'Abrir la decisión' }).click();
+  await expect(page).toHaveURL(/\/decisiones\/[0-9a-f]{32}$/u);
+  const decisionId = page.url().split('/').pop() ?? '';
 
   // ── 7. Votar: «¿Alguien objeta?», no «vote sí o no» ────────────────────────────────────────
+  await ponerSesionEnNavegador(page, daniela);
   await page.goto(`/decisiones/${decisionId}`);
   await expect(page.getByRole('group', { name: '¿Alguien objeta?' })).toBeVisible();
   await expect(
@@ -182,13 +188,11 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
 
   // ── 9. Vencida la ventana, se cierra y sale el resultado con su traza ──────────────────────
   await avanzarReloj(61 * 60 * 1000);
-  const cerrada = await apiLucia2.post(`/decisiones/${decisionId}/cerrar`, {
-    data: { requestId: requestId() },
-  });
-  expect(cerrada.status(), await cerrada.text()).toBe(200);
   await apiLucia2.dispose();
-
-  await page.goto(`/decisiones/${decisionId}/resultado`);
+  await ponerSesionEnNavegador(page, lucia);
+  await page.goto(`/decisiones/${decisionId}`);
+  await page.getByRole('button', { name: 'Cerrar y publicar el resultado' }).click();
+  await expect(page).toHaveURL(`/decisiones/${decisionId}/resultado`);
   await expect(page.getByRole('heading', { level: 1, name: 'Resultado' })).toBeVisible();
   await expect(page.getByText('Aprobada').first()).toBeVisible();
   // La demostración, en castellano y paso por paso.
@@ -198,16 +202,41 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
   await expect(page.getByRole('listitem').filter({ hasText: 'Se manifestaron' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Quiénes participaron' })).toBeVisible();
 
-  // La regla de oro: en toda la pantalla del resultado no aparece ni una palabra de jerga.
-  const texto = (await page.locator('main').innerText()).toLowerCase();
-  for (const prohibida of [
+  // La regla de oro se comprueba sobre el resultado antes de seguir el vínculo a la iniciativa.
+  const jergaProhibida = [
     'blockchain',
     'merkle',
     'hash',
     'event sourcing',
     'condorcet',
     'sociocracia',
-  ]) {
-    expect(texto, `«${prohibida}» no puede aparecer en pantalla`).not.toContain(prohibida);
+  ];
+  const textoResultado = (await page.locator('main').innerText()).toLowerCase();
+  for (const prohibida of jergaProhibida) {
+    expect(textoResultado, `«${prohibida}» no puede aparecer en el resultado`).not.toContain(
+      prohibida,
+    );
+  }
+
+  // Una aprobación que requiere trabajo nunca termina en el resultado: deja un siguiente paso
+  // trazable, todavía provisional durante el periodo de impugnación.
+  await expect(page.getByRole('heading', { level: 2, name: 'El siguiente paso' })).toBeVisible();
+  await page.getByRole('link', { name: 'Ver la iniciativa y cómo se comprobará' }).click();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'El cambio que buscamos' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'Quienes estudian en la noche pueden usar la sala hasta las nueve sin quedar en el pasillo.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByText('Por empezar').first()).toBeVisible();
+  await expect(page.getByText('Registro semanal de apertura de la sala')).toBeVisible();
+
+  const textoIniciativa = (await page.locator('main').innerText()).toLowerCase();
+  for (const prohibida of jergaProhibida) {
+    expect(textoIniciativa, `«${prohibida}» no puede aparecer en la iniciativa`).not.toContain(
+      prohibida,
+    );
   }
 });

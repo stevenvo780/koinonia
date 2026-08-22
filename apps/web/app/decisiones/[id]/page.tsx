@@ -17,12 +17,13 @@
  */
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type SyntheticEvent, type ReactNode } from 'react';
 
 import type { DecisionDetalle } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
+import { PlanEjecucionVisible } from '../../../components/plan-ejecucion';
 import { cuando, enviar, nuevoRequestId, plazo, traer } from '../../../lib/api';
 
 type Postura = 'consent' | 'concern' | 'object';
@@ -31,12 +32,15 @@ type Binario = 'si' | 'no' | 'abstengo';
 export default function Decision(): ReactNode {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const router = useRouter();
   const { sesion } = useSesion();
 
   const [decision, setDecision] = useState<DecisionDetalle | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
   const [errorEnvio, setErrorEnvio] = useState<unknown>(undefined);
   const [enviado, setEnviado] = useState(false);
+  const [errorCierre, setErrorCierre] = useState<unknown>(undefined);
+  const [cerrando, setCerrando] = useState(false);
 
   const [postura, setPostura] = useState<Postura>('consent');
   const [binario, setBinario] = useState<Binario>('si');
@@ -79,6 +83,18 @@ export default function Decision(): ReactNode {
     }
   }
 
+  async function cerrar(): Promise<void> {
+    setErrorCierre(undefined);
+    setCerrando(true);
+    try {
+      await enviar(`/decisiones/${id}/cerrar`, { requestId: nuevoRequestId() });
+      router.push(`/decisiones/${id}/resultado`);
+    } catch (fallo) {
+      setErrorCierre(fallo);
+      setCerrando(false);
+    }
+  }
+
   if (error !== undefined) return <ErrorVisible error={error} />;
   if (decision === undefined) return <Cargando que="la decisión" />;
 
@@ -107,6 +123,8 @@ export default function Decision(): ReactNode {
         </p>
       </section>
 
+      <PlanEjecucionVisible plan={decision.plan} />
+
       {/* Qué hace falta para que esto pase. SIEMPRE, y antes de responder. */}
       <section aria-labelledby="regla-titulo">
         <h2 id="regla-titulo">Qué hace falta para que esto pase</h2>
@@ -131,6 +149,25 @@ export default function Decision(): ReactNode {
         <Aviso tipo="atencion" titulo="Esta votación ya cerró">
           <Link href={`/decisiones/${id}/resultado`}>Ver el resultado y por qué salió eso</Link>.
         </Aviso>
+      )}
+
+      {sesion?.roles.includes('facilitator') && !cerrada && (
+        <section aria-labelledby="cerrar-decision-titulo">
+          <h2 id="cerrar-decision-titulo">Cerrar y publicar el resultado</h2>
+          <p className="suave">
+            Sólo hacelo cuando haya terminado el plazo. Si todavía no se puede cerrar, te vamos a
+            decir por qué sin perder ninguna respuesta escrita.
+          </p>
+          <ErrorVisible error={errorCierre} />
+          <button
+            className="boton secundario"
+            type="button"
+            onClick={() => void cerrar()}
+            disabled={cerrando}
+          >
+            {cerrando ? 'Cerrando…' : 'Cerrar y publicar el resultado'}
+          </button>
+        </section>
       )}
 
       {!cerrada && !decision.puedoDecidir && (

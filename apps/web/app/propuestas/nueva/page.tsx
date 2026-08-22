@@ -7,6 +7,12 @@ import { Suspense, useEffect, useState, type SyntheticEvent, type ReactNode } fr
 import type { ProblemaDetalle, PropuestaDetalle } from '@koinonia/contracts';
 
 import { Aviso, ErrorVisible, useSesion } from '../../../components/marco';
+import {
+  PlanEjecucionFormulario,
+  borradorPlanInicial,
+  convertirPlan,
+  type BorradorPlanEjecucion,
+} from '../../../components/plan-ejecucion';
 import { enviar, nuevoRequestId, traer } from '../../../lib/api';
 
 function Formulario(): ReactNode {
@@ -18,6 +24,7 @@ function Formulario(): ReactNode {
   const [problema, setProblema] = useState<ProblemaDetalle | undefined>(undefined);
   const [titulo, setTitulo] = useState('');
   const [cuerpo, setCuerpo] = useState('');
+  const [plan, setPlan] = useState<BorradorPlanEjecucion>(borradorPlanInicial);
   const [error, setError] = useState<unknown>(undefined);
 
   useEffect(() => {
@@ -28,12 +35,18 @@ function Formulario(): ReactNode {
   async function guardar(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setError(undefined);
+    const planParaEnviar = convertirPlan(plan, sesion?.miembroId);
+    if (planParaEnviar === undefined) {
+      setError(new Error('Entrá con tu correo institucional antes de guardar la propuesta.'));
+      return;
+    }
     try {
       const creada = await enviar<PropuestaDetalle>('/propuestas', {
         requestId: nuevoRequestId(),
         problemaId,
         titulo,
         cuerpo,
+        plan: planParaEnviar,
       });
       router.push(`/propuestas/${creada.id}`);
     } catch (fallo) {
@@ -72,7 +85,7 @@ function Formulario(): ReactNode {
 
       <ErrorVisible error={error} />
 
-      <form onSubmit={(e) => void guardar(e)} noValidate>
+      <form onSubmit={(e) => void guardar(e)}>
         <div className="campo">
           <label htmlFor="titulo">¿Qué se propone, en una frase?</label>
           <span className="ayuda" id="ayuda-titulo">
@@ -110,7 +123,13 @@ function Formulario(): ReactNode {
           />
         </div>
 
-        <button className="boton" type="submit">
+        <PlanEjecucionFormulario
+          value={plan}
+          onChange={setPlan}
+          bloqueado={cargando || sesion === undefined}
+        />
+
+        <button className="boton" type="submit" disabled={cargando || sesion === undefined}>
           Guardar la propuesta
         </button>
       </form>

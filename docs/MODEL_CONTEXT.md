@@ -189,3 +189,32 @@ un implementador entrega errores **dentro** de uno. Sólo el segundo tipo es aut
 `00-contradicciones-resueltas.md` (viven sólo en comentarios de código y nombres de test), y la cifra
 «unos 20» de ese documento y de `TESTING.md` se quedó corta. Registrado como tarea 14 en
 `HANDOFF.md` §7.
+
+## 6. Registro de ruteo — ADR-0043 y primera iniciativa ejecutable
+
+Sesión del 2026-08-21. Los contadores de tokens por subagente no estuvieron expuestos por el runtime;
+se registra `n/d` en lugar de inventarlos. La cuota viva local indicaba margen suficiente de Codex;
+Gemini y MiniMax tenían cuota, pero su transporte no estaba registrado en las herramientas de esta
+sesión.
+
+| TASK | TIPO | MODELO | TOKENS | RESULTADO | TESTS | REINTENTOS | ESCALAMIENTO |
+|---|---|---|---:|---|---|---:|---|
+| Investigación primaria de normativa y patrones | investigación | MiniMax M3 solicitado | n/d | **No ejecutado:** faltó `delegar_a_cloud`; cero respuestas atribuidas al proveedor | — | 0 | Investigación acotada por el agente principal con fuentes oficiales |
+| Dominio `ExecutionPlan` + `Initiative` | implementación crítica | `gpt-5.6-sol`, high | n/d | Entregado | unitarias de dominio + build/pureza | 0 | — |
+| Contratos HTTP | contratos mecánicos | `gpt-5.6-terra`, medium | n/d | Entregado | 6 pruebas de esquemas | 0 | — |
+| Interfaz de plan, resultado e iniciativas | UI completa | `gpt-5.6-terra`, high | n/d | Entregado y corregido tras QA | build web + Playwright + axe | 0 | — |
+| Propiedades del puente propuesta→iniciativa | property-based | `gpt-5.6-terra`, medium | n/d | Entregado | 590 casos generados con semilla fija | 0 | — |
+| Cierre atómico y API de iniciativas | implementación crítica | `gpt-5.6-sol`, high | n/d | Entregado | PostgreSQL real, idempotencia y rollback | 1 | Reabierto después de revisión adversarial |
+| Revisión independiente ADR-0043 | adversarial read-only | Codex nativo, high | n/d | **4 P1 + 2 P2 encontrados; merge bloqueado** | reproducciones de logs y lectura transaccional | 0 | Dos reparaciones Sol separadas por archivos |
+| Invariantes borrador/configuración | reparación de dominio | `gpt-5.6-sol`, high | n/d | Entregado | replay/verifyLog adversarial e histórico | 0 | — |
+| Atomicidad de apertura, colisión y snapshot | reparación API | `gpt-5.6-sol`, high | n/d | Entregado | apertura recuperable, `Promise.all`, colisión/rollback, integridad | 0 | — |
+| QA de UX | revisión estática independiente | Codex nativo | n/d | Halló responsable invisible, controles UI sin E2E, foco artificial e ID de objeción expuesto | cobertura corregida en Playwright y presenter | 0 | MiniMax quedó pendiente por transporte |
+| Segunda revisión de idempotencia compuesta | adversarial read-only | Codex nativo, high | n/d | Halló que una clave previa en el mismo agregado podía volver no-op un append distinto | dos regresiones HTTP + comparación canónica en Event Store | 0 | Reparación inmediata antes de aprobar ADR-0043 |
+| Endurecimiento de replay y enlaces | reparación crítica | Codex nativo | n/d | Entregado | 646 pruebas; claves divergentes 409/rollback; propuesta↔decisión bidireccional | 0 | Suite completa y Chromium repetidos |
+
+**Aprendizaje de ruteo confirmado.** La primera implementación tenía 632 pruebas verdes y aun así la
+revisión adversarial encontró una forma de confirmar un resultado sin su iniciativa propia y una
+mezcla válida de borrador/configuración. Para transacciones políticas multiagregado, un verde funcional
+no sustituye una tarea explícita de «ocupá la reserva, fuerza el segundo append a fallar y demuestra el
+rollback». La segunda revisión añadió otra regla: una clave de idempotencia no identifica el contenido;
+el replay sólo es seguro si el lote completo coincide con lo ya sellado.

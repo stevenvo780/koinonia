@@ -73,24 +73,39 @@ import {
   verifyProposalLog,
   type ProposalVersion,
   currentVersion,
+  createInitiative,
+  type ExecutionPlan,
+  executionPlanHash,
+  initiativeId,
+  type InitiativeState,
+  verifyInitiativeLog,
   versionAt,
   ballotId as toBallotId,
 } from '@koinonia/domain';
 
-import type { PgClient, PgPool } from '../db/client.js';
-import { loadDecisionLog, persistDecisionLog } from '../decision/repository.js';
+import { withTransaction, type PgClient, type PgPool } from '../db/client.js';
+import {
+  loadDecisionLog,
+  persistDecisionLog,
+  persistDecisionLogWithin,
+} from '../decision/repository.js';
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
-import { readAll } from '../ledger/event-store.js';
+import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
 import { verifyLedger, type LedgerVerification } from '../ledger/verify.js';
 import {
   listAggregateIds,
+  loadInitiativeLog,
+  loadInitiativeState,
   loadProblemLog,
   loadProposalLog,
   loadProposalState,
   persistProblemLog,
+  persistInitiativeLogWithin,
   persistProposalLog,
+  persistProposalLogWithin,
   PROBLEM_AGGREGATE_TYPE,
   PROPOSAL_AGGREGATE_TYPE,
+  INITIATIVE_AGGREGATE_TYPE,
 } from '../workspace/repository.js';
 import { allMembers, type MemberRecord, sha256Hex } from './identity.js';
 import type { Ports } from './ports.js';
@@ -145,6 +160,25 @@ async function conCliente<T>(pool: PgPool, fn: (client: PgClient) => Promise<T>)
   const client = await pool.connect();
   try {
     return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
+/** Un unico corte consistente para auditorias largas, sin permitir escrituras accidentales. */
+async function conSnapshotLectura<T>(
+  pool: PgPool,
+  fn: (client: PgClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
   } finally {
     client.release();
   }
@@ -279,6 +313,28 @@ export async function verProblema(deps: ServicioDeps, id: string): Promise<Probl
 // Propuestas
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+interface PlanHttp {
+  readonly objetivo: string;
+  readonly responsableId: string;
+  readonly revisarEn: number;
+  readonly criteriosDeExito: readonly {
+    readonly descripcion: string;
+    readonly fuenteDeVerificacion: string;
+  }[];
+}
+
+function planDeHttp(plan: PlanHttp): ExecutionPlan {
+  return {
+    objective: plan.objetivo,
+    responsibleId: memberId(plan.responsableId),
+    reviewAt: instant(plan.revisarEn),
+    successCriteria: plan.criteriosDeExito.map((criterion) => ({
+      description: criterion.descripcion,
+      evidenceSource: criterion.fuenteDeVerificacion,
+    })),
+  };
+}
+
 export interface PropuestaConId {
   readonly id: string;
   readonly state: ProposalState;
@@ -292,6 +348,7 @@ export async function crearPropuesta(
     readonly problemaId: string;
     readonly titulo: string;
     readonly cuerpo: string;
+    readonly plan: PlanHttp;
   },
 ): Promise<PropuestaConId> {
   // «No se propone sin problema» (PRODUCT §4). Es una regla del motor, no del formulario: se
@@ -311,6 +368,7 @@ export async function crearPropuesta(
       circleId: circulo,
       title: input.titulo,
       body: input.cuerpo,
+      executionPlan: planDeHttp(input.plan),
     },
   );
   await persistProposalLog(deps.pool, log, { requestId: input.requestId });
@@ -331,6 +389,7 @@ export async function enmendarPropuesta(
     readonly titulo: string;
     readonly cuerpo: string;
     readonly motivo: string;
+    readonly plan: PlanHttp;
   },
 ): Promise<PropuestaConId> {
   const log = await conCliente(deps.pool, (c) => loadProposalLog(c, propuestaId));
@@ -338,7 +397,12 @@ export async function enmendarPropuesta(
   const siguiente = await amendProposal(
     log,
     { eventId: nuevoEventId(deps), at: ahora(deps), actor },
-    { title: input.titulo, body: input.cuerpo, rationale: input.motivo },
+    {
+      title: input.titulo,
+      body: input.cuerpo,
+      rationale: input.motivo,
+      executionPlan: planDeHttp(input.plan),
+    },
   );
   await persistProposalLog(deps.pool, siguiente, { requestId: input.requestId });
   return { id: propuestaId, state: await estadoDePropuesta(siguiente) };
@@ -477,105 +541,189 @@ export async function abrirDecision(
     readonly duracionHoras: number;
   },
 ): Promise<DecisionAbierta> {
-  const propuesta = await verPropuesta(deps, input.propuestaId);
-  const circulo = propuesta.state.circleId;
-  if (circulo === undefined) {
-    throw new ServicioError('NO_ENCONTRADO', 404, 'esa propuesta no tiene grupo competente');
-  }
-  // Se autoriza ANTES de congelar el padrón y de hashear nada: abrir una votación es el acto más
-  // caro del sistema, y quien no puede abrirla no debe llegar ni a que se le calcule una semilla.
-  // `linkDecision` vuelve a comprobarlo más abajo: la orden autoriza siempre, la ruta también.
-  authorize(actor, 'decision:open', { kind: 'decision', circleId: circulo });
+  return withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
 
-  const version: ProposalVersion | undefined =
-    input.version === undefined
-      ? currentVersion(propuesta.state)
-      : versionAt(propuesta.state, input.version);
-  if (version === undefined) {
-    throw new ServicioError('NO_ENCONTRADO', 404, 'esa versión de la propuesta no existe');
-  }
+    // `append_request` es el mapeo durable request -> decision. Se consulta antes de generar ids o
+    // semillas nuevas, y se reconstruye la respuesta de apertura (los dos eventos originales), no
+    // el estado mutable que la decision pueda tener cuando llegue un reintento tardio.
+    const previous = await readAppendRequestWithin(client, input.requestId);
+    if (previous !== undefined) {
+      const openedByThisRequest =
+        previous.events.length === 2 &&
+        previous.events[0]?.event.aggregateType === DECISION_AGGREGATE_TYPE &&
+        previous.events[0].event.seq === 0 &&
+        previous.events[0].event.eventType === 'DecisionDrafted' &&
+        previous.events[1]?.event.seq === 1 &&
+        previous.events[1].event.eventType === 'DecisionOpened';
+      if (!openedByThisRequest) {
+        throw new ServicioError(
+          'IDEMPOTENCY_KEY_REUSED',
+          409,
+          'esa clave de idempotencia ya se uso para otra operacion',
+        );
+      }
+      const original = (await loadDecisionLog(client, previous.aggregateId)).slice(0, 2);
+      const state = replay(original);
+      const config = state.config;
+      if (config === undefined) {
+        throw new ServicioError(
+          'INTEGRITY_OPEN_REPLAY_INCOMPLETE',
+          500,
+          'el registro de apertura no contiene la configuracion congelada',
+        );
+      }
+      const sameRequestedOpening =
+        config.proposalId === input.propuestaId &&
+        config.method.kind === input.metodo &&
+        config.window.closesAt - config.window.opensAt === input.duracionHoras * HORA_MS;
+      if (!sameRequestedOpening) {
+        throw new ServicioError(
+          'IDEMPOTENCY_KEY_REUSED',
+          409,
+          'esa clave ya abrió otra propuesta, método o duración; usá una clave nueva',
+        );
+      }
+      const seed = await client.query<{ complete: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM identity.decision_seed
+            WHERE decision_id = $1 AND commitment = $2
+         ) AS complete`,
+        [previous.aggregateId, config.seedCommitment],
+      );
+      const proposal = await loadProposalState(client, config.proposalId);
+      if (
+        input.version !== undefined &&
+        versionAt(proposal, input.version)?.versionHash !== config.proposalVersionHash
+      ) {
+        throw new ServicioError(
+          'IDEMPOTENCY_KEY_REUSED',
+          409,
+          'esa clave ya abrió otra versión de la propuesta; usá una clave nueva',
+        );
+      }
+      const links = proposal.decisions.filter(
+        (link) =>
+          link.decisionId === previous.aggregateId &&
+          link.versionHash === config.proposalVersionHash,
+      );
+      if (seed.rows[0]?.complete !== true || links.length !== 1) {
+        throw new ServicioError(
+          'INTEGRITY_OPEN_REPLAY_INCOMPLETE',
+          500,
+          'la apertura registrada no conserva atomicamente su semilla y enlace de propuesta',
+        );
+      }
+      authorize(actor, 'decision:open', { kind: 'decision', circleId: config.circleId });
+      return { id: previous.aggregateId, state, config };
+    }
 
-  const id = decisionId(deps.ports.random.opaqueId());
-  const at = ahora(deps);
-  const cierre = instant(at + input.duracionHoras * HORA_MS);
+    // La propuesta se recarga despues del cerrojo. Asi no puede enmendarse entre elegir la version
+    // y escribir DecisionLinked, ni un segundo intento puede convertir un estado viejo en un no-op.
+    const propuestaLog = await loadProposalLog(client, input.propuestaId);
+    if (propuestaLog.length === 0) {
+      throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa propuesta');
+    }
+    const propuesta = await verifyProposalLog(propuestaLog);
+    const circulo = propuesta.circleId;
+    if (circulo === undefined) {
+      throw new ServicioError('NO_ENCONTRADO', 404, 'esa propuesta no tiene grupo competente');
+    }
+    authorize(actor, 'decision:open', { kind: 'decision', circleId: circulo });
 
-  // El compromiso de la semilla se publica ANTES de abrir (B.0.3). Se guarda la semilla en la
-  // bóveda, nunca en el historial: si viviera en el historial, el compromiso no comprometería nada.
-  const seedAdmin = toHex(deps.ports.random.bytes(32));
-  const seedCommitment: Hash = await hashText(seedAdmin);
+    const version: ProposalVersion | undefined =
+      input.version === undefined ? currentVersion(propuesta) : versionAt(propuesta, input.version);
+    if (version === undefined) {
+      throw new ServicioError('NO_ENCONTRADO', 404, 'esa versión de la propuesta no existe');
+    }
 
-  const registro = await conCliente(deps.pool, allMembers);
-  const electorate = await congelarPadron(at, registro);
-  if (electorate.censusSize < 1) {
-    throw new ServicioError('SIN_PADRON', 409, 'no hay nadie que pueda decidir todavía');
-  }
+    const id = decisionId(deps.ports.random.opaqueId());
+    const at = ahora(deps);
+    const cierre = instant(at + input.duracionHoras * HORA_MS);
+    const plan = version.executionPlan;
+    const planHash = version.executionPlanHash;
+    if (plan === undefined || planHash === undefined) {
+      throw new ServicioError(
+        'EXECUTION_PLAN_REQUIRED',
+        409,
+        'esta versión es anterior al plan de ejecución obligatorio; enmendala antes de decidir',
+      );
+    }
+    if (plan.reviewAt <= cierre + DEFAULT_CHALLENGE_WINDOW_MS) {
+      throw new ServicioError(
+        'EXECUTION_PLAN_REVIEW_AFTER_CHALLENGE_REQUIRED',
+        409,
+        'la revisión debe quedar después del cierre y del periodo de impugnación',
+      );
+    }
+    const plannedInitiativeId = initiativeId(deps.ports.random.opaqueId());
+    const seedAdmin = toHex(deps.ports.random.bytes(32));
+    const seedCommitment: Hash = await hashText(seedAdmin);
+    const electorate = await congelarPadron(at, await allMembers(client));
+    if (electorate.censusSize < 1) {
+      throw new ServicioError('SIN_PADRON', 409, 'no hay nadie que pueda decidir todavía');
+    }
 
-  const config = await buildDecisionConfig({
-    decisionId: id,
-    proposalId: toProposalId(input.propuestaId),
-    proposalVersionHash: version.versionHash,
-    circleId: circulo,
-    topics: [],
-    options: [optionId(input.propuestaId)],
-    electorate,
-    method: construirMetodo(input.metodo),
-    quorum: construirQuorum(input.metodo, circulo),
-    window: {
-      opensAt: at,
-      closesAt: cierre,
-      timezone: 'America/Bogota',
-      earlyClose: DEFAULT_EARLY_CLOSE,
-      challengeWindow: DEFAULT_CHALLENGE_WINDOW_MS,
-    },
-    privacy: 'public-roll-call',
-    delegation: DELEGATION_DISABLED,
-    seedCommitment,
-    engineVersion: ENGINE_VERSION,
-  });
-
-  // La autorización de abrir la comprueba `linkDecision` (acción `decision:open`, que exige
-  // facilitación Y pertenecer al círculo). Se hace ANTES de escribir nada de la decisión: si el
-  // actor no puede abrir, no queda ni un evento a medias.
-  const propuestaLog = await conCliente(deps.pool, (c) => loadProposalLog(c, input.propuestaId));
-  const propuestaSiguiente = await linkDecision(
-    propuestaLog,
-    { eventId: nuevoEventId(deps), at, actor },
-    { decisionId: id, versionHash: version.versionHash },
-  );
-
-  let log: DecisionLog = await draftDecision([], {
-    eventId: nuevoEventId(deps),
-    at: instant(at - 1),
-    actor: actor.memberId ?? 'system',
-    decisionId: id,
-    draft: {
+    const config = await buildDecisionConfig({
+      decisionId: id,
       proposalId: toProposalId(input.propuestaId),
       proposalVersionHash: version.versionHash,
-      summary: version.title,
-    },
-  });
-  log = await openDecision(log, {
-    eventId: nuevoEventId(deps),
-    at,
-    actor: actor.memberId ?? 'system',
-    config,
-  });
+      circleId: circulo,
+      topics: [],
+      options: [optionId(input.propuestaId)],
+      electorate,
+      method: construirMetodo(input.metodo),
+      quorum: construirQuorum(input.metodo, circulo),
+      window: {
+        opensAt: at,
+        closesAt: cierre,
+        timezone: 'America/Bogota',
+        earlyClose: DEFAULT_EARLY_CLOSE,
+        challengeWindow: DEFAULT_CHALLENGE_WINDOW_MS,
+      },
+      privacy: 'public-roll-call',
+      delegation: DELEGATION_DISABLED,
+      seedCommitment,
+      engineVersion: ENGINE_VERSION,
+    });
+    const propuestaSiguiente = await linkDecision(
+      propuestaLog,
+      { eventId: nuevoEventId(deps), at, actor },
+      { decisionId: id, versionHash: version.versionHash },
+    );
+    let log: DecisionLog = await draftDecision([], {
+      eventId: nuevoEventId(deps),
+      at: instant(at - 1),
+      actor: actor.memberId ?? 'system',
+      decisionId: id,
+      draft: {
+        proposalId: toProposalId(input.propuestaId),
+        proposalVersionHash: version.versionHash,
+        plannedInitiativeId,
+        executionPlanHash: planHash,
+        summary: version.title,
+      },
+    });
+    log = await openDecision(log, {
+      eventId: nuevoEventId(deps),
+      at,
+      actor: actor.memberId ?? 'system',
+      config,
+    });
 
-  await conCliente(deps.pool, async (client) => {
+    // Sin `ON CONFLICT DO NOTHING`: una colision de id implica rollback, nunca reutilizar una
+    // semilla que no corresponde a la configuracion que acabamos de construir.
     await client.query(
       `INSERT INTO identity.decision_seed (decision_id, seed_admin, commitment)
-       VALUES ($1, $2, $3) ON CONFLICT (decision_id) DO NOTHING`,
+       VALUES ($1, $2, $3)`,
       [id, seedAdmin, seedCommitment],
     );
+    await persistDecisionLogWithin(client, log, { requestId: input.requestId });
+    await persistProposalLogWithin(client, propuestaSiguiente, {
+      requestId: uuidDesde(sha256Hex(`${input.requestId}|enlace-de-decision`)),
+    });
+    return { id, state: replay(log), config };
   });
-  await persistDecisionLog(deps.pool, log, { requestId: input.requestId });
-  // Dos agregados, dos claves de idempotencia: reusar la misma haría que el segundo `append` se
-  // interpretara como una repetición del primero y la propuesta nunca quedaría enlazada.
-  await persistProposalLog(deps.pool, propuestaSiguiente, {
-    requestId: uuidDesde(sha256Hex(`${input.requestId}|enlace-de-decision`)),
-  });
-
-  return { id, state: replay(log), config };
 }
 
 /** UUID v4 sintético a partir de una huella. Los `requestId` son claves, no identidades. */
@@ -718,51 +866,228 @@ export async function cerrarDecision(
   actor: Actor,
   decisionIdRaw: string,
   input: { readonly requestId: string },
-): Promise<{ readonly state: DecisionState; readonly resultado: DecisionResult }> {
-  const { log, state } = await verDecision(deps, decisionIdRaw);
-  const config = state.config;
-  if (config === undefined) {
-    throw new ServicioError('ILLEGAL_TRANSITION', 409, 'esa decisión todavía no se ha abierto');
-  }
-  // Cerrar es un acto de procedimiento: `facilitator` o `guarantees`, y del círculo competente.
-  authorize(actor, 'decision:close', { kind: 'decision', circleId: config.circleId });
+): Promise<{
+  readonly state: DecisionState;
+  readonly resultado: DecisionResult;
+  readonly iniciativaId?: string;
+}> {
+  return withTransaction(deps.pool, async (client) => {
+    // La lectura sucede DESPUES del cerrojo. De otro modo dos cierres podrian leer Open, y el
+    // segundo fallaria por CAS en vez de devolver semanticamente el mismo resultado.
+    await lockLedgerWithin(client);
+    const log = await loadDecisionLog(client, decisionIdRaw);
+    if (log.length === 0) {
+      throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa decisión');
+    }
+    const state = replay(log);
+    const config = state.config;
+    if (config === undefined) {
+      throw new ServicioError('ILLEGAL_TRANSITION', 409, 'esa decisión todavía no se ha abierto');
+    }
+    authorize(actor, 'decision:close', { kind: 'decision', circleId: config.circleId });
 
-  const at = ahora(deps);
-  const anticipado = at < config.window.closesAt;
-  if (anticipado) {
-    // A.8.1: el cierre manual exige dos firmas del Círculo de Garantías. En el corte vertical no
-    // hay dos personas de Garantías, así que sencillamente NO se permite cerrar antes de tiempo:
-    // fallar cerrado antes que inventarse una firma.
+    const frozen = await planCongeladoDeDecision(client, state);
+    if (state.resultHash !== undefined) {
+      const resultado = await computeResult(log);
+      const initiative = await iniciativaDeResultado(client, state, resultado, frozen);
+      return {
+        state,
+        resultado,
+        ...(initiative === undefined ? {} : { iniciativaId: initiative.initiativeId }),
+      };
+    }
+
+    const at = ahora(deps);
+    if (at < config.window.closesAt) {
+      throw new ServicioError(
+        'CIERRE_ANTICIPADO_NO_PERMITIDO',
+        409,
+        'la votación cierra cuando dice que cierra. Un cierre anticipado exige dos firmas del ' +
+          'Círculo de Garantías, y eso todavía no existe en esta versión',
+      );
+    }
+
+    let siguiente = await closeDecisionBy(log, {
+      eventId: nuevoEventId(deps),
+      at,
+      actor: actor.memberId ?? 'system',
+      by: actor,
+      cause: 'window',
+    });
+    const resultado = await computeResult(siguiente);
+    siguiente = await recordResult(siguiente, {
+      eventId: nuevoEventId(deps),
+      at,
+      actor: 'system',
+      result: resultado,
+    });
+    let initiative: InitiativeState | undefined;
+    let initiativeLog: Awaited<ReturnType<typeof createInitiative>> | undefined;
+    if (frozen !== undefined) {
+      // El identificador se reservo al abrir. Cualquier historia que ya lo ocupe prueba que la
+      // cardinalidad atomica fue vulnerada; incluso un contenido casualmente igual nacio fuera de
+      // este commit. Se aborta antes de escribir DecisionClosed/ResultComputed.
+      const occupied = await loadInitiativeLog(client, frozen.initiativeId);
+      if (occupied.length !== 0) {
+        throw new ServicioError(
+          'INTEGRITY_RESERVED_INITIATIVE_OCCUPIED',
+          500,
+          'el identificador reservado para la iniciativa ya contiene otra historia',
+        );
+      }
+    }
+    if (resultado.outcome.kind === 'approved' && frozen !== undefined) {
+      initiativeLog = await createInitiative(
+        { eventId: nuevoEventId(deps), at, actor: 'system' },
+        {
+          initiativeId: frozen.initiativeId,
+          outcomeKind: resultado.outcome.kind,
+          decisionId: state.decisionId,
+          proposalId: config.proposalId,
+          proposalVersionHash: config.proposalVersionHash,
+          decisionResultHash: resultado.resultHash,
+          circleId: config.circleId,
+          executionPlan: frozen.plan,
+        },
+      );
+      initiative = await verifyInitiativeLog(initiativeLog);
+      await assertInitiativeMatches(initiative, state, resultado, frozen);
+    }
+
+    // Las dos historias se escriben solo despues de validar plan, reserva, enlaces y hashes. Un
+    // fallo en cualquiera de los appends revierte tambien DecisionClosed/ResultComputed.
+    await persistDecisionLogWithin(client, siguiente, {
+      requestId: uuidDesde(sha256Hex(`${input.requestId}|${decisionIdRaw}|decision-close-v1`)),
+    });
+    if (initiativeLog !== undefined && initiative !== undefined && frozen !== undefined) {
+      await persistInitiativeLogWithin(client, initiativeLog, {
+        requestId: uuidDesde(
+          sha256Hex(
+            `${input.requestId}|${decisionIdRaw}|${frozen.initiativeId}|initiative-create-v1`,
+          ),
+        ),
+      });
+    }
+    return {
+      state: replay(siguiente),
+      resultado,
+      ...(initiative === undefined ? {} : { iniciativaId: initiative.initiativeId }),
+    };
+  });
+}
+
+interface PlanCongeladoDecision {
+  readonly initiativeId: ReturnType<typeof initiativeId>;
+  readonly plan: ExecutionPlan;
+}
+
+async function planCongeladoDeDecision(
+  client: PgClient,
+  state: DecisionState,
+): Promise<PlanCongeladoDecision | undefined> {
+  const draft = state.draft;
+  const planned = draft?.plannedInitiativeId;
+  const planHash = draft?.executionPlanHash;
+  if (planned === undefined && planHash === undefined) return undefined;
+  if (planned === undefined || planHash === undefined || draft === undefined) {
     throw new ServicioError(
-      'CIERRE_ANTICIPADO_NO_PERMITIDO',
-      409,
-      'la votación cierra cuando dice que cierra. Un cierre anticipado exige dos firmas del ' +
-        'Círculo de Garantías, y eso todavía no existe en esta versión',
+      'INTEGRITY_EXECUTION_PLAN_INCOMPLETE',
+      500,
+      'la decisión no conserva juntos el plan y la iniciativa reservada',
     );
   }
+  const config = state.config;
+  if (
+    config === undefined ||
+    draft.proposalId !== config.proposalId ||
+    draft.proposalVersionHash !== config.proposalVersionHash ||
+    state.proposalVersionHash !== config.proposalVersionHash
+  ) {
+    throw new ServicioError(
+      'INTEGRITY_DECISION_PROPOSAL_LINK_MISMATCH',
+      500,
+      'la decision no enlaza de forma consistente la propuesta y su version congelada',
+    );
+  }
+  const proposal = await loadProposalState(client, draft.proposalId);
+  const version = proposal.versions.find((item) => item.versionHash === draft.proposalVersionHash);
+  if (
+    version?.executionPlan === undefined ||
+    version.executionPlanHash === undefined ||
+    version.executionPlanHash !== planHash
+  ) {
+    throw new ServicioError(
+      'INTEGRITY_EXECUTION_PLAN_MISMATCH',
+      500,
+      'el plan congelado por la decisión no coincide con la versión de la propuesta',
+    );
+  }
+  return { initiativeId: planned, plan: version.executionPlan };
+}
 
-  let siguiente = await closeDecisionBy(log, {
-    eventId: nuevoEventId(deps),
-    at,
-    actor: actor.memberId ?? 'system',
-    by: actor,
-    cause: 'window',
-  });
-  const resultado = await computeResult(siguiente);
-  siguiente = await recordResult(siguiente, {
-    eventId: nuevoEventId(deps),
-    at,
-    actor: 'system',
-    result: resultado,
-  });
-  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
-  return { state: replay(siguiente), resultado };
+async function assertInitiativeMatches(
+  initiative: InitiativeState,
+  decision: DecisionState,
+  result: DecisionResult,
+  frozen: PlanCongeladoDecision,
+): Promise<void> {
+  const config = decision.config;
+  if (
+    config === undefined ||
+    result.outcome.kind !== 'approved' ||
+    initiative.initiativeId !== frozen.initiativeId ||
+    initiative.decisionId !== decision.decisionId ||
+    initiative.proposalId !== config.proposalId ||
+    initiative.proposalVersionHash !== config.proposalVersionHash ||
+    initiative.proposalVersionHash !== decision.proposalVersionHash ||
+    initiative.decisionResultHash !== result.resultHash ||
+    initiative.circleId !== config.circleId ||
+    (await executionPlanHash(initiative.executionPlan)) !==
+      (await executionPlanHash(frozen.plan)) ||
+    (await executionPlanHash(frozen.plan)) !== decision.draft?.executionPlanHash
+  ) {
+    throw new ServicioError(
+      'INTEGRITY_INITIATIVE_LINK_MISMATCH',
+      500,
+      'la iniciativa no corresponde exactamente a la reserva, decision, version, resultado y plan',
+    );
+  }
+}
+
+async function iniciativaDeResultado(
+  client: PgClient,
+  decision: DecisionState,
+  result: DecisionResult,
+  frozen: PlanCongeladoDecision | undefined,
+): Promise<InitiativeState | undefined> {
+  if (frozen === undefined) return undefined; // legado anterior a ADR-0043
+  const log = await loadInitiativeLog(client, frozen.initiativeId);
+  if (result.outcome.kind !== 'approved') {
+    if (log.length !== 0) {
+      throw new ServicioError(
+        'INTEGRITY_UNAPPROVED_INITIATIVE',
+        500,
+        'una decisión no aprobada tiene una iniciativa que no debía existir',
+      );
+    }
+    return undefined;
+  }
+  if (log.length === 0) {
+    throw new ServicioError(
+      'INTEGRITY_APPROVED_INITIATIVE_MISSING',
+      500,
+      'la decisión aprobada no tiene su iniciativa atómica',
+    );
+  }
+  const initiative = await loadInitiativeState(client, frozen.initiativeId);
+  await assertInitiativeMatches(initiative, decision, result, frozen);
+  return initiative;
 }
 
 export async function resultadoDeDecision(
   deps: ServicioDeps,
   decisionIdRaw: string,
-): Promise<DecisionResult> {
+): Promise<{ readonly resultado: DecisionResult; readonly iniciativaId?: string }> {
   const { log, state } = await verDecision(deps, decisionIdRaw);
   if (state.closedAt === undefined) {
     throw new ServicioError(
@@ -771,7 +1096,46 @@ export async function resultadoDeDecision(
       'todavía no hay resultado: la votación sigue abierta',
     );
   }
-  return computeResult(log);
+  const resultado = await computeResult(log);
+  return conCliente(deps.pool, async (client) => {
+    const initiative = await iniciativaDeResultado(
+      client,
+      state,
+      resultado,
+      await planCongeladoDeDecision(client, state),
+    );
+    return {
+      resultado,
+      ...(initiative === undefined ? {} : { iniciativaId: initiative.initiativeId }),
+    };
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Iniciativas
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface IniciativaConId {
+  readonly id: string;
+  readonly state: InitiativeState;
+}
+
+export async function listarIniciativas(deps: ServicioDeps): Promise<readonly IniciativaConId[]> {
+  return conCliente(deps.pool, async (client) => {
+    const result: IniciativaConId[] = [];
+    for (const id of await listAggregateIds(client, INITIATIVE_AGGREGATE_TYPE)) {
+      result.push({ id, state: await loadInitiativeState(client, id) });
+    }
+    return result;
+  });
+}
+
+export async function verIniciativa(deps: ServicioDeps, id: string): Promise<IniciativaConId> {
+  return conCliente(deps.pool, async (client) => {
+    const log = await loadInitiativeLog(client, id);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa iniciativa');
+    return { id, state: await loadInitiativeState(client, id) };
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -786,6 +1150,9 @@ export interface VerificacionCompleta {
   readonly propuestasRotas: readonly { readonly id: string; readonly motivo: string }[];
   readonly decisionesVerificadas: number;
   readonly decisionesRotas: readonly { readonly id: string; readonly motivo: string }[];
+  readonly iniciativasVerificadas: number;
+  readonly iniciativasRotas: readonly { readonly id: string; readonly motivo: string }[];
+  readonly ejecucionRotas: readonly { readonly id: string; readonly motivo: string }[];
 }
 
 /**
@@ -796,16 +1163,17 @@ export interface VerificacionCompleta {
  * una bandera verifica la bandera.
  */
 export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCompleta> {
-  return conCliente(deps.pool, async (client) => {
+  return conSnapshotLectura(deps.pool, async (client) => {
     const ledger = await verifyLedger(client);
     const eventos = await readAll(client);
     const desde = eventos[0];
 
     const propuestasRotas: { id: string; motivo: string }[] = [];
+    const proposalStates = new Map<string, ProposalState>();
     let propuestasVerificadas = 0;
     for (const id of await listAggregateIds(client, PROPOSAL_AGGREGATE_TYPE)) {
       try {
-        await loadProposalState(client, id);
+        proposalStates.set(id, await loadProposalState(client, id));
         propuestasVerificadas++;
       } catch (error) {
         propuestasRotas.push({
@@ -816,8 +1184,26 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
     }
 
     const decisionesRotas: { id: string; motivo: string }[] = [];
+    const iniciativasRotas: { id: string; motivo: string }[] = [];
+    const initiativeStates: InitiativeState[] = [];
+    let iniciativasVerificadas = 0;
+    for (const id of await listAggregateIds(client, INITIATIVE_AGGREGATE_TYPE)) {
+      try {
+        initiativeStates.push(await loadInitiativeState(client, id));
+        iniciativasVerificadas++;
+      } catch (error) {
+        iniciativasRotas.push({
+          id,
+          motivo: error instanceof Error ? error.message : 'motivo desconocido',
+        });
+      }
+    }
+
+    const ejecucionRotas: { id: string; motivo: string }[] = [];
     let decisionesVerificadas = 0;
-    for (const id of await listAggregateIds(client, DECISION_AGGREGATE_TYPE)) {
+    const decisionIds = await listAggregateIds(client, DECISION_AGGREGATE_TYPE);
+    const decisionStates = new Map<string, DecisionState>();
+    for (const id of decisionIds) {
       try {
         const log = await loadDecisionLog(client, id);
         await verifyLog(log);
@@ -837,11 +1223,119 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
             continue;
           }
         }
+        const state = replay(log);
+        const config = state.config;
+        if (config !== undefined) {
+          const proposal = proposalStates.get(config.proposalId);
+          const links =
+            proposal?.decisions.filter(
+              (link) =>
+                link.decisionId === state.decisionId &&
+                link.versionHash === config.proposalVersionHash,
+            ) ?? [];
+          if (links.length !== 1) {
+            throw new Error(
+              `la decisión abierta exige exactamente un enlace desde la propuesta y su versión; hay ${String(links.length)}`,
+            );
+          }
+        }
+        decisionStates.set(id, state);
+        const planned = state.draft?.plannedInitiativeId;
+        const planHash = state.draft?.executionPlanHash;
+        if ((planned === undefined) !== (planHash === undefined)) {
+          ejecucionRotas.push({
+            id,
+            motivo: 'la decisión no conserva juntos el plan y la iniciativa reservada',
+          });
+        } else if (planned !== undefined && planHash !== undefined) {
+          const linked = initiativeStates.filter((item) => item.decisionId === state.decisionId);
+          const frozenInitiative = initiativeStates.find((item) => item.initiativeId === planned);
+          if (state.outcomeKind === 'approved') {
+            const initiative = linked[0];
+            if (linked.length !== 1 || initiative === undefined) {
+              ejecucionRotas.push({
+                id,
+                motivo: `una decisión aprobada exige exactamente una iniciativa; hay ${String(linked.length)}`,
+              });
+            } else if (
+              initiative.initiativeId !== planned ||
+              initiative.proposalId !== state.config?.proposalId ||
+              initiative.proposalVersionHash !== state.proposalVersionHash ||
+              initiative.decisionResultHash !== state.resultHash ||
+              initiative.circleId !== state.config.circleId ||
+              (await executionPlanHash(initiative.executionPlan)) !== planHash
+            ) {
+              ejecucionRotas.push({
+                id,
+                motivo: 'la iniciativa no coincide con el id, vínculos o plan congelados',
+              });
+            }
+          } else if (linked.length !== 0 || frozenInitiative !== undefined) {
+            ejecucionRotas.push({
+              id,
+              motivo:
+                'una decisión no aprobada o todavía abierta no puede tener iniciativa, ni ocupar el identificador que reservó',
+            });
+          }
+        }
         decisionesVerificadas++;
       } catch (error) {
         decisionesRotas.push({
           id,
           motivo: error instanceof Error ? error.message : 'motivo desconocido',
+        });
+      }
+    }
+    // La relación se verifica también en sentido inverso. Comprobar sólo decisión → propuesta
+    // permitiría inyectar un `DecisionLinked` hacia una decisión inexistente; comprobar sólo
+    // propuesta → decisión permitiría una apertura huérfana. La cardinalidad legítima es 1 ↔ 1.
+    for (const [proposalId, proposal] of proposalStates) {
+      for (const link of proposal.decisions) {
+        const decision = decisionStates.get(link.decisionId);
+        if (
+          decision?.config === undefined ||
+          decision.config.proposalId !== proposalId ||
+          decision.config.proposalVersionHash !== link.versionHash ||
+          decision.proposalVersionHash !== link.versionHash
+        ) {
+          decisionesRotas.push({
+            id: link.decisionId,
+            motivo:
+              'la propuesta enlaza una decisión inexistente, inválida o abierta sobre otra versión',
+          });
+        }
+      }
+    }
+    for (const initiative of initiativeStates) {
+      const decision = decisionStates.get(initiative.decisionId);
+      if (decision === undefined) {
+        ejecucionRotas.push({
+          id: initiative.initiativeId,
+          motivo: 'la iniciativa enlaza una decision inexistente o cuya historia no es valida',
+        });
+        continue;
+      }
+      const planned = decision.draft?.plannedInitiativeId;
+      const planHash = decision.draft?.executionPlanHash;
+      const config = decision.config;
+      if (
+        decision.outcomeKind !== 'approved' ||
+        planned === undefined ||
+        planHash === undefined ||
+        planned !== initiative.initiativeId ||
+        config === undefined ||
+        initiative.decisionId !== decision.decisionId ||
+        initiative.proposalId !== config.proposalId ||
+        initiative.proposalVersionHash !== config.proposalVersionHash ||
+        initiative.proposalVersionHash !== decision.proposalVersionHash ||
+        initiative.decisionResultHash !== decision.resultHash ||
+        initiative.circleId !== config.circleId ||
+        (await executionPlanHash(initiative.executionPlan)) !== planHash
+      ) {
+        ejecucionRotas.push({
+          id: initiative.initiativeId,
+          motivo:
+            'toda iniciativa exige una decision aprobada que reserve exactamente su id, vinculos, resultado y plan',
         });
       }
     }
@@ -854,6 +1348,9 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
       propuestasRotas,
       decisionesVerificadas,
       decisionesRotas,
+      iniciativasVerificadas,
+      iniciativasRotas,
+      ejecucionRotas,
     };
   });
 }

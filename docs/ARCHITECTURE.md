@@ -182,6 +182,40 @@ Cuatro cosas que no son negociables en ese recorrido:
 Las proyecciones (`projection.*`) son **derivadas y desechables**: si hay que elegir entre el ledger y
 una vista de lectura, gana el ledger siempre. Se borran y se reconstruyen desde `leaf_index = 0`.
 
+### 4.1 De una decisión aprobada a una iniciativa, sin estado intermedio
+
+Desde [ADR-0043](adr/0043-plan-de-ejecucion-congelado-e-iniciativa-atomica.md), una versión nueva de
+propuesta compromete también su plan mínimo de ejecución: objetivo, responsabilidad aceptada, fecha de
+revisión y criterios observables. `proposalVersionHash` identifica **texto y plan**; cambiar cualquiera
+de los dos crea otra versión.
+
+Abrir una decisión es una operación compuesta bajo el mismo cerrojo y transacción: inserta la semilla,
+`DecisionDrafted`/`DecisionOpened` y `DecisionLinked`, o no inserta ninguno. El `requestId` queda como
+mapeo durable al `decisionId`, de modo que perder la respuesta y reintentar recupera exactamente la
+apertura original, sin inventar otra decisión.
+
+El `requestId` no vuelve idempotente a cualquier cosa por el solo hecho de repetirse. El Event Store
+compara agregado, tipo, cantidad y preimagen canónica de cada evento con el lote que esa clave ya
+selló. Si otra orden usó la misma clave —incluso sobre el mismo agregado— responde conflicto y toda la
+transacción retrocede. Esta comparación ocurre tanto bajo el cerrojo como en la carrera de la
+restricción única.
+
+El borrador reserva un `plannedInitiativeId` aleatorio y la huella del plan. El replay exige que
+borrador y configuración coincidan en propuesta y versión; una mezcla fabricada no llega a ser estado.
+Al cerrar con desenlace `approved`, PostgreSQL escribe en un solo commit:
+
+```text
+DecisionClosed + ResultComputed + InitiativeCreated
+```
+
+La reserva debe estar vacía y la iniciativa candidata debe coincidir en identificador, decisión,
+resultado, propuesta, versión, círculo y plan. Cualquier colisión o segundo append fallido revierte
+también el cierre. Los demás desenlaces crean cero iniciativas. El verificador repite esas relaciones
+sobre un snapshot `REPEATABLE READ, READ ONLY`, incluidas dos reglas negativas: una decisión histórica
+sin reserva no puede adquirir ejecución retroactiva y ninguna iniciativa puede apuntar a un resultado
+no aprobado. También recompone la relación `Proposal.DecisionLinked ↔ DecisionConfig` en los dos
+sentidos: ni una decisión huérfana ni un enlace hacia una decisión inexistente pueden dar verde.
+
 ## 5. Separación Governance Ledger / PII Vault
 
 ```mermaid

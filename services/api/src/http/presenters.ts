@@ -14,6 +14,8 @@
 import type {
   DecisionResult,
   DecisionState,
+  ExecutionPlan,
+  InitiativeState,
   MemberId,
   Outcome,
   ProblemState,
@@ -25,6 +27,8 @@ import type {
   DecisionResumen,
   Desenlace,
   Evidencia,
+  IniciativaDetalle,
+  PlanEjecucion,
   PasoTraza,
   ProblemaDetalle,
   ProblemaResumen,
@@ -103,7 +107,20 @@ function versionDto(version: ProposalVersion): VersionPropuesta {
     cuerpo: version.body,
     huella: version.versionHash,
     cuando: version.at,
+    ...(version.executionPlan === undefined ? {} : { plan: planDto(version.executionPlan) }),
     ...(version.rationale === undefined ? {} : { motivo: version.rationale }),
+  };
+}
+
+function planDto(plan: ExecutionPlan): PlanEjecucion {
+  return {
+    objetivo: plan.objective,
+    responsableId: plan.responsibleId,
+    revisarEn: plan.reviewAt,
+    criteriosDeExito: plan.successCriteria.map((criterion) => ({
+      descripcion: criterion.description,
+      fuenteDeVerificacion: criterion.evidenceSource,
+    })),
   };
 }
 
@@ -192,6 +209,7 @@ export function decisionDetalleDto(
   titulo: string,
   cuerpo: string,
   quien: MemberId | undefined,
+  plan?: ExecutionPlan,
 ): DecisionDetalle {
   const config = state.config;
   const enPadron =
@@ -200,6 +218,7 @@ export function decisionDetalleDto(
   return {
     ...decisionResumenDto(id, state, titulo),
     cuerpoVersion: cuerpo,
+    ...(plan === undefined ? {} : { plan: planDto(plan) }),
     puedoDecidir: enPadron && state.status === 'Open',
     ...(respuesta === undefined ? {} : { miRespuesta: respuesta }),
     ...(enPadron
@@ -243,10 +262,24 @@ function pasoDto(step: DecisionResult['proof']['steps'][number]): PasoTraza {
     const valor = step.evidence[clave];
     if (valor !== undefined) datos[clave] = valor;
   }
-  return { id: step.id, explicacion: step.claim, datos };
+  const objeciones = step.evidence['objecionesBloqueantes'];
+  const explicacion =
+    step.id === 'S4' && typeof objeciones === 'number' && objeciones > 0
+      ? objeciones === 1
+        ? 'Queda 1 objeción admitida sin integrar.'
+        : `Quedan ${String(objeciones)} objeciones admitidas sin integrar.`
+      : step.claim;
+  return { id: step.id, explicacion, datos };
 }
 
 function tablaDto(tabla: DecisionResult['proof']['tables'][number]): TablaTraza {
+  if (tabla.title === 'Objeciones' && tabla.columns[0] === 'Objeción') {
+    return {
+      titulo: tabla.title,
+      columnas: ['Referencia', ...tabla.columns.slice(1)],
+      filas: tabla.rows.map((fila, indice) => [`Objeción ${String(indice + 1)}`, ...fila.slice(1)]),
+    };
+  }
   return {
     titulo: tabla.title,
     columnas: [...tabla.columns],
@@ -254,9 +287,10 @@ function tablaDto(tabla: DecisionResult['proof']['tables'][number]): TablaTraza 
   };
 }
 
-export function resultadoDto(resultado: DecisionResult): ResultadoDecision {
+export function resultadoDto(resultado: DecisionResult, iniciativaId?: string): ResultadoDecision {
   return {
     decisionId: resultado.decisionId,
+    ...(iniciativaId === undefined ? {} : { iniciativaId }),
     desenlace: desenlaceDe(resultado.outcome),
     desenlaceEnPalabras: DESENLACE_EN_PALABRAS[desenlaceDe(resultado.outcome)],
     relato: relatoDe(resultado),
@@ -270,5 +304,25 @@ export function resultadoDto(resultado: DecisionResult): ResultadoDecision {
     comprobante: resultado.resultHash,
     comprobanteReglas: resultado.configHash,
     comprobanteLista: resultado.rollHash,
+  };
+}
+
+export function iniciativaDto(id: string, state: InitiativeState): IniciativaDetalle {
+  return {
+    id,
+    decisionId: state.decisionId,
+    propuestaId: state.proposalId,
+    circuloId: state.circleId,
+    objetivo: state.executionPlan.objective,
+    responsableId: state.executionPlan.responsibleId,
+    revisarEn: state.executionPlan.reviewAt,
+    criteriosDeExito: state.executionPlan.successCriteria.map((criterion) => ({
+      descripcion: criterion.description,
+      fuenteDeVerificacion: criterion.evidenceSource,
+    })),
+    estado: state.status,
+    creadaEn: state.createdAt,
+    comprobanteDecision: state.decisionResultHash,
+    comprobanteVersion: state.proposalVersionHash,
   };
 }

@@ -8,10 +8,10 @@
  * Es la única forma de que «consentir un texto es consentir *ese* texto» (A.6 / INV-09) signifique
  * algo: si la V1 pudiera editarse, una papeleta emitida sobre ella no tendría referente.
  *
- * El `versionHash` de cada versión es **el mismo valor** que la `DecisionConfig` congela como
- * `proposalVersionHash`. No es una copia ni una correspondencia por convenio: es el mismo hash,
- * calculado por la misma función. Por eso una papeleta emitida sobre la V1 se invalida sola cuando
- * la decisión pasa a la V2, sin que nadie tenga que acordarse de invalidarla.
+ * El `versionHash` compromete el texto **y el plan de ejecución**, y es el mismo valor que la
+ * `DecisionConfig` congela como `proposalVersionHash`. No es una copia ni una correspondencia por
+ * convenio: es el mismo hash, calculado por la misma función. Por eso una papeleta emitida sobre la
+ * V1 se invalida sola cuando cambia el texto o el plan, sin que nadie tenga que acordarse.
  *
  * ═══ Enmendar es horizontal ═══
  *
@@ -25,6 +25,7 @@ import { hashCanonical } from '../canonical.js';
 import { PreconditionError } from '../errors.js';
 import type { CircleId, DecisionId, EventId, Hash, Instant, MemberId } from '../ids.js';
 import { appendChained, type ChainedEvent, type ChainedLog, verifyChain } from './chain.js';
+import { type ExecutionPlan, executionPlanHash, validateExecutionPlan } from './execution-plan.js';
 import { assertLedgerText, MAX_BODY_LENGTH, MAX_TITLE_LENGTH, meaningfulLength } from './text.js';
 
 export const MIN_PROPOSAL_TITLE_LENGTH = 10;
@@ -40,6 +41,8 @@ export type ProposalPayload =
       readonly title: string;
       readonly body: string;
       readonly versionHash: Hash;
+      readonly executionPlan?: ExecutionPlan;
+      readonly executionPlanHash?: Hash;
     }
   | {
       readonly type: 'ProposalAmended';
@@ -48,6 +51,8 @@ export type ProposalPayload =
       readonly body: string;
       readonly versionHash: Hash;
       readonly rationale: string;
+      readonly executionPlan?: ExecutionPlan;
+      readonly executionPlanHash?: Hash;
     }
   | {
       readonly type: 'DecisionLinked';
@@ -63,6 +68,8 @@ export interface ProposalVersion {
   readonly title: string;
   readonly body: string;
   readonly versionHash: Hash;
+  readonly executionPlan?: ExecutionPlan;
+  readonly executionPlanHash?: Hash;
   readonly by: MemberId;
   readonly at: Instant;
   /** Por qué se enmendó. Ausente sólo en la versión 1, que no enmienda nada. */
@@ -97,23 +104,58 @@ export function initialProposalState(proposalId: string): ProposalState {
 }
 
 /**
- * `versionHash = sha256Hex(jcs({ proposalId, version, title, body }))`.
+ * Para versiones nuevas, `versionHash` incluye `executionPlanHash`. Si el evento histórico no tiene
+ * plan conserva exactamente `sha256Hex(jcs({ proposalId, version, title, body }))`.
  *
- * Es el identificador criptográfico de **este** texto. Cambiar una coma cambia el hash, y con él la
- * versión que una papeleta declara haber visto.
+ * Es el identificador criptográfico de **este** texto y **este** plan. Cambiar una coma, la fecha de
+ * revisión o un criterio cambia el hash, y con él la versión que una papeleta declara haber visto.
  */
 export async function proposalVersionHash(input: {
   readonly proposalId: string;
   readonly version: number;
   readonly title: string;
   readonly body: string;
+  readonly executionPlanHash?: Hash;
 }): Promise<Hash> {
-  return hashCanonical({
+  const historicalPreimage = {
     proposalId: input.proposalId,
     version: input.version,
     title: input.title,
     body: input.body,
-  });
+  };
+  return hashCanonical(
+    input.executionPlanHash === undefined
+      ? historicalPreimage
+      : { ...historicalPreimage, executionPlanHash: input.executionPlanHash },
+  );
+}
+
+function validatePayloadPlan(
+  payload: Extract<ProposalPayload, { type: 'ProposalDrafted' | 'ProposalAmended' }>,
+  createdAt: Instant,
+): void {
+  if ((payload.executionPlan === undefined) !== (payload.executionPlanHash === undefined)) {
+    throw new PreconditionError(
+      'EXECUTION_PLAN_INCOMPLETE',
+      'el plan y su hash deben estar ambos presentes o ambos ausentes en un evento historico',
+    );
+  }
+  if (payload.executionPlan !== undefined) validateExecutionPlan(payload.executionPlan, createdAt);
+}
+
+function validateAcceptedResponsibility(
+  payload: Extract<ProposalPayload, { type: 'ProposalDrafted' | 'ProposalAmended' }>,
+  event: ProposalEvent,
+): void {
+  if (
+    payload.executionPlan !== undefined &&
+    payload.executionPlan.responsibleId !== actorMember(event)
+  ) {
+    throw new PreconditionError(
+      'RESPONSIBILITY_NOT_ACCEPTED',
+      'quien crea la version solo puede asumirse a si mismo como responsable',
+    );
+  }
 }
 
 function actorMember(event: ProposalEvent): MemberId {
@@ -152,6 +194,8 @@ export function applyProposal(state: ProposalState, event: ProposalEvent): Propo
         min: MIN_PROPOSAL_BODY_LENGTH,
         max: MAX_BODY_LENGTH,
       });
+      validatePayloadPlan(payload, event.occurredAt);
+      validateAcceptedResponsibility(payload, event);
       return {
         ...base,
         exists: true,
@@ -164,6 +208,12 @@ export function applyProposal(state: ProposalState, event: ProposalEvent): Propo
             title: payload.title,
             body: payload.body,
             versionHash: payload.versionHash,
+            ...(payload.executionPlan === undefined
+              ? {}
+              : {
+                  executionPlan: payload.executionPlan,
+                  executionPlanHash: payload.executionPlanHash,
+                }),
             by: actorMember(event),
             at: event.occurredAt,
             rationale: undefined,
@@ -203,6 +253,8 @@ export function applyProposal(state: ProposalState, event: ProposalEvent): Propo
         min: MIN_PROPOSAL_BODY_LENGTH,
         max: MAX_BODY_LENGTH,
       });
+      validatePayloadPlan(payload, event.occurredAt);
+      validateAcceptedResponsibility(payload, event);
       if (meaningfulLength(payload.rationale) < MIN_RATIONALE_LENGTH) {
         throw new PreconditionError(
           'NO_RATIONALE',
@@ -219,7 +271,8 @@ export function applyProposal(state: ProposalState, event: ProposalEvent): Propo
       if (
         previous !== undefined &&
         previous.title === payload.title &&
-        previous.body === payload.body
+        previous.body === payload.body &&
+        previous.executionPlanHash === payload.executionPlanHash
       ) {
         throw new PreconditionError(
           'VERSION_UNCHANGED',
@@ -236,6 +289,12 @@ export function applyProposal(state: ProposalState, event: ProposalEvent): Propo
             title: payload.title,
             body: payload.body,
             versionHash: payload.versionHash,
+            ...(payload.executionPlan === undefined
+              ? {}
+              : {
+                  executionPlan: payload.executionPlan,
+                  executionPlanHash: payload.executionPlanHash,
+                }),
             by: actorMember(event),
             at: event.occurredAt,
             rationale: payload.rationale,
@@ -292,11 +351,30 @@ export async function verifyProposalLog(log: ProposalLog): Promise<ProposalState
   await verifyChain(log);
   const state = replayProposal(log);
   for (const version of state.versions) {
+    if ((version.executionPlan === undefined) !== (version.executionPlanHash === undefined)) {
+      throw new PreconditionError(
+        'EXECUTION_PLAN_INCOMPLETE',
+        `la version ${String(version.version)} no conserva juntos el plan y su hash`,
+      );
+    }
+    if (version.executionPlan !== undefined && version.executionPlanHash !== undefined) {
+      validateExecutionPlan(version.executionPlan, version.at);
+      const recomputedPlanHash = await executionPlanHash(version.executionPlan);
+      if (recomputedPlanHash !== version.executionPlanHash) {
+        throw new PreconditionError(
+          'EXECUTION_PLAN_HASH_MISMATCH',
+          `el plan de la version ${String(version.version)} no corresponde a su hash almacenado`,
+        );
+      }
+    }
     const recomputed = await proposalVersionHash({
       proposalId: state.proposalId,
       version: version.version,
       title: version.title,
       body: version.body,
+      ...(version.executionPlanHash === undefined
+        ? {}
+        : { executionPlanHash: version.executionPlanHash }),
     });
     if (recomputed !== version.versionHash) {
       throw new PreconditionError(
@@ -357,14 +435,24 @@ export async function draftProposal(
     readonly circleId: CircleId;
     readonly title: string;
     readonly body: string;
+    readonly executionPlan: ExecutionPlan;
   },
 ): Promise<ProposalLog> {
   authorize(meta.actor, 'proposal:create', { kind: 'proposal', circleId: input.circleId });
+  validateExecutionPlan(input.executionPlan, meta.at);
+  if (input.executionPlan.responsibleId !== meta.actor.memberId) {
+    throw new PreconditionError(
+      'RESPONSIBILITY_NOT_ACCEPTED',
+      'en esta version quien propone solo puede asumirse a si mismo como responsable',
+    );
+  }
+  const planHash = await executionPlanHash(input.executionPlan);
   const versionHash = await proposalVersionHash({
     proposalId: input.proposalId,
     version: 1,
     title: input.title,
     body: input.body,
+    executionPlanHash: planHash,
   });
   return emit([], initialProposalState(input.proposalId), meta, input.proposalId, {
     type: 'ProposalDrafted',
@@ -373,6 +461,8 @@ export async function draftProposal(
     title: input.title,
     body: input.body,
     versionHash,
+    executionPlan: input.executionPlan,
+    executionPlanHash: planHash,
   });
 }
 
@@ -384,6 +474,7 @@ export async function amendProposal(
     readonly title: string;
     readonly body: string;
     readonly rationale: string;
+    readonly executionPlan: ExecutionPlan;
   },
 ): Promise<ProposalLog> {
   const state = replayProposal(log);
@@ -392,12 +483,21 @@ export async function amendProposal(
     ...(state.author === undefined ? {} : { owner: state.author }),
     ...(state.circleId === undefined ? {} : { circleId: state.circleId }),
   });
+  validateExecutionPlan(input.executionPlan, meta.at);
+  if (input.executionPlan.responsibleId !== meta.actor.memberId) {
+    throw new PreconditionError(
+      'RESPONSIBILITY_NOT_ACCEPTED',
+      'en esta version quien enmienda solo puede asumirse a si mismo como responsable',
+    );
+  }
   const version = state.versions.length + 1;
+  const planHash = await executionPlanHash(input.executionPlan);
   const versionHash = await proposalVersionHash({
     proposalId: state.proposalId,
     version,
     title: input.title,
     body: input.body,
+    executionPlanHash: planHash,
   });
   return emit(log, state, meta, state.proposalId, {
     type: 'ProposalAmended',
@@ -406,6 +506,8 @@ export async function amendProposal(
     body: input.body,
     versionHash,
     rationale: input.rationale,
+    executionPlan: input.executionPlan,
+    executionPlanHash: planHash,
   });
 }
 

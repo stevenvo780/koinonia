@@ -58,6 +58,7 @@ import {
   hash as toHash,
   type Instant,
   instant,
+  initiativeId,
   type MemberId,
   memberId,
   type Objection,
@@ -744,14 +745,26 @@ function encDraft(draft: DraftConfig): JsonObject {
   return {
     proposalId: draft.proposalId,
     proposalVersionHash: draft.proposalVersionHash,
+    ...(draft.plannedInitiativeId === undefined
+      ? {}
+      : { plannedInitiativeId: draft.plannedInitiativeId }),
+    ...(draft.executionPlanHash === undefined
+      ? {}
+      : { executionPlanHash: draft.executionPlanHash }),
     summary: draft.summary,
   };
 }
 
 function decDraft(source: JsonObject, path: string): DraftConfig {
+  const plannedInitiativeId = optStr(source, 'plannedInitiativeId', path);
+  const executionPlanHash = optStr(source, 'executionPlanHash', path);
   return {
     proposalId: proposalId(str(source, 'proposalId', path)),
     proposalVersionHash: toHash(str(source, 'proposalVersionHash', path)),
+    ...(plannedInitiativeId === undefined
+      ? {}
+      : { plannedInitiativeId: initiativeId(plannedInitiativeId) }),
+    ...(executionPlanHash === undefined ? {} : { executionPlanHash: toHash(executionPlanHash) }),
     summary: str(source, 'summary', path),
   };
 }

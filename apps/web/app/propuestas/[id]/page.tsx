@@ -11,17 +11,25 @@
  */
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type SyntheticEvent, type ReactNode } from 'react';
 
 import type { PropuestaDetalle } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
+import {
+  PlanEjecucionFormulario,
+  PlanEjecucionVisible,
+  borradorDesdePlan,
+  convertirPlan,
+  type BorradorPlanEjecucion,
+} from '../../../components/plan-ejecucion';
 import { cuando, enviar, nuevoRequestId, traer } from '../../../lib/api';
 
 export default function DetallePropuesta(): ReactNode {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const router = useRouter();
   const { sesion } = useSesion();
 
   const [propuesta, setPropuesta] = useState<PropuestaDetalle | undefined>(undefined);
@@ -31,6 +39,12 @@ export default function DetallePropuesta(): ReactNode {
   const [titulo, setTitulo] = useState('');
   const [cuerpo, setCuerpo] = useState('');
   const [motivo, setMotivo] = useState('');
+  const [plan, setPlan] = useState<BorradorPlanEjecucion>(borradorDesdePlan(undefined));
+  const [metodo, setMetodo] = useState<'simple-majority' | 'sociocratic-consent'>(
+    'simple-majority',
+  );
+  const [duracionHoras, setDuracionHoras] = useState('72');
+  const [errorAbrir, setErrorAbrir] = useState<unknown>(undefined);
 
   const recargar = useCallback(() => {
     traer<PropuestaDetalle>(`/propuestas/${id}`).then(setPropuesta).catch(setError);
@@ -42,6 +56,7 @@ export default function DetallePropuesta(): ReactNode {
     const vigente = propuesta?.versiones.at(-1);
     setTitulo(vigente?.titulo ?? '');
     setCuerpo(vigente?.cuerpo ?? '');
+    setPlan(borradorDesdePlan(vigente?.plan));
     setMotivo('');
     setEnmendando(true);
   }
@@ -49,6 +64,13 @@ export default function DetallePropuesta(): ReactNode {
   async function guardarEnmienda(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setErrorEnmienda(undefined);
+    const planParaEnviar = convertirPlan(plan, sesion?.miembroId);
+    if (planParaEnviar === undefined) {
+      setErrorEnmienda(
+        new Error('Entrá con tu correo institucional antes de guardar esta versión.'),
+      );
+      return;
+    }
     try {
       setPropuesta(
         await enviar<PropuestaDetalle>(`/propuestas/${id}/enmiendas`, {
@@ -56,11 +78,28 @@ export default function DetallePropuesta(): ReactNode {
           titulo,
           cuerpo,
           motivo,
+          plan: planParaEnviar,
         }),
       );
       setEnmendando(false);
     } catch (fallo) {
       setErrorEnmienda(fallo);
+    }
+  }
+
+  async function abrirDecision(evento: SyntheticEvent): Promise<void> {
+    evento.preventDefault();
+    setErrorAbrir(undefined);
+    try {
+      const decision = await enviar<{ id: string }>('/decisiones', {
+        requestId: nuevoRequestId(),
+        propuestaId: propuesta?.id,
+        metodo,
+        duracionHoras: Number(duracionHoras),
+      });
+      router.push(`/decisiones/${decision.id}`);
+    } catch (fallo) {
+      setErrorAbrir(fallo);
     }
   }
 
@@ -96,6 +135,55 @@ export default function DetallePropuesta(): ReactNode {
         </Aviso>
       )}
 
+      {sesion?.roles.includes('facilitator') && propuesta.decisiones.length === 0 && (
+        <section aria-labelledby="abrir-decision-titulo">
+          <h2 id="abrir-decision-titulo">Abrir una decisión</h2>
+          <p className="suave">
+            Antes de abrirla, verificá que el texto y el plan de abajo son los que la comunidad va a
+            considerar. Al abrirla no se cambian después.
+          </p>
+          <ErrorVisible error={errorAbrir} />
+          <form onSubmit={(evento) => void abrirDecision(evento)}>
+            <div className="campo">
+              <label htmlFor="metodo-decision">¿Cómo se toma esta decisión?</label>
+              <select
+                id="metodo-decision"
+                value={metodo}
+                onChange={(evento) => {
+                  setMetodo(evento.target.value as 'simple-majority' | 'sociocratic-consent');
+                }}
+              >
+                <option value="simple-majority">Mayoría simple</option>
+                <option value="sociocratic-consent">Sin objeciones que muestren un daño</option>
+              </select>
+            </div>
+            <div className="campo">
+              <label htmlFor="duracion-decision">¿Cuánto tiempo hay para responder?</label>
+              <span className="ayuda" id="ayuda-duracion-decision">
+                Entre 1 hora y 30 días. Elegí tiempo suficiente para leer y responder sin una
+                reunión.
+              </span>
+              <input
+                id="duracion-decision"
+                type="number"
+                required
+                min={1}
+                max={720}
+                inputMode="numeric"
+                aria-describedby="ayuda-duracion-decision"
+                value={duracionHoras}
+                onChange={(evento) => {
+                  setDuracionHoras(evento.target.value);
+                }}
+              />
+            </div>
+            <button className="boton" type="submit">
+              Abrir la decisión
+            </button>
+          </form>
+        </section>
+      )}
+
       <section aria-labelledby="versiones-titulo">
         <h2 id="versiones-titulo">Historial de versiones</h2>
 
@@ -118,12 +206,17 @@ export default function DetallePropuesta(): ReactNode {
                 </p>
               )}
               <p className="texto">{version.cuerpo}</p>
+              <PlanEjecucionVisible
+                plan={version.plan}
+                titulo="Qué pasa si se aprueba esta versión"
+                nivel="h4"
+              />
               <details>
                 <summary>Ver el comprobante de esta versión</summary>
                 <p className="suave">
-                  Este número identifica <em>exactamente</em> este texto. Si alguien le cambiara una
-                  coma, el número cambiaría y la pantalla de{' '}
-                  <Link href="/verificar">Verificar</Link> lo diría en rojo.
+                  Este número identifica <em>exactamente</em> este texto y el plan que lo acompaña.
+                  Si alguien cambiara una coma, una fecha o un criterio, el número cambiaría y la
+                  pantalla de <Link href="/verificar">Verificar</Link> lo diría en rojo.
                 </p>
                 <code className="comprobante">{version.huella}</code>
               </details>
@@ -137,7 +230,7 @@ export default function DetallePropuesta(): ReactNode {
           <h2 id="enmendar-titulo">Proponer una enmienda</h2>
           {propuesta.esMia ? (
             enmendando ? (
-              <form onSubmit={(e) => void guardarEnmienda(e)} noValidate>
+              <form onSubmit={(e) => void guardarEnmienda(e)}>
                 <div className="campo">
                   <label htmlFor="titulo-enmienda">Título</label>
                   <input
@@ -186,6 +279,7 @@ export default function DetallePropuesta(): ReactNode {
                     }}
                   />
                 </div>
+                <PlanEjecucionFormulario value={plan} onChange={setPlan} prefijo="plan-enmienda" />
                 <button className="boton" type="submit">
                   Guardar la versión nueva
                 </button>{' '}

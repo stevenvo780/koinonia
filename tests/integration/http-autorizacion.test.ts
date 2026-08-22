@@ -25,6 +25,7 @@ import {
   entrar,
   FACILITADORA,
   listo,
+  planDe,
   skipNote,
 } from './helpers/api-env.js';
 
@@ -102,6 +103,7 @@ describe.skipIf(!env.ok)(`autorización de la API${skipNote(env)}`, () => {
         cuerpo:
           'Radicar una petición a la Dirección del Instituto para que la sala de estudio abra ' +
           'hasta las 9:00 p.m. de lunes a viernes, con la vigilancia que la Universidad ya tiene.',
+        plan: planDe(daniela.miembroId),
       },
     });
     expect(propuesta.statusCode).toBe(201);
@@ -187,6 +189,25 @@ describe.skipIf(!env.ok)(`autorización de la API${skipNote(env)}`, () => {
     );
   });
 
+  it('HORIZONTAL — una propuesta no puede imponerle la responsabilidad a otra persona', async () => {
+    const respuesta = await e.app.inject({
+      method: 'POST',
+      url: '/propuestas',
+      headers: como(daniela.testigo),
+      payload: {
+        requestId: req(),
+        problemaId,
+        titulo: 'Una responsabilidad que Daniela no puede imponer',
+        cuerpo:
+          'El texto intenta dejar a otra persona como responsable sin que exista una aceptación ' +
+          'suya, por lo que no debe llegar al historial.',
+        plan: planDe(julian.miembroId),
+      },
+    });
+    expect(respuesta.statusCode).toBe(422);
+    expect(respuesta.json<{ codigo: string }>().codigo).toBe('RESPONSIBILITY_NOT_ACCEPTED');
+  });
+
   it('HORIZONTAL — Julián no puede retirar el aporte de Daniela', async () => {
     const respuesta = await e.app.inject({
       method: 'POST',
@@ -237,6 +258,7 @@ describe.skipIf(!env.ok)(`autorización de la API${skipNote(env)}`, () => {
           'Radicar una petición para que la sala de estudio abra las 24 horas todos los días del ' +
           'año, incluidos festivos y periodos de receso académico.',
         motivo: 'creo que hay que pedir más de lo que pide ella',
+        plan: planDe(julian.miembroId),
       },
     });
     expect(respuesta.statusCode).toBe(403);

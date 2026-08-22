@@ -14,6 +14,38 @@ export {
 } from './chain.js';
 
 export {
+  type ExecutionPlan,
+  executionPlanHash,
+  MAX_EVIDENCE_SOURCE_LENGTH,
+  MAX_EXECUTION_OBJECTIVE_LENGTH,
+  MAX_SUCCESS_CRITERIA,
+  MAX_SUCCESS_DESCRIPTION_LENGTH,
+  MIN_EVIDENCE_SOURCE_LENGTH,
+  MIN_EXECUTION_OBJECTIVE_LENGTH,
+  MIN_SUCCESS_CRITERIA,
+  MIN_SUCCESS_DESCRIPTION_LENGTH,
+  type SuccessCriterion,
+  validateExecutionPlan,
+  validateExecutionPlanStructure,
+} from './execution-plan.js';
+
+export {
+  applyInitiative,
+  createInitiative,
+  type CreateInitiativeInput,
+  currentInitiative,
+  type InitiativeCommandMeta,
+  type InitiativeCreated,
+  type InitiativeEvent,
+  type InitiativeLog,
+  type InitiativePayload,
+  type InitiativeState,
+  type InitiativeStatus,
+  replayInitiative,
+  verifyInitiativeLog,
+} from './initiative.js';
+
+export {
   applyProblem,
   attachEvidence,
   changeProblemStatus,

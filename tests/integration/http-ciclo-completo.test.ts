@@ -22,6 +22,7 @@ import {
   entrar,
   FACILITADORA,
   listo,
+  planDe,
   skipNote,
 } from './helpers/api-env.js';
 
@@ -160,6 +161,7 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
         cuerpo:
           'Esto no debería poder crearse, porque toda propuesta responde a un problema que existe ' +
           'de verdad en el historial.',
+        plan: planDe(daniela.miembroId),
       },
     });
     expect(huerfana.statusCode).toBe(404);
@@ -176,6 +178,7 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
           'Radicar una petición a la Dirección del Instituto para que la sala de estudio abra ' +
           'hasta las 9:00 p.m. de lunes a viernes. La llave y el registro de uso quedan a cargo ' +
           'de una comisión estudiantil.',
+        plan: planDe(daniela.miembroId),
       },
     });
     expect(respuesta.statusCode).toBe(201);
@@ -208,6 +211,11 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
         motivo:
           'Dejar la llave a una comisión estudiantil le traslada a estudiantes una ' +
           'responsabilidad patrimonial que no pueden asumir.',
+        plan: {
+          ...planDe(daniela.miembroId),
+          objetivo:
+            'Conseguir el horario nocturno sin trasladar a estudiantes la custodia patrimonial.',
+        },
       },
     });
     expect(respuesta.statusCode).toBe(201);
@@ -400,6 +408,7 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
     expect(informe.hechosRevisados).toBeGreaterThan(5);
     expect(informe.comprobaciones.map((c: { id: string }) => c.id).sort()).toEqual([
       'cadena',
+      'ejecucion',
       'resultados',
       'textos',
     ]);

@@ -21,6 +21,7 @@ import {
   crearProblemaPorApi,
   entrarPorApi,
   marca,
+  planDe,
   ponerSesionEnNavegador,
   requestId,
 } from './ayudas.js';
@@ -69,6 +70,7 @@ test.beforeAll(async () => {
       cuerpo:
         'Este texto existe para comprobar que sólo su autora puede enmendarlo, y que llamar a la ' +
         'API directamente no cambia esa respuesta.',
+      plan: planDe(daniela.miembroId),
     },
   });
   expect(propuesta.status(), await propuesta.text()).toBe(201);
@@ -171,6 +173,7 @@ test('HORIZONTAL — Julián no puede enmendar la propuesta de Daniela, ni por A
         'Este texto no debería llegar nunca al historial, porque la propuesta la escribió otra ' +
         'persona y enmendar no es una acción de rol, es una acción de autoría.',
       motivo: 'quiero cambiar la propuesta de otra persona sin su permiso',
+      plan: planDe(julian.miembroId),
     },
   });
   expect(respuesta.status()).toBe(403);

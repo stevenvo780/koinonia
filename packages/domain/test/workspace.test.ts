@@ -17,6 +17,7 @@ import {
   appendChained,
   currentVersion,
   draftProposal,
+  executionPlanHash,
   isChainIntact,
   liveEvidence,
   meTooCount,
@@ -55,6 +56,18 @@ const CUERPO =
 const TEXTO_PROPUESTA =
   'Radicar una petición a la Dirección para que la sala abra hasta las 9:00 p.m. de lunes a viernes.';
 
+const PLAN = {
+  objective: 'Conseguir que la sala de estudio extienda su horario nocturno entre semana.',
+  responsibleId: daniela.memberId!,
+  reviewAt: instant(T0 + 30 * 24 * 60 * 60 * 1000),
+  successCriteria: [
+    {
+      description: 'La sala publica y cumple un horario de apertura hasta las nueve de la noche.',
+      evidenceSource: 'Horario oficial publicado por la biblioteca',
+    },
+  ],
+} as const;
+
 async function problemaBase() {
   return openProblem(meta(daniela), {
     problemId: PROBLEMA,
@@ -71,6 +84,7 @@ async function propuestaBase(): Promise<ProposalLog> {
     circleId: CIRCULO,
     title: 'Pedir que la sala abra hasta las 9 de la noche',
     body: TEXTO_PROPUESTA,
+    executionPlan: PLAN,
   });
 }
 
@@ -152,6 +166,7 @@ describe('propuesta y versionado', () => {
       title: 'Pedir que la sala abra hasta las 9 de la noche',
       body: `${TEXTO_PROPUESTA} La vigilancia queda a cargo de la Universidad.`,
       rationale: 'La responsabilidad patrimonial no la pueden asumir estudiantes.',
+      executionPlan: PLAN,
     });
 
     const state = replayProposal(log);
@@ -173,6 +188,7 @@ describe('propuesta y versionado', () => {
       title: 'Otro título para la misma propuesta',
       body: `${TEXTO_PROPUESTA} Con vigilancia institucional.`,
       rationale: 'Se corrige quién custodia la llave, que era el punto de la objeción.',
+      executionPlan: PLAN,
     });
     const state = await verifyProposalLog(log);
     for (const version of state.versions) {
@@ -181,6 +197,9 @@ describe('propuesta y versionado', () => {
         version: version.version,
         title: version.title,
         body: version.body,
+        ...(version.executionPlanHash === undefined
+          ? {}
+          : { executionPlanHash: version.executionPlanHash }),
       });
       expect(recalculado).toBe(version.versionHash);
     }
@@ -193,6 +212,7 @@ describe('propuesta y versionado', () => {
         title: 'Pedir que la sala abra las 24 horas',
         body: `${TEXTO_PROPUESTA} Y además los domingos y festivos, todo el día.`,
         rationale: 'creo que hay que pedir más de lo que pide ella',
+        executionPlan: { ...PLAN, responsibleId: julian.memberId! },
       }),
     ).rejects.toBeInstanceOf(UnauthorizedError);
   });
@@ -204,6 +224,7 @@ describe('propuesta y versionado', () => {
         title: 'Pedir que la sala abra hasta las 10 de la noche',
         body: `${TEXTO_PROPUESTA} Hasta las 10 en lugar de las 9.`,
         rationale: 'porque sí',
+        executionPlan: PLAN,
       }),
     ).rejects.toThrow(/qué cambia y por qué/u);
   });
@@ -215,8 +236,119 @@ describe('propuesta y versionado', () => {
         title: 'Pedir que la sala abra hasta las 9 de la noche',
         body: TEXTO_PROPUESTA,
         rationale: 'Quería corregir una coma y al final la dejé igual que estaba.',
+        executionPlan: PLAN,
       }),
     ).rejects.toThrow(/no hay nada que versionar/u);
+  });
+
+  it('cambiar solo el plan crea una version nueva', async () => {
+    let log = await propuestaBase();
+    const planEnmendado = {
+      ...PLAN,
+      reviewAt: instant(PLAN.reviewAt + 24 * 60 * 60 * 1000),
+    };
+    log = await amendProposal(log, meta(daniela), {
+      title: 'Pedir que la sala abra hasta las 9 de la noche',
+      body: TEXTO_PROPUESTA,
+      rationale: 'La fecha de revisión necesitaba más tiempo para producir evidencia suficiente.',
+      executionPlan: planEnmendado,
+    });
+    const state = await verifyProposalLog(log);
+    expect(state.versions).toHaveLength(2);
+    expect(state.versions[1]?.executionPlanHash).not.toBe(state.versions[0]?.executionPlanHash);
+  });
+
+  it('no permite imponer la responsabilidad a otra persona', async () => {
+    const createdAt = meta(daniela);
+    await expect(
+      draftProposal(createdAt, {
+        proposalId: 'b'.repeat(32),
+        problemId: PROBLEMA,
+        circleId: CIRCULO,
+        title: 'Pedir que la sala abra hasta las 9 de la noche',
+        body: TEXTO_PROPUESTA,
+        executionPlan: { ...PLAN, responsibleId: julian.memberId! },
+      }),
+    ).rejects.toMatchObject({ code: 'RESPONSIBILITY_NOT_ACCEPTED' });
+  });
+
+  it('rechaza un plan incompleto o cuya revision no sea futura', async () => {
+    await expect(
+      draftProposal(meta(daniela), {
+        proposalId: 'c'.repeat(32),
+        problemId: PROBLEMA,
+        circleId: CIRCULO,
+        title: 'Pedir que la sala abra hasta las 9 de la noche',
+        body: TEXTO_PROPUESTA,
+        executionPlan: { ...PLAN, successCriteria: [] },
+      }),
+    ).rejects.toMatchObject({ code: 'EXECUTION_PLAN_CRITERIA_COUNT' });
+
+    const commandMeta = meta(daniela);
+    await expect(
+      draftProposal(commandMeta, {
+        proposalId: 'd'.repeat(32),
+        problemId: PROBLEMA,
+        circleId: CIRCULO,
+        title: 'Pedir que la sala abra hasta las 9 de la noche',
+        body: TEXTO_PROPUESTA,
+        executionPlan: { ...PLAN, reviewAt: commandMeta.at },
+      }),
+    ).rejects.toMatchObject({ code: 'EXECUTION_PLAN_REVIEW_NOT_FUTURE' });
+  });
+
+  it('conserva la preimagen historica sin plan y detecta un hash de plan manipulado', async () => {
+    const historicalVersionHash = await proposalVersionHash({
+      proposalId: 'e'.repeat(32),
+      version: 1,
+      title: 'Pedir que la sala abra hasta las 9 de la noche',
+      body: TEXTO_PROPUESTA,
+    });
+    const historical = await appendChained<ProposalPayload>([], {
+      eventId: eventIdAt(850),
+      aggregateId: 'e'.repeat(32),
+      occurredAt: instant(T0 + 850_000),
+      actor: daniela.memberId!,
+      payload: {
+        type: 'ProposalDrafted',
+        problemId: PROBLEMA,
+        circleId: CIRCULO,
+        title: 'Pedir que la sala abra hasta las 9 de la noche',
+        body: TEXTO_PROPUESTA,
+        versionHash: historicalVersionHash,
+      },
+    });
+    await expect(verifyProposalLog([historical])).resolves.toMatchObject({ exists: true });
+
+    const validPlanHash = await executionPlanHash(PLAN);
+    const manipulatedPlanHash =
+      `${validPlanHash.slice(0, -1)}${validPlanHash.endsWith('0') ? '1' : '0'}` as typeof validPlanHash;
+    const manipulatedVersionHash = await proposalVersionHash({
+      proposalId: 'f'.repeat(32),
+      version: 1,
+      title: 'Pedir que la sala abra hasta las 9 de la noche',
+      body: TEXTO_PROPUESTA,
+      executionPlanHash: manipulatedPlanHash,
+    });
+    const manipulated = await appendChained<ProposalPayload>([], {
+      eventId: eventIdAt(851),
+      aggregateId: 'f'.repeat(32),
+      occurredAt: instant(T0 + 851_000),
+      actor: daniela.memberId!,
+      payload: {
+        type: 'ProposalDrafted',
+        problemId: PROBLEMA,
+        circleId: CIRCULO,
+        title: 'Pedir que la sala abra hasta las 9 de la noche',
+        body: TEXTO_PROPUESTA,
+        versionHash: manipulatedVersionHash,
+        executionPlan: PLAN,
+        executionPlanHash: manipulatedPlanHash,
+      },
+    });
+    await expect(verifyProposalLog([manipulated])).rejects.toMatchObject({
+      code: 'EXECUTION_PLAN_HASH_MISMATCH',
+    });
   });
 });
 

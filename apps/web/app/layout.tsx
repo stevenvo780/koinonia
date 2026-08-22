@@ -46,6 +46,9 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
                 <Link href="/decisiones">Decisiones</Link>
               </li>
               <li>
+                <Link href="/iniciativas">Iniciativas</Link>
+              </li>
+              <li>
                 <Link href="/verificar">Verificar</Link>
               </li>
             </ul>

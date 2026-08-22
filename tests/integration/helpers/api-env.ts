@@ -248,3 +248,26 @@ export async function entrar(
 export function como(testigo: string): Record<string, string> {
   return { authorization: `Bearer ${testigo}` };
 }
+
+/** Plan mínimo para las propuestas de los escenarios HTTP. */
+export function planDe(responsableId: string): {
+  readonly objetivo: string;
+  readonly responsableId: string;
+  readonly revisarEn: number;
+  readonly criteriosDeExito: readonly {
+    readonly descripcion: string;
+    readonly fuenteDeVerificacion: string;
+  }[];
+} {
+  return {
+    objetivo: 'Conseguir que la sala de estudio tenga un horario útil para la jornada nocturna.',
+    responsableId,
+    revisarEn: Date.UTC(2027, 7, 21, 14, 0, 0, 0),
+    criteriosDeExito: [
+      {
+        descripcion: 'La sala abre hasta las nueve de la noche al menos tres días por semana.',
+        fuenteDeVerificacion: 'Horario oficial publicado por el Instituto',
+      },
+    ],
+  };
+}

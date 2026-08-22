@@ -141,6 +141,26 @@ Concentrar delegaciones en dos o tres personas que votan en bloque: peso desprop
 **T-18 · Manipulación del padrón** `A2` facilitación
 Añadir votantes afines o excluir disidentes antes de abrir, o alterar estratos para sesgar un sorteo. **Quién está en el padrón decide el resultado más a menudo que cómo se cuenta** → **Precond.** control del alta o de la base → **Impacto** máximo → **Detectab.** alta si el padrón se congela y su hash se publica → **MVP** padrón congelado al abrir e inmutable (ADR-0025); **hash publicado sólo sobre los `MemberId` ordenados** (C10) y anclado con el checkpoint; **estratos publicados agregados, nunca por miembro** (C10, C11); pertenencia verificable por prueba de inclusión Merkle; toda alta o baja posterior a la apertura queda fuera del proceso, sin excepción → **Después** doble firma del padrón por secretaría y un testigo antes de abrir → **Prueba** `roster.spec.ts::hash_ignora_estratos_y_atributos`, `::estratos_solo_agregados`, `::padron_modificado_invalida_el_hash_anclado`.
 
+**T-27 · Aprobación huérfana o ejecución sustituida** `A2` `A4`
+Persistir el resultado y crear después la iniciativa permite que una caída deje un acuerdo aprobado sin
+ejecución; reutilizar una reserva ya ocupada puede enlazar el trabajo de otra decisión; mezclar el
+borrador de una propuesta con la configuración de otra cambia qué se ejecuta después del voto; tratar
+como replay cualquier clave ya usada sobre el mismo agregado puede saltarse silenciosamente uno de los
+append del commit compuesto →
+**Precond.** escrituras separadas, replay sin vínculo semántico o manipulación directa → **Impacto**
+máximo sobre la mitad ejecutiva: el resultado formal existe pero la obligación acordada no →
+**Detectab.** alta sólo si se verifica cardinalidad y contenido, no sólo cadenas → **MVP** plan dentro
+de `proposalVersionHash`; coincidencia borrador/configuración durante replay; apertura atómica
+semilla+decisión+enlace; reserva aleatoria de iniciativa; cierre `DecisionClosed + ResultComputed +
+InitiativeCreated` en una transacción; replay idempotente sólo ante igualdad del lote canónico;
+reutilización divergente como 409 con rollback; verificación bidireccional de iniciativa y de
+`DecisionLinked` sobre snapshot consistente
+(ADR-0043) → **Después** restricción materializada única por `decisionId` en una proyección reconstruible
+y checkpoint forzado al ratificar → **Prueba**
+`http-iniciativa-atomica.test.ts::{apertura_idempotente,clave_de_enlace_ocupada_revierte,clave_de_cierre_ocupada_revierte,cierre_concurrente,colision_revierte_cierre,iniciativa_historica_es_rechazada,enlace_bidireccional}`,
+`append-concurrente.test.ts::la_misma_clave_con_payload_distinto_se_denuncia` y
+`decision-opening-invariants.test.ts`.
+
 ### 3.4 Privacidad (Information Disclosure)
 
 **T-20 · Correlación votante↔voto por temporización** `A2` `A3`

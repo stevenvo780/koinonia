@@ -340,6 +340,40 @@ fieldset.opciones legend {
   padding: 0 0.375rem;
 }
 
+fieldset.plan-ejecucion {
+  border: 2px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.5rem 1rem 1rem;
+  margin: 1.5rem 0;
+}
+
+fieldset.plan-ejecucion legend {
+  font-weight: 700;
+  padding: 0 0.375rem;
+}
+
+fieldset.plan-ejecucion[disabled] {
+  opacity: 0.72;
+}
+
+.plan-visible {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.875rem 1rem;
+  margin: 1rem 0;
+  background: var(--fondo-suave);
+}
+
+.plan-visible h2,
+.plan-visible h3,
+.plan-visible h4 {
+  margin-top: 0;
+}
+
+.destacado {
+  font-size: 1.1875rem;
+}
+
 .opcion {
   display: flex;
   align-items: flex-start;
@@ -385,6 +419,7 @@ table.datos {
 table.datos th,
 table.datos td {
   border: 1px solid var(--borde);
+  overflow-wrap: anywhere;
   padding: 0.5rem 0.625rem;
   text-align: left;
 }

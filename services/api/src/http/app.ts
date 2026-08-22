@@ -37,11 +37,17 @@ import {
   type Sesion,
   solicitudEnlace as solicitudEnlaceSchema,
 } from '@koinonia/contracts';
-import { DomainError, type MemberId, UnauthorizedError } from '@koinonia/domain';
+import {
+  DomainError,
+  type ExecutionPlan,
+  type MemberId,
+  UnauthorizedError,
+} from '@koinonia/domain';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import type { PgPool } from '../db/client.js';
+import { IdempotencyConflictError } from '../ledger/types.js';
 import { CIRCULOS_LISTA, existeCirculo } from './circles.js';
 import {
   ENLACE_VIGENCIA_MS,
@@ -57,6 +63,7 @@ import type { AuthenticatedMember, Ports } from './ports.js';
 import {
   decisionDetalleDto,
   decisionResumenDto,
+  iniciativaDto,
   problemaDetalleDto,
   problemaResumenDto,
   propuestaDetalleDto,
@@ -75,6 +82,7 @@ import {
   enmendarPropuesta,
   exportarTodo,
   listarDecisiones,
+  listarIniciativas,
   listarProblemas,
   listarPropuestas,
   mePasaLoMismo,
@@ -83,6 +91,7 @@ import {
   ServicioError,
   type ServicioDeps,
   verDecision,
+  verIniciativa,
   verificarTodo,
   verProblema,
   verPropuesta,
@@ -124,6 +133,16 @@ declare module 'fastify' {
 }
 
 function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
+  if (error instanceof IdempotencyConflictError) {
+    return {
+      estado: 409,
+      cuerpo: {
+        codigo: 'IDEMPOTENCY_KEY_REUSED',
+        mensaje: mensajeDe('IDEMPOTENCY_KEY_REUSED'),
+        queHacer: 'Reintentá la acción original o empezá una acción distinta con una clave nueva.',
+      },
+    };
+  }
   if (error instanceof UnauthorizedError) {
     // 401 si falta identidad, 403 si la identidad no alcanza. La diferencia importa: la primera se
     // arregla entrando, la segunda no se arregla de ninguna manera y hay que decirlo.
@@ -558,13 +577,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   // Decisiones
   // ═══════════════════════════════════════════════════════════════════════════════════════════
 
-  async function tituloDeDecision(propuestaId: string, huella: string): Promise<[string, string]> {
+  async function tituloDeDecision(
+    propuestaId: string,
+    huella: string,
+  ): Promise<[string, string, ExecutionPlan | undefined]> {
     try {
       const { state } = await verPropuesta(deps, propuestaId);
       const version = state.versions.find((v) => v.versionHash === huella);
-      return [version?.title ?? 'Un texto que ya no está', version?.body ?? ''];
+      return [
+        version?.title ?? 'Un texto que ya no está',
+        version?.body ?? '',
+        version?.executionPlan,
+      ];
     } catch {
-      return ['Un texto que ya no está', ''];
+      return ['Un texto que ya no está', '', undefined];
     }
   }
 
@@ -584,23 +610,23 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     await cupoDeEscritura(request);
     const cuerpo = parse(abrirDecisionSchema, request.body);
     const abierta = await abrirDecision(deps, actorDe(request), cuerpo);
-    const [titulo, texto] = await tituloDeDecision(
+    const [titulo, texto, plan] = await tituloDeDecision(
       cuerpo.propuestaId,
       abierta.config.proposalVersionHash,
     );
     return await reply
       .status(201)
-      .send(decisionDetalleDto(abierta.id, abierta.state, titulo, texto, idDe(request)));
+      .send(decisionDetalleDto(abierta.id, abierta.state, titulo, texto, idDe(request), plan));
   });
 
   app.get('/decisiones/:id', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const { state } = await verDecision(deps, id);
-    const [titulo, texto] = await tituloDeDecision(
+    const [titulo, texto, plan] = await tituloDeDecision(
       state.config?.proposalId ?? '',
       state.proposalVersionHash ?? '',
     );
-    return decisionDetalleDto(id, state, titulo, texto, idDe(request));
+    return decisionDetalleDto(id, state, titulo, texto, idDe(request), plan);
   });
 
   app.post('/decisiones/:id/papeletas', async (request, reply) => {
@@ -612,13 +638,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       huellaVersion: cuerpo.huellaVersion,
       respuesta: cuerpo.respuesta,
     });
-    const [titulo, texto] = await tituloDeDecision(
+    const [titulo, texto, plan] = await tituloDeDecision(
       emitida.state.config?.proposalId ?? '',
       emitida.state.proposalVersionHash ?? '',
     );
     return await reply
       .status(201)
-      .send(decisionDetalleDto(id, emitida.state, titulo, texto, idDe(request)));
+      .send(decisionDetalleDto(id, emitida.state, titulo, texto, idDe(request), plan));
   });
 
   app.post('/decisiones/:id/cerrar', async (request) => {
@@ -626,12 +652,23 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const cuerpo = parse(z.object({ requestId: z.uuid() }), request.body);
     const cerrada = await cerrarDecision(deps, actorDe(request), id, cuerpo);
-    return resultadoDto(cerrada.resultado);
+    return resultadoDto(cerrada.resultado, cerrada.iniciativaId);
   });
 
   app.get('/decisiones/:id/resultado', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
-    return resultadoDto(await resultadoDeDecision(deps, id));
+    const found = await resultadoDeDecision(deps, id);
+    return resultadoDto(found.resultado, found.iniciativaId);
+  });
+
+  app.get('/iniciativas', async () => {
+    return (await listarIniciativas(deps)).map(({ id, state }) => iniciativaDto(id, state));
+  });
+
+  app.get('/iniciativas/:id', async (request) => {
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const found = await verIniciativa(deps, id);
+    return iniciativaDto(found.id, found.state);
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -660,15 +697,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       {
         id: 'textos',
         queSeComprobo:
-          'Que el texto de cada versión de cada propuesta es exactamente el que estaba cuando se ' +
-          'votó, incluidas las versiones viejas.',
+          'Que el texto y el plan de ejecución de cada versión son exactamente los que estaban ' +
+          'cuando se votó, incluidas las versiones viejas.',
         bien: v.propuestasRotas.length === 0,
         queSignifica:
           v.propuestasRotas.length === 0
             ? `Se revisaron ${String(v.propuestasVerificadas)} propuestas con todas sus versiones. ` +
-              'La versión 1 sigue siendo palabra por palabra la que era, aunque exista una versión 2.'
-            : 'El texto de alguna versión no es el que se votó. Eso invalida las respuestas que se ' +
-              'dieron sobre ella.',
+              'La versión 1 conserva sus palabras, responsable, fecha y criterios, aunque exista una versión 2.'
+            : 'El texto o el plan de alguna versión no es el que se votó. Eso invalida las ' +
+              'respuestas que se dieron sobre ella.',
         ...(v.propuestasRotas.length === 0
           ? {}
           : { detalle: v.propuestasRotas.map((p) => `${p.id}: ${p.motivo}`).join(' · ') }),
@@ -688,6 +725,23 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         ...(v.decisionesRotas.length === 0
           ? {}
           : { detalle: v.decisionesRotas.map((d) => `${d.id}: ${d.motivo}`).join(' · ') }),
+      },
+      {
+        id: 'ejecucion',
+        queSeComprobo:
+          'Que cada decisión aprobada creó exactamente una iniciativa con el plan que se mostró, y ninguna otra decisión la creó.',
+        bien: v.iniciativasRotas.length === 0 && v.ejecucionRotas.length === 0,
+        queSignifica:
+          v.iniciativasRotas.length === 0 && v.ejecucionRotas.length === 0
+            ? `Se revisaron ${String(v.iniciativasVerificadas)} iniciativas y todas conservan el vínculo con su decisión, versión y resultado.`
+            : 'Alguna decisión y su ejecución no corresponden exactamente. La relación entra en cuarentena.',
+        ...(v.iniciativasRotas.length === 0 && v.ejecucionRotas.length === 0
+          ? {}
+          : {
+              detalle: [...v.iniciativasRotas, ...v.ejecucionRotas]
+                .map((item) => `${item.id}: ${item.motivo}`)
+                .join(' · '),
+            }),
       },
     ];
 
@@ -722,6 +776,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const problemas = await listarProblemas(deps);
     const propuestas = await listarPropuestas(deps);
     const decisiones = await listarDecisiones(deps);
+    const iniciativas = await listarIniciativas(deps);
 
     const resumenes = [];
     for (const { id, state } of decisiones) {
@@ -754,9 +809,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       // El estado vacío es la pantalla más importante y la que todos olvidan: es lo único que ve la
       // comunidad el primer día. Aquí se decide, y se decide con un booleano explícito para que la
       // interfaz no tenga que adivinarlo contando ceros.
-      primerDia: problemas.length === 0 && propuestas.length === 0 && decisiones.length === 0,
+      primerDia:
+        problemas.length === 0 &&
+        propuestas.length === 0 &&
+        decisiones.length === 0 &&
+        iniciativas.length === 0,
       problemas: problemas.length,
       propuestas: propuestas.length,
+      iniciativasActivas: iniciativas.length,
       decisionesAbiertas: abiertas,
       ultimasCerradas: cerradas,
       ...(pendiente === undefined
