@@ -92,6 +92,10 @@ export type Action =
   | 'decision:cast-ballot'
   | 'decision:close'
   | 'decision:ratify'
+  | 'deliberation:open'
+  | 'deliberation:contribute'
+  | 'deliberation:advance-stage'
+  | 'deliberation:reveal-authorship'
   | 'initiative:plan'
   | 'task:offer'
   | 'task:reoffer'
@@ -125,6 +129,10 @@ export const ACTIONS: readonly Action[] = [
   'decision:cast-ballot',
   'decision:close',
   'decision:ratify',
+  'deliberation:open',
+  'deliberation:contribute',
+  'deliberation:advance-stage',
+  'deliberation:reveal-authorship',
   'initiative:plan',
   'task:offer',
   'task:reoffer',
@@ -284,6 +292,31 @@ const RULES: Readonly<Record<Action, Rule>> = {
   },
   'decision:ratify': {
     roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: true,
+  },
+  'deliberation:open': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: true,
+  },
+  'deliberation:contribute': CIRCLE_MEMBER,
+  'deliberation:advance-stage': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: true,
+  },
+  'deliberation:reveal-authorship': {
+    roles: ['guarantees'],
     authenticated: true,
     ownerOnly: false,
     subjectOnly: false,
