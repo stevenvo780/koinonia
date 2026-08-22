@@ -10,18 +10,35 @@
  *    carga el historial desde la base, se pliega y se le pregunta al dominio por la autoría: tiene
  *    que negarse otra vez.
  *
- * 3. **¿Se puede sacar la autoría por el historial exportable?** Es la deuda que ADR-0049 dejó
- *    declarada: `ledger:export` es `OPEN` —cualquiera, sin cuenta— y el autor está dentro del hecho.
- *    Acá se comprueba que no sale, que lo retenido se declara, y que el paquete del verificador
- *    independiente sigue diciendo exactamente lo mismo que decía antes de que existiera la
- *    conversación en cuanto la etapa cierra.
+ * 3. **¿Qué pasa con la autoría en el historial exportable?** Sale, y está decidido que salga.
+ *    `ledger:export` es `OPEN` —cualquiera, sin cuenta— y el autor está dentro del hecho, así que un
+ *    export completo entrega la autoría de «perspectivas» sin llegar a rozar la acción denegada. Acá
+ *    se comprueba que el paquete es **completo** y que el verificador independiente lo da por bueno
+ *    con la etapa abierta y con la etapa cerrada, igual que antes de que la conversación existiera.
+ *
+ * ═══ PRUEBAS RETIRADAS: la retención del export (2026-08-22) ═══
+ *
+ * Este fichero probaba lo contrario del punto 3: que los hechos de una deliberación en
+ * «perspectivas» **no** salían del historial público, que lo retenido se declaraba y que el hueco
+ * resultante producía exactamente cuatro hallazgos y ni uno más. Se retiran dos pruebas, con nombre:
+ *
+ *  | Prueba retirada | Qué probaba |
+ *  |---|---|
+ *  | `RETENCIÓN (a): el historial público no entrega la autoría, y declara lo que retiene` | que `/integridad/exportar` omitía los hechos de la conversación y los declaraba en `retenidos` |
+ *  | `RETENCIÓN (a): el paquete del verificador retiene los mismos hechos y los declara` | que `events.ndjson` no traía ni un hecho `deliberation`, que `retenidos.json` listaba 5 hojas, que el manifiesto declaraba `retainedLeafCount: 5`, y que el verificador emitía `HUECO_EN_EL_INDICE`, `CABEZA_INCOHERENTE`, `PUNTERO_COLGANTE` y `COLA_TRUNCADA` |
+ *
+ * No se retiran porque molestaran: se retiran porque **el mecanismo que sostenían ya no existe**. La
+ * segunda es además la que midió el precio y por la que se retira la retención: cuatro rojos en el
+ * verificador independiente, uno de ellos con el nombre de un ataque, a cambio de tapar una autoría
+ * que la API y la pantalla ya no muestran. En su lugar entra una prueba que exige lo contrario —el
+ * paquete completo y el verificador en verde **con la etapa abierta**— y la prueba que ya existía
+ * para después del cierre se conserva, porque ahora dice lo mismo en los dos momentos.
  */
 
 import { buildExport } from '@koinonia/api';
-// Deep imports a propósito: `services/api/src/index.ts` es el escaparate público del paquete y no
-// se toca por dos símbolos que sólo necesita esta prueba. Es el mismo camino que usan las pruebas
-// de `services/api/test`.
-import { deliberacionesRetenidas } from '../../services/api/src/ledger/export.js';
+// Deep import a propósito: `services/api/src/index.ts` es el escaparate público del paquete y no se
+// toca por un símbolo que sólo necesita esta prueba. Es el mismo camino que usan las pruebas de
+// `services/api/test`.
 import { loadDeliberationState } from '../../services/api/src/workspace/repository.js';
 import { type Actor, memberId, readContributionAuthor, UnauthorizedError } from '@koinonia/domain';
 import { memorySource, verificarExport, type TrustRoster } from '@koinonia/verificar';
@@ -125,18 +142,10 @@ describe.skipIf(!env.ok)(`deliberación por HTTP${skipNote(env)}`, () => {
   }
 
   /** El historial público tal como lo descarga cualquiera desde «Verificar integridad». */
-  async function exportPublico(): Promise<{
-    readonly texto: string;
-    readonly retenidos: readonly { readonly conversacion: string; readonly motivo: string }[];
-  }> {
+  async function exportPublico(): Promise<string> {
     const respuesta = await e.app.inject({ method: 'GET', url: '/integridad/exportar' });
     expect(respuesta.statusCode, respuesta.body).toBe(200);
-    return {
-      texto: respuesta.body,
-      retenidos: respuesta.json<{
-        retenidos: { conversacion: string; motivo: string }[];
-      }>().retenidos,
-    };
+    return respuesta.body;
   }
 
   beforeAll(async () => {
@@ -335,72 +344,42 @@ describe.skipIf(!env.ok)(`deliberación por HTTP${skipNote(env)}`, () => {
     }
   });
 
-  it('RETENCIÓN (a): el historial público no entrega la autoría, y declara lo que retiene', async () => {
-    const { texto, retenidos } = await exportPublico();
-
-    // Ni un hecho de la conversación, así que tampoco su autoría. Se comprueba por el tipo de
-    // agregado y por el texto de un aporte: si saliera el hecho, saldría el autor con él.
-    expect(texto).not.toContain('"tipoDeAgregado":"deliberation"');
-    expect(texto).not.toContain('La jornada nocturna entra a las seis');
-
-    expect(retenidos).toHaveLength(1);
-    expect(retenidos[0]?.conversacion).toBe(deliberacionId);
-    expect(retenidos[0]?.motivo).toContain('Perspectivas');
-
-    // Y lo que no tiene nada que ocultar sigue saliendo entero, con su autora: el problema lo
-    // escribió Sara y eso siempre fue público. La retención es de una etapa, no de una persona.
+  it('EL HUECO DECLARADO: con la etapa abierta el historial trae la autoría, y verifica en verde', async () => {
+    // Lo que sustituye a la retención. Son dos afirmaciones y las dos importan:
+    //
+    //  (1) la autoría de «perspectivas» SÍ viaja en el historial descargable. Es un hueco frente a
+    //      quien se baje el fichero entero, está decidido, y la pantalla lo dice con todas las
+    //      letras —`AVISO_AUTORIA_OCULTA`—. Comprobarlo acá es lo que impide que la promesa de la
+    //      pantalla y lo que el servidor entrega se separen sin que nadie se entere;
+    //  (2) el paquete del verificador independiente sale COMPLETO y sus hallazgos son exactamente
+    //      los de antes de que la conversación existiera. Ni un hallazgo nuevo. Esto es lo que la
+    //      retención costaba: cuatro rojos, uno de ellos `COLA_TRUNCADA`.
+    const texto = await exportPublico();
+    expect(texto).toContain('"tipoDeAgregado":"deliberation"');
+    expect(texto).toContain('La jornada nocturna entra a las seis');
+    expect(texto).toContain(julian.miembroId);
     expect(texto).toContain(problemaId);
     expect(texto).toContain(sara.miembroId);
-  });
 
-  it('RETENCIÓN (a): el paquete del verificador retiene los mismos hechos y los declara', async () => {
     const { codigos, paquete } = await hallazgosDelPaquete();
     const eventos = String(paquete.get('events.ndjson'));
     const lineas = eventos
       .split('\n')
       .filter((linea) => linea !== '')
       .map((linea) => JSON.parse(linea) as { aggregateType: string; aggregateId: string });
-    expect(lineas.filter((l) => l.aggregateType === 'deliberation')).toEqual([]);
-    expect(eventos).not.toContain('La jornada nocturna entra a las seis');
-    // La espina SÍ conserva la anotación del nacimiento de la conversación, y tiene que conservarla:
-    // borrarla escondería que existe. Lo retenido es su contenido, no su existencia.
-    expect(eventos).toContain(deliberacionId);
+    expect(lineas.filter((l) => l.aggregateType === 'deliberation').length).toBe(5);
+    expect(eventos).toContain('La jornada nocturna entra a las seis');
 
-    const retenidos = JSON.parse(String(paquete.get('retenidos.json'))) as {
-      retainedLeafIndices: number[];
-      retained: { aggregateId: string; stage: string; motivo: string }[];
-    };
-    expect(retenidos.retained.map((r) => r.aggregateId)).toEqual([deliberacionId]);
-    expect(retenidos.retainedLeafIndices.length).toBe(5);
-    expect(retenidos.retained[0]?.motivo).toContain('no la puede comprobar un tercero');
+    // El paquete ya no declara nada retenido, porque no retiene nada: el fichero se retiró con el
+    // mecanismo. Dejarlo vacío habría sido dejar en el paquete la sombra de una decisión revertida.
+    expect(paquete.has('retenidos.json')).toBe(false);
+    const manifiesto = JSON.parse(String(paquete.get('manifest.json'))) as Record<string, unknown>;
+    expect(manifiesto['retainedLeafCount']).toBeUndefined();
+    expect(manifiesto['eventCount']).toBe(lineas.length);
 
-    // El manifiesto dice cuántos hechos existen y cuántos NO vienen. La resta no la tiene que hacer
-    // quien audita contando líneas.
-    const manifiesto = JSON.parse(String(paquete.get('manifest.json'))) as {
-      eventCount: number;
-      retainedLeafCount: number;
-    };
-    expect(manifiesto.retainedLeafCount).toBe(5);
-
-    // ⚠ EL PRECIO, MEDIDO Y NO ESCONDIDO.
-    //
-    // Un paquete con hechos retenidos tiene huecos en la numeración, y el verificador independiente
-    // los ve. Es exactamente lo que ADR-0049 aceptó al decir que durante Perspectivas «esa
-    // deliberación no es verificable por terceros». Lo que se comprueba acá es que los hallazgos son
-    // SÓLO los que explica la retención declarada en `retenidos.json`, y ni uno más: nada se rompe
-    // en silencio y nada se rompe de más.
-    //
-    // `COLA_TRUNCADA` aparece porque los hechos retenidos son, ahora mismo, los últimos del
-    // historial: el detector de cola cortada no distingue «me lo callo y lo digo» de «me lo llevé».
-    // Enseñarle esa diferencia exige tocar `packages/verifier-cli`, que está fuera de esta tarea, y
-    // queda anotado como lo que es: una deuda con dueño, no un rojo aceptado.
-    const nuevos = [...new Set(codigos.filter((c) => !hallazgosBase.includes(c)))].sort();
-    expect(nuevos).toEqual([
-      'CABEZA_INCOHERENTE',
-      'COLA_TRUNCADA',
-      'HUECO_EN_EL_INDICE',
-      'PUNTERO_COLGANTE',
-    ]);
+    // El veredicto, con la etapa TODAVÍA ABIERTA, es el mismo que antes de que la conversación
+    // existiera. Ni un hallazgo nuevo.
+    expect(codigos).toEqual([...hallazgosBase]);
   });
 
   it('quien no facilita no avanza la etapa, ni por API, y no se escribe nada', async () => {
@@ -418,7 +397,7 @@ describe.skipIf(!env.ok)(`deliberación por HTTP${skipNote(env)}`, () => {
     expect(despues.aportes).toHaveLength(antes.aportes.length);
   });
 
-  it('cerrada la etapa aparece la autoría, y la retención del historial se levanta sola', async () => {
+  it('cerrada la etapa aparece la autoría en la API', async () => {
     const avance = await e.app.inject({
       method: 'POST',
       url: `/deliberaciones/${deliberacionId}/etapa`,
@@ -435,32 +414,27 @@ describe.skipIf(!env.ok)(`deliberación por HTTP${skipNote(env)}`, () => {
     expect(razon?.esMio).toBe(true);
     // Incluida la pregunta de la etapa anterior, que hasta ahora tampoco tenía nombre.
     expect(visto.aportes.find((a) => a.comoSeLlama === 'Pregunta')?.autorId).toBe(sara.miembroId);
-
-    const client = await e.pool.connect();
-    try {
-      expect(await deliberacionesRetenidas(client)).toEqual([]);
-    } finally {
-      client.release();
-    }
   });
 
-  it('RETENCIÓN (a): cerrada la etapa, el historial trae la autoría y el paquete verifica igual que antes', async () => {
-    const { texto, retenidos } = await exportPublico();
-    expect(retenidos).toEqual([]);
+  it('cerrada la etapa, el historial sigue completo y el paquete verifica igual que antes', async () => {
+    const texto = await exportPublico();
     expect(texto).toContain(sara.miembroId);
     expect(texto).toContain(julian.miembroId);
 
     const { codigos, paquete } = await hallazgosDelPaquete();
     expect(String(paquete.get('events.ndjson'))).toContain(deliberacionId);
-    // El veredicto vuelve a ser EXACTAMENTE el que era antes de que la conversación existiera: la
-    // retención no dejó ninguna cicatriz en el paquete.
+    // El mismo veredicto que con la etapa abierta y que antes de que la conversación existiera. Que
+    // el resultado NO dependa de la etapa es justo lo que se ganó: el historial es verificable
+    // siempre, no a ratos.
     expect(codigos).toEqual([...hallazgosBase]);
   });
 
   it('«Verificar integridad» vuelve a armar la conversación entera y lo dice', async () => {
-    // Sin esta fila, una conversación que no se pudiera volver a armar quedaría retenida del
-    // historial público **para siempre y sin alarma**, que es el fallo silencioso que introduce
-    // cualquier retención automática.
+    // La fila existía para que una conversación que no se pudiera volver a armar no quedara
+    // retenida del historial público para siempre y sin alarma. Retirada la retención ya no hay
+    // nada que se caiga en silencio, pero la fila se queda: que el servidor sepa releer y plegar
+    // cada conversación es lo que sostiene la pantalla, y una conversación ilegible tiene que
+    // aparecer en «Verificar integridad» aunque su historial salga entero en el paquete.
     const respuesta = await e.app.inject({ method: 'GET', url: '/integridad' });
     expect(respuesta.statusCode, respuesta.body).toBe(200);
     const informe = respuesta.json<{

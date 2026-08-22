@@ -198,15 +198,27 @@ test('ANTES de cerrar Perspectivas no se ve quién escribió nada, ni a quien fa
     await expect(page.getByText('Todavía no se ve quién lo escribió').first()).toBeVisible();
     await expect(page.getByText(`Lo escribió ${sara.correo.split('@')[0] ?? ''}`)).toHaveCount(0);
     await expect(page.getByText('Lo escribiste vos')).toHaveCount(0);
-    // Y la pantalla dice de quién NO protege: nada de «anónimo» a secas.
+    // Y la pantalla dice de quién NO protege: nada de «anónimo» a secas. Son DOS declaraciones y
+    // las dos tienen que estar: quien administra el servidor, y quien se descargue el historial
+    // completo. La segunda es el precio de haber retirado la retención del export, y se paga en la
+    // cara de quien va a escribir, no en un documento de arquitectura.
     await expect(page.getByText(/administra el servidor/u)).toBeVisible();
+    await expect(page.getByText(/historial completo/u)).toBeVisible();
   }
 
-  // Tampoco sale por la API, ni por el historial que cualquiera puede descargar sin cuenta.
+  // Por la API no sale.
   const api = await apiDirecta(lucia);
   const detalle = await (await api.get(`/deliberaciones/${deliberacionId}`)).text();
   expect(detalle).not.toContain(sara.miembroId);
   expect(detalle).not.toContain(julian.miembroId);
+
+  // Por el historial descargable SÍ sale, y la pantalla acaba de decirlo. Se comprueba para que la
+  // promesa de la pantalla y lo que el servidor entrega no se separen sin que nadie se entere: si
+  // mañana alguien volviera a retener el export, esta línea se pondría roja y habría que decidirlo
+  // otra vez en vez de que pasara solo.
+  const historial = await (await api.get('/integridad/exportar')).text();
+  expect(historial).toContain('"tipoDeAgregado":"deliberation"');
+  expect(historial).toContain(sara.miembroId);
   await api.dispose();
 });
 
@@ -244,11 +256,14 @@ test('DESPUÉS de cerrar la etapa aparece quién escribió cada cosa', async ({ 
   await expect(page.getByText(`Lo escribió ${aliasDeSara}`)).toHaveCount(2);
 });
 
-test('el historial descargable deja de retener la conversación cuando la etapa cierra', async () => {
+test('el historial descargable trae la conversación entera, con quién escribió cada aporte', async () => {
+  // Antes esta prueba se llamaba «deja de retener la conversación cuando la etapa cierra» y
+  // comprobaba que el campo `retenidos` quedaba vacío. El campo ya no existe: el historial es
+  // completo en todas las etapas, no sólo después de cerrar Perspectivas.
   const api = await apiDirecta(julian);
   const texto = await (await api.get('/integridad/exportar')).text();
   expect(texto).toContain('"tipoDeAgregado":"deliberation"');
   expect(texto).toContain(sara.miembroId);
-  expect((JSON.parse(texto) as { retenidos: unknown[] }).retenidos).toEqual([]);
+  expect(texto).not.toContain('"retenidos"');
   await api.dispose();
 });

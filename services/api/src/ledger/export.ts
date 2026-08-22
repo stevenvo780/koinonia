@@ -5,6 +5,25 @@
  * hiciera falta preguntarle algo a esta API, el verificador dejaría de ser independiente y
  * volveríamos a pedirle al acusado que redacte el peritaje.
  *
+ * ═══ El paquete es COMPLETO: no retiene nada, y eso es una decisión ═══
+ *
+ * Hubo aquí una retención: mientras la etapa «perspectivas» de una deliberación siguiera abierta,
+ * sus hechos no salían del paquete —iban con el `authorId` dentro y `ledger:export` es `OPEN`— y un
+ * `retenidos.json` declaraba qué faltaba. Se retiró, y el motivo se midió antes de retirarla: con
+ * hechos retenidos el verificador independiente emite `HUECO_EN_EL_INDICE`, `CABEZA_INCOHERENTE`,
+ * `PUNTERO_COLGANTE` y **`COLA_TRUNCADA`**, y hoy no sabe distinguir «me lo callo y lo digo» de «me
+ * lo llevé». Es decir: la retención se pagaba con la verificabilidad del historial, que es la tesis
+ * entera del producto —«nadie puede modificar silenciosamente la historia colectiva»—, y la pagaba
+ * con la moneda peor: enseñándole a quien audita a tolerar cuatro rojos. Ocultar la autoría de una
+ * etapa no vale eso.
+ *
+ * Lo que queda en su lugar no es nada: `deliberation:read-authorship` sigue denegada durante
+ * «perspectivas», así que la pantalla y la API siguen sin decir quién escribió, que es la protección
+ * **frente a los pares** y el objetivo de producto real. Lo que se acepta es que quien descargue el
+ * historial completo sí puede leer la autoría, y **la pantalla lo dice** (ADR-0049, corrección de
+ * 2026-08-22). Es un hueco declarado, no una garantía fingida: la misma doctrina que el proyecto
+ * aplica al secreto del voto.
+ *
  * Tres detalles que no son de conveniencia:
  *
  *  - Se exporta `next_leaf_index` del cursor. Sin él, **el truncamiento de la cola es indetectable**:
@@ -26,7 +45,6 @@ import {
   sha256,
   toHex,
 } from '@koinonia/crypto';
-import { type DeliberationStage, ruleFor } from '@koinonia/domain';
 import {
   BITCOIN_HEADERS_FILE,
   CHECKPOINTS_FILE,
@@ -45,11 +63,6 @@ import {
 } from '@koinonia/verificar';
 
 import { toBigInt, toHash32, type PgClient } from '../db/client.js';
-import {
-  DELIBERATION_AGGREGATE_TYPE,
-  listAggregateIds,
-  loadDeliberationState,
-} from '../workspace/repository.js';
 import { readAllHeads } from './event-store.js';
 import { SPINE_AGGREGATE_ID } from './types.js';
 
@@ -120,89 +133,6 @@ interface FilaCabecera {
 
 const UTF8 = new TextEncoder();
 
-/** Fichero que declara lo que este paquete **no** trae, y por qué. */
-export const RETAINED_FILE = 'retenidos.json';
-
-/**
- * ¿Esta etapa oculta todavía quién escribió cada aporte?
- *
- * Se **deriva de la matriz** (`ruleFor('deliberation:read-authorship').deniedDuringStage`), nunca de
- * una copia de la palabra `perspectivas`. Si mañana la regla cambiara de etapa —o dejara de tener
- * alcance temporal— la retención cambia con ella. Una constante repetida aquí sería la segunda
- * fuente de verdad que ADR-0049 evitó a propósito al meter la regla en la tabla de acceso.
- */
-export function ocultaLaAutoria(stage: DeliberationStage): boolean {
-  return ruleFor('deliberation:read-authorship').deniedDuringStage === stage;
-}
-
-/** Una deliberación cuyos hechos se retienen, con el motivo dicho para quien lo lea. */
-export interface DeliberacionRetenida {
-  readonly aggregateId: string;
-  readonly stage: DeliberationStage;
-  readonly motivo: string;
-}
-
-export const MOTIVO_RETENCION =
-  'La etapa Perspectivas de esta conversación sigue abierta. Sus hechos llevan dentro quién ' +
-  'escribió cada aporte, y ese dato no se lee hasta que la etapa cierre. No se puede publicar el ' +
-  'hecho sin el autor —el autor forma parte de lo que se firmó, así que un hecho sin él no ' +
-  'comprobaría—, de modo que se retiene entero. Mientras tanto ESTA conversación no la puede ' +
-  'comprobar un tercero; todo lo demás del historial sí. Al cerrar la etapa aparece completa.';
-
-/**
- * Qué hay que retener del historial público, y por qué.
- *
- * ═══ La deuda que cierra ═══
- *
- * `ledger:read` y `ledger:export` son `OPEN` en la matriz de acceso: cualquiera, sin cuenta. Como
- * ADR-0049 dejó el `authorId` dentro del evento —para que el replay pueda reejecutar la
- * autorización—, exportar el historial mientras `perspectivas` sigue abierta entregaría la autoría
- * **sin llegar a rozar** la acción denegada. La regla de etapa cierra la API; no cierra el export.
- *
- * ═══ Por qué se retiene el hecho entero y no se le borra el autor ═══
- *
- * El `actor` del sobre y el `authorId` del cuerpo entran los dos en la preimagen del hash
- * (`packages/domain/src/workspace/chain.ts`, `chainedBody`). Un hecho publicado sin su autor **no
- * verifica**: el verificador independiente lo denunciaría como registro alterado, que es lo mismo
- * que denunciaría si alguien lo hubiera manipulado de verdad. Un sistema que enseña a su auditoría a
- * ignorar un rojo deja de tener auditoría. Así que el hecho no se recorta: se retiene, y se dice.
- *
- * ═══ Lo que esto cuesta, dicho aquí y no escondido ═══
- *
- * Un paquete con hechos retenidos **no es completo**, y el verificador independiente lo nota: le
- * faltan hojas en la numeración. Es el precio declarado —«durante `perspectivas` esa deliberación no
- * es verificable por terceros»— y por eso el paquete trae `retenidos.json`, que dice exactamente qué
- * falta, de qué conversación y hasta cuándo. Un hueco explicado es una decisión; un hueco callado
- * sería la manipulación que este proyecto existe para hacer imposible.
- */
-export async function deliberacionesRetenidas(
-  client: PgClient,
-): Promise<readonly DeliberacionRetenida[]> {
-  const retenidas: DeliberacionRetenida[] = [];
-  for (const id of await listAggregateIds(client, DELIBERATION_AGGREGATE_TYPE)) {
-    let stage: DeliberationStage;
-    try {
-      stage = (await loadDeliberationState(client, id)).stage;
-    } catch {
-      // Un historial que no se puede plegar tampoco se puede clasificar. Se retiene: fallar cerrado
-      // es la misma regla que aplica `authorize` cuando le falta un dato. Su rotura la denuncia por
-      // su cuenta la pantalla de integridad, que es donde tiene que verse.
-      retenidas.push({
-        aggregateId: id,
-        stage: 'perspectivas',
-        motivo:
-          'El historial de esta conversación no se pudo leer completo, así que no se puede saber ' +
-          'si su etapa todavía oculta quién escribió cada aporte. Se retiene por precaución.',
-      });
-      continue;
-    }
-    if (ocultaLaAutoria(stage)) {
-      retenidas.push({ aggregateId: id, stage, motivo: MOTIVO_RETENCION });
-    }
-  }
-  return retenidas;
-}
-
 export async function buildExport(client: PgClient, options: ExportOptions): Promise<ExportBundle> {
   const ficheros = new Map<string, string | Uint8Array>();
 
@@ -213,29 +143,16 @@ export async function buildExport(client: PgClient, options: ExportOptions): Pro
        FROM governance.event ORDER BY governance.event.leaf_index ASC`,
   );
 
-  const retenidas = await deliberacionesRetenidas(client);
-  const idsRetenidos = new Set(retenidas.map((r) => r.aggregateId));
-
   const lineasEventos: string[] = [];
   const lineasHashes: string[] = [];
   const hashesDeEventos: Uint8Array[] = [];
-  const hojasRetenidas: number[] = [];
 
   for (const fila of eventos) {
     const leafIndex = toBigInt(fila.leaf_index, 'event.leaf_index');
     const actor = fila.actor === null ? undefined : fila.actor.trimEnd();
     const aggregateId = fila.aggregate_id.trimEnd();
 
-    // El resumen del hecho retenido SÍ entra al árbol: los sellos periódicos y las pruebas de
-    // continuidad se calculan sobre el historial completo, que es lo que hay en la base. Recortarlo
-    // aquí produciría raíces que no cuadran con ningún sello y convertiría una retención declarada
-    // en una manipulación indistinguible de la de verdad.
     hashesDeEventos.push(toHash32(fila.event_hash, 'event.event_hash'));
-
-    if (idsRetenidos.has(aggregateId)) {
-      hojasRetenidas.push(Number(leafIndex));
-      continue;
-    }
 
     // El payload va como TEXTO canónico exacto: es lo que se hasheó. Reserializarlo desde un objeto
     // parseado daría el mismo resultado sólo si el canonicalizador es correcto, y precisamente eso
@@ -267,22 +184,6 @@ export async function buildExport(client: PgClient, options: ExportOptions): Pro
 
   ficheros.set(EVENTS_FILE, terminar(lineasEventos));
   ficheros.set(EVENT_HASHES_FILE, terminar(lineasHashes));
-
-  // El paquete dice lo que NO trae. Va siempre, aunque esté vacío: un fichero que sólo aparece
-  // cuando hay algo que ocultar enseña a quien audita que su ausencia es buena señal, y entonces
-  // borrarlo se convierte en una forma de esconder.
-  ficheros.set(
-    RETAINED_FILE,
-    `${canonicalize({
-      retainedLeafIndices: hojasRetenidas,
-      retained: retenidas.map((r) => ({
-        aggregateId: r.aggregateId,
-        aggregateType: DELIBERATION_AGGREGATE_TYPE,
-        stage: r.stage,
-        motivo: r.motivo,
-      })),
-    })}\n`,
-  );
 
   // ── Censo de cabezas ───────────────────────────────────────────────────────────────────────
   const cabezas = await readAllHeads(client);
@@ -412,10 +313,10 @@ export async function buildExport(client: PgClient, options: ExportOptions): Pro
     `${canonicalize({
       formatVersion: EXPORT_FORMAT_VERSION,
       generatedAt: options.generatedAt,
-      // Los hechos que EXISTEN, no los que este paquete trae. La diferencia con `retainedLeafCount`
-      // es la retención, y se declara para que nadie tenga que restar líneas para darse cuenta.
+      // Los hechos que existen y los que el paquete trae son el MISMO número. Aquí hubo un
+      // `retainedLeafCount` mientras el export retuvo deliberaciones; retirada la retención, la
+      // resta no existe y declararla en cero sería dejar en el manifiesto la sombra de un mecanismo.
       eventCount: eventos.length,
-      retainedLeafCount: hojasRetenidas.length,
       ...(ultimo === undefined
         ? {}
         : { lastLeafIndex: Number(toBigInt(ultimo.leaf_index, 'event.leaf_index')) }),

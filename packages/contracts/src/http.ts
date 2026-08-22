@@ -961,11 +961,20 @@ export function clavesDeAporte(reglas: {
  * Está aquí y no en la web porque **es una obligación de ADR-0049**, no una redacción: la protección
  * es frente a las demás personas que participan, y **no** frente a quien administra el servidor. Un
  * cliente que dijera «anónimo» a secas estaría prometiendo algo que el sistema no da.
+ *
+ * La tercera frase se añadió al retirar la retención del historial descargable (ADR-0049,
+ * corrección de 2026-08-22). El export volvió a ser completo porque retenerlo rompía la
+ * verificabilidad del historial entero, y la consecuencia —que la autoría de esta etapa sí viaja
+ * dentro del historial que cualquiera puede bajar— **se declara aquí, en la misma pantalla que
+ * promete lo otro**. Es la doctrina que el proyecto ya aplica al secreto del voto: se dice de qué
+ * protege y de qué no, en la cara, y no en un ADR que nadie va a leer.
  */
 export const AVISO_AUTORIA_OCULTA =
   'Mientras esta etapa esté abierta, nadie ve quién escribió cada cosa: ni vos, ni quien cuida el ' +
   'procedimiento. Al cerrarla aparecen los nombres, incluido el tuyo. Esto te protege de las demás ' +
-  'personas que participan, no de quien administra el servidor, que sí puede verlo en la máquina.';
+  'personas que participan, no de quien administra el servidor, que sí puede verlo en la máquina. ' +
+  'Y quien descargue el historial completo desde «Verificar» sí puede ver quién escribió cada ' +
+  'aporte: eso se dejó así para que el historial se pueda comprobar entero.';
 
 export const AVISO_AUTORIA_VISIBLE =
   'Esta etapa ya cerró, así que cada aporte se muestra con quien lo escribió. Lo que se escribió ' +

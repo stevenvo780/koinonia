@@ -243,3 +243,74 @@ sin nota es una garantía que desaparece sin nota:
 En su lugar entran 22 pruebas nuevas: la regla de etapa con todos los roles, la revalidación de
 autoría en el replay, el tope anti-inundación por persona y por etapa, la ausencia de alcance
 temporal en el resto de la matriz y la alcanzabilidad del agregado desde `@koinonia/domain`.
+
+---
+
+## Corrección de 2026-08-22: se retira la retención del historial exportable
+
+> Esta sección **añade**; no borra nada de lo anterior. Lo de arriba se lee tal como se escribió, y
+> esto dice qué se hizo después con la deuda que quedó declarada en «Qué protege esto y qué NO».
+
+### Qué se había hecho
+
+La deuda —«quien exporta el ledger lee la autoría sin rozar la acción denegada»— se cerró en el
+corte vertical **reteniendo los hechos enteros**: mientras la etapa `perspectivas` de una
+deliberación siguiera vigente, sus eventos no salían ni por `/integridad/exportar` ni en el paquete
+del verificador independiente, y un fichero `retenidos.json` más un `retainedLeafCount` en el
+manifiesto declaraban exactamente qué faltaba, de qué conversación y por qué. Se retenía el hecho
+entero, y no el `authorId` recortado, porque el autor entra en la preimagen del hash: un hecho
+publicado sin él no verifica.
+
+### Por qué se retira
+
+**Por un dato que no se tenía cuando se decidió: el precio, medido.** Con hechos retenidos, el
+verificador independiente emite `HUECO_EN_EL_INDICE`, `CABEZA_INCOHERENTE`, `PUNTERO_COLGANTE` y
+**`COLA_TRUNCADA`** —este último porque los hechos retenidos suelen ser los últimos del historial—.
+Y el verificador **no distingue «me lo callo y lo digo» de «me lo llevé»**: los cuatro hallazgos son
+literalmente los mismos que levantaría ante una manipulación real.
+
+Es decir, la retención se pagaba con la verificabilidad del historial completo, que es la tesis
+entera del producto: «nadie puede modificar silenciosamente la historia colectiva». Y se pagaba con
+la peor moneda posible: **enseñándole a quien audita a tolerar cuatro rojos** y a distinguirlos de
+los buenos leyendo un fichero que el propio acusado escribe. Un sistema que le enseña a su auditoría
+a ignorar un rojo deja de tener auditoría. Ocultar la autoría de una etapa no vale eso.
+
+La alternativa —enseñarle al verificador la diferencia entre un hueco declarado y uno robado— no se
+toma: exigiría que el verificador confiara en una declaración del servidor para decidir si un hueco
+es legítimo, que es exactamente la dependencia que el verificador existe para no tener.
+
+### Qué queda en su lugar
+
+- **La regla de autorización se mantiene íntegra.** `deliberation:read-authorship` sigue denegada
+  mientras `perspectivas` sea la etapa vigente, para todo actor y sin excepción de rol. La API de
+  deliberación y la pantalla siguen sin decir quién escribió. **Esa es la protección frente a los
+  pares, que es el objetivo de producto**, y sigue funcionando exactamente igual.
+- **El export vuelve a ser completo** y verifica en verde con la etapa abierta y con la etapa
+  cerrada. Se retiran `retenidos.json` del paquete, `retainedLeafCount` del manifiesto y el campo
+  `retenidos` de `/integridad/exportar`.
+- **La pantalla lo dice.** `AVISO_AUTORIA_OCULTA` gana una frase: quien descargue el historial
+  completo sí puede ver quién escribió cada aporte. Es un **hueco declarado**, no una garantía
+  fingida, y se declara en la misma pantalla que hace la promesa —la misma doctrina que C6 aplica al
+  secreto del voto—. No se escribe «anónimo» a secas en ningún sitio.
+
+### Qué se acepta con esto, dicho sin adornos
+
+Quien se baje el historial completo durante `perspectivas` puede atribuir cada aporte. Antes también
+podía quien administrara el servidor (motivo 5 de arriba); ahora además puede cualquiera que
+descargue el fichero. **La protección deja de ser «frente a los pares que usan el producto» y pasa a
+ser «frente a los pares que usan el producto y no se descargan el historial»**, que es menos. Se
+acepta porque la barrera que se pierde era, para un par decidido, un clic; y lo que se recupera —un
+historial verificable entero, siempre, por cualquiera— es la afirmación sobre la que descansa todo
+lo demás.
+
+### Pruebas
+
+Se retiran dos, de `tests/integration/http-deliberacion.test.ts`, listadas una a una en la cabecera
+de ese fichero: `RETENCIÓN (a): el historial público no entrega la autoría, y declara lo que retiene`
+y `RETENCIÓN (a): el paquete del verificador retiene los mismos hechos y los declara`. La segunda es
+la que midió el precio y la que motiva esta corrección.
+
+Entra una que exige lo contrario: **con la etapa abierta**, el paquete sale completo, no trae
+`retenidos.json`, el manifiesto no trae `retainedLeafCount`, y los hallazgos del verificador son
+exactamente los mismos que antes de que la conversación existiera. En e2e, la pantalla tiene que
+mostrar la frase del historial completo mientras la etapa oculta la autoría.

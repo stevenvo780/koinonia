@@ -49,6 +49,7 @@ import {
   openDeliberation,
   presentationSeed as toPresentationSeed,
   replayDeliberation,
+  ruleFor,
   stageRule,
   submitContribution,
   verifyDeliberationLog,
@@ -147,7 +148,7 @@ import {
 } from '../decision/repository.js';
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
 import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
-import { deliberacionesRetenidas, ocultaLaAutoria } from '../ledger/export.js';
+
 import { IdempotencyConflictError, type AppendResult } from '../ledger/types.js';
 import { verifyLedger, type LedgerVerification } from '../ledger/verify.js';
 import {
@@ -2461,11 +2462,19 @@ export interface DeliberacionConId {
 /**
  * ¿Esta etapa oculta todavía quién escribió cada aporte?
  *
- * Vive en `ledger/export.ts`, con la retención, porque es la misma pregunta: «¿está oculto para todo
- * el mundo?». No tiene actor y **no sustituye a `authorize`** —nadie lee una autoría por este
- * camino—; sirve para decidir qué se retiene del historial público y qué frase le toca a la pantalla.
+ * Se **deriva de la matriz** (`ruleFor('deliberation:read-authorship').deniedDuringStage`), nunca de
+ * una copia de la palabra `perspectivas`: si la regla cambiara de etapa —o dejara de tener alcance
+ * temporal— la pantalla cambia con ella. Una constante repetida aquí sería la segunda fuente de
+ * verdad que ADR-0049 evitó al meter la regla en la tabla de acceso.
+ *
+ * No tiene actor y **no sustituye a `authorize`**: nadie lee una autoría por este camino. Decide qué
+ * frase le toca a la pantalla y nada más. Vivía en `ledger/export.ts` mientras el export retuvo
+ * deliberaciones, porque allí respondía además a «¿qué se retiene?»; retirada la retención, se
+ * mudó junto a su único consumidor en vez de quedarse de huésped en un módulo que ya no la llama.
  */
-export { ocultaLaAutoria };
+export function ocultaLaAutoria(stage: DeliberationStage): boolean {
+  return ruleFor('deliberation:read-authorship').deniedDuringStage === stage;
+}
 
 /**
  * Los conjuntos de aristas viajan **ordenados** hacia el dominio.
@@ -3051,34 +3060,34 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
 }
 
 /**
- * El historial, tal cual está, para que cualquiera lo recompute por su cuenta — **menos lo que
- * todavía no se puede publicar**.
+ * El historial, tal cual está y **entero**, para que cualquiera lo recompute por su cuenta.
  *
  * Esta es la superficie de `ledger:export`, que la matriz declara `OPEN`: la sirve cualquier persona
- * sin cuenta, desde el enlace de descarga de «Verificar integridad». Por eso es aquí donde la deuda
- * de ADR-0049 se paga de verdad: sin la retención, quien no puede leer una autoría por la API la
- * leería descargando este fichero.
+ * sin cuenta, desde el enlace de descarga de «Verificar integridad».
  *
- * Lo retenido va **declarado**, con su motivo en palabras. Un hueco explicado es una decisión que se
- * puede discutir; un hueco callado sería indistinguible de una manipulación.
+ * ═══ Aquí hubo una retención, y se retiró ═══
+ *
+ * Mientras «perspectivas» siguiera abierta, los hechos de esa deliberación no salían por aquí y un
+ * campo `retenidos` declaraba qué faltaba y por qué. Cerraba la deuda que ADR-0049 dejó anotada
+ * —quien no puede leer una autoría por la API la leía descargando esto— y se pagaba con los cuatro
+ * hallazgos que el verificador independiente levanta ante un historial con huecos, uno de ellos
+ * `COLA_TRUNCADA`, que es literalmente el nombre de un ataque. Un historial público al que hay que
+ * explicarle a quien audita por qué está roto ya no es un historial público.
+ *
+ * Se eligió la verificabilidad. La protección frente a los pares —que es el objetivo de producto—
+ * la sigue dando `deliberation:read-authorship`, denegada durante la etapa en la API y en la
+ * pantalla. Y el alcance de lo que eso NO cubre se dice en la pantalla, no se calla:
+ * `AVISO_AUTORIA_OCULTA` declara que quien descargue el historial completo sí puede ver quién
+ * escribió cada aporte.
  */
 export async function exportarTodo(deps: ServicioDeps): Promise<{
   readonly formato: number;
   readonly eventos: readonly Record<string, unknown>[];
-  readonly retenidos: readonly Record<string, unknown>[];
 }> {
   return conCliente(deps.pool, async (client) => {
-    const todos = await readAll(client);
-    const retenidas = await deliberacionesRetenidas(client);
-    const idsRetenidos = new Set(retenidas.map((r) => r.aggregateId));
-    const eventos = todos.filter((e) => !idsRetenidos.has(e.event.aggregateId));
+    const eventos = await readAll(client);
     return {
       formato: 1,
-      retenidos: retenidas.map((r) => ({
-        conversacion: r.aggregateId,
-        cuantosHechos: todos.filter((e) => e.event.aggregateId === r.aggregateId).length,
-        motivo: r.motivo,
-      })),
       eventos: eventos.map((e) => ({
         indice: e.leafIndex.toString(),
         agregado: e.event.aggregateId,
