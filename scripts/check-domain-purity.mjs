@@ -5,7 +5,10 @@
  *  - `packages/domain` no puede tener NINGUNA dependencia de tiempo de ejecución salvo,
  *    a lo sumo, `@koinonia/crypto`;
  *  - `packages/crypto` no puede tener NINGUNA dependencia de tiempo de ejecución;
- *  - ninguno de los dos puede importar módulos de Node, ni `apps/`, ni `services/`, ni usar
+ *  - `packages/consensus` tampoco: no es dominio, pero su único valor es que dos máquinas obtengan
+ *    los mismos grupos de opinión a partir de la misma matriz, y eso se pierde con la primera
+ *    dependencia que traiga su propio orden, su propio reloj o su propia aleatoriedad;
+ *  - ninguno de los tres puede importar módulos de Node, ni `apps/`, ni `services/`, ni usar
  *    `Date.now()`, `Math.random()` o `localeCompare` (no determinismo).
  *
  * Falla con código 1 y una lista de infracciones. Se corre en `pnpm lint` y en CI.
@@ -21,6 +24,7 @@ const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PERMITIDAS = {
   'packages/domain': new Set(['@koinonia/crypto']),
   'packages/crypto': new Set([]),
+  'packages/consensus': new Set([]),
 };
 
 const CAMPOS_RUNTIME = ['dependencies', 'peerDependencies', 'optionalDependencies'];
@@ -165,6 +169,13 @@ if (infracciones.length > 0) {
   process.exit(1);
 }
 
-console.log(
-  'Pureza del dominio: correcta (packages/domain y packages/crypto sin dependencias de runtime).',
-);
+// El mensaje se construye desde `PERMITIDAS` para que no pueda mentir: si mañana se añade o se quita
+// un paquete de la comprobación, la línea que se imprime cambia sola. Un guardián que anuncia haber
+// revisado más de lo que revisa es peor que no tener guardián.
+const revisados = Object.keys(PERMITIDAS);
+const ultimo = revisados.length - 1;
+const listado =
+  revisados.length === 1
+    ? revisados[0]
+    : `${revisados.slice(0, ultimo).join(', ')} y ${revisados[ultimo]}`;
+console.log(`Pureza del dominio: correcta (${listado} sin dependencias de runtime).`);

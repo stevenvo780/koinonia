@@ -5,6 +5,7 @@
     { "path": "packages/crypto" },
     { "path": "packages/anchor" },
     { "path": "packages/domain" },
+    { "path": "packages/consensus" },
     { "path": "packages/contracts" },
     { "path": "services/api" },
     { "path": "packages/verifier-cli" }

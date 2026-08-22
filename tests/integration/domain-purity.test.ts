@@ -1,7 +1,7 @@
 /**
  * La regla de dependencia del ADR-0001 no se sostiene con disciplina: se verifica.
  * `packages/domain` no puede tener ninguna dependencia de tiempo de ejecución salvo, a lo sumo,
- * `@koinonia/crypto`; `packages/crypto` no puede tener ninguna.
+ * `@koinonia/crypto`; `packages/crypto` y `packages/consensus` no pueden tener ninguna.
  *
  * Este test comprueba las dos direcciones: que el repositorio cumple, y que el guardián **detecta**
  * una infracción cuando la hay (un guardián que nunca falla no prueba nada).
@@ -31,28 +31,40 @@ function manifiesto(paquete: string): Manifiesto {
   ) as Manifiesto;
 }
 
+/**
+ * Los paquetes que el guardián revisa. La lista está duplicada a propósito respecto de `PERMITIDAS`
+ * en el script: si alguien añade un paquete allí y no aquí, el test «acepta el repositorio tal como
+ * está» sigue en verde pero los sintéticos fallan con `ENOENT`, que es exactamente la señal de que
+ * hay que actualizar el molde. El test del mensaje de salida, más abajo, cierra la otra dirección.
+ */
+const REVISADOS = ['domain', 'crypto', 'consensus'] as const;
+
 /** Copia mínima del repositorio en la que se puede introducir una infracción sin ensuciar nada. */
 function repoDePrueba(
   dependenciasDeDominio: Record<string, string>,
   fuenteDeDominio = 'export const x = 1;\n',
+  dependenciasDeConsenso: Record<string, string> = {},
 ): string {
   const raiz = mkdtempSync(join(tmpdir(), 'koinonia-purity-'));
   temporales.push(raiz);
   mkdirSync(join(raiz, 'scripts'), { recursive: true });
   cpSync(GUARDIAN, join(raiz, 'scripts', 'check-domain-purity.mjs'));
-  for (const paquete of ['domain', 'crypto']) {
+  for (const paquete of REVISADOS) {
     const destino = join(raiz, 'packages', paquete);
     mkdirSync(join(destino, 'src'), { recursive: true });
     writeFileSync(
       join(destino, 'src', 'index.ts'),
       paquete === 'domain' ? fuenteDeDominio : 'export const x = 1;\n',
     );
+    const dependencies =
+      paquete === 'domain'
+        ? dependenciasDeDominio
+        : paquete === 'consensus'
+          ? dependenciasDeConsenso
+          : {};
     writeFileSync(
       join(destino, 'package.json'),
-      JSON.stringify({
-        name: `@koinonia/${paquete}`,
-        dependencies: paquete === 'domain' ? dependenciasDeDominio : {},
-      }),
+      JSON.stringify({ name: `@koinonia/${paquete}`, dependencies }),
     );
   }
   return raiz;
@@ -96,8 +108,33 @@ describe('pureza del dominio (ADR-0001)', () => {
     }
   });
 
+  it('packages/consensus no declara ninguna dependencia de runtime', () => {
+    const paquete = manifiesto('consensus');
+    expect(paquete.dependencies ?? {}).toStrictEqual({});
+    expect(paquete.peerDependencies ?? {}).toStrictEqual({});
+    expect(paquete.optionalDependencies ?? {}).toStrictEqual({});
+  });
+
   it('el guardián acepta el repositorio tal como está', () => {
     expect(correrGuardian(RAIZ).ok).toBe(true);
+  });
+
+  /**
+   * El mensaje de éxito es una afirmación sobre lo que se revisó, y por tanto tiene que ser
+   * comprobable. Un guardián que anuncia tres paquetes revisando dos es peor que ninguno: da por
+   * cubierto lo que nadie mira.
+   */
+  it('el mensaje de éxito nombra exactamente los paquetes que revisa', () => {
+    const salida = correrGuardian(RAIZ).salida;
+    for (const paquete of REVISADOS) expect(salida).toContain(`packages/${paquete}`);
+    expect(salida.match(/packages\//gu) ?? []).toHaveLength(REVISADOS.length);
+  });
+
+  it('el guardián RECHAZA una dependencia prohibida en packages/consensus', () => {
+    const resultado = correrGuardian(repoDePrueba({}, undefined, { 'ml-kmeans': '^6.0.0' }));
+    expect(resultado.ok).toBe(false);
+    expect(resultado.salida).toContain('packages/consensus/package.json');
+    expect(resultado.salida).toContain('dependencies.ml-kmeans está prohibida');
   });
 
   it('el guardián acepta @koinonia/crypto como dependencia del dominio', () => {

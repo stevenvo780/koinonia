@@ -1,0 +1,29 @@
+{
+  "name": "@koinonia/consensus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Análisis de consenso tipo Pol.is: grupos de opinión, afirmaciones divisivas y afirmaciones puente",
+  "license": "AGPL-3.0-or-later",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run --root ../.. packages/consensus"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

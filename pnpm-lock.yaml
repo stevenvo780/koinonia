@@ -94,6 +94,8 @@ importers:
         specifier: workspace:*
         version: link:../crypto
 
+  packages/consensus: {}
+
   packages/contracts:
     dependencies:
       '@koinonia/domain':

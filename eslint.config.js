@@ -52,7 +52,13 @@ export default tseslint.config(
   {
     // ADR-0004: `localeCompare` depende de ICU y de la locale del proceso. Un hash que dependa del
     // entorno es un hash que no se puede verificar en otra máquina.
-    files: ['packages/domain/**/*.ts', 'packages/crypto/**/*.ts'],
+    //
+    // `packages/consensus` entra aquí por la misma razón, no por parecido: su único valor es que dos
+    // máquinas agrupen las mismas opiniones a partir de la misma matriz. Un `Math.random()` en la
+    // siembra de k-means o un `localeCompare` al ordenar afirmaciones convertirían el análisis en
+    // irreproducible sin que ningún test lo notara —cambiaría sólo entre entornos, no entre
+    // ejecuciones—, que es la peor forma de perder el determinismo.
+    files: ['packages/domain/**/*.ts', 'packages/crypto/**/*.ts', 'packages/consensus/**/*.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
