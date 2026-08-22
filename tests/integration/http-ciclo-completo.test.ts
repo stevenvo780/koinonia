@@ -408,6 +408,9 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
     expect(informe.hechosRevisados).toBeGreaterThan(5);
     expect(informe.comprobaciones.map((c: { id: string }) => c.id).sort()).toEqual([
       'cadena',
+      // Una conversación por etapas que no se pueda volver a armar deja de publicarse entera, y eso
+      // tiene que verse acá: una retención permanente sin alarma sería un fallo silencioso.
+      'conversaciones',
       'ejecucion',
       'material-privado',
       'resultados',

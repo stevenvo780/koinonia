@@ -15,6 +15,9 @@ import {
   type ChainedEvent,
   type ChainedInput,
   type ChainedLog,
+  type DeliberationLog,
+  type DeliberationPayload,
+  type DeliberationState,
   type ProblemLog,
   type ProblemPayload,
   type ProblemState,
@@ -25,6 +28,7 @@ import {
   type ProposalPayload,
   type ProposalState,
   replayProblem,
+  verifyDeliberationLog,
   verifyInitiativeLog,
   verifyChain,
   verifyProposalLog,
@@ -39,9 +43,12 @@ import type {
   StoredEvent,
 } from '../ledger/types.js';
 import {
+  decodeDeliberationEvent,
   decodeProblemEvent,
   decodeInitiativeEvent,
   decodeProposalEvent,
+  DELIBERATION_AGGREGATE_TYPE,
+  encodeDeliberationEvent,
   encodeProblemEvent,
   encodeInitiativeEvent,
   INITIATIVE_AGGREGATE_TYPE,
@@ -86,6 +93,12 @@ const INITIATIVE_CODEC: Codec<InitiativePayload> = {
   aggregateType: INITIATIVE_AGGREGATE_TYPE,
   encode: encodeInitiativeEvent,
   decode: decodeInitiativeEvent,
+};
+
+const DELIBERATION_CODEC: Codec<DeliberationPayload> = {
+  aggregateType: DELIBERATION_AGGREGATE_TYPE,
+  encode: encodeDeliberationEvent,
+  decode: decodeDeliberationEvent,
 };
 
 function pendingFor<P>(
@@ -270,6 +283,36 @@ export async function loadProposalState(
   return verifyProposalLog(await loadProposalLog(client, proposalId));
 }
 
+export async function persistDeliberationLog(
+  pool: PgPool,
+  log: DeliberationLog,
+  options: { readonly requestId: string; readonly requestScope?: string },
+): Promise<WorkspacePersistResult> {
+  return persist(pool, log, DELIBERATION_CODEC, options);
+}
+
+export async function loadDeliberationLog(
+  client: PgClient,
+  deliberationId: string,
+): Promise<DeliberationLog> {
+  return load(client, deliberationId, DELIBERATION_CODEC);
+}
+
+/**
+ * Rehidrata, verifica la cadena y pliega.
+ *
+ * `verifyDeliberationLog` hace las dos cosas de golpe, y el plegado no es un adorno: **es** donde se
+ * comprueba que el `actor` del sobre y el `authorId` del aporte nombran a la misma persona. Un log
+ * fabricado a mano que atribuya una perspectiva a otra persona no llega a estado: se rechaza al
+ * leerlo, no en la siguiente pantalla que lo mire.
+ */
+export async function loadDeliberationState(
+  client: PgClient,
+  deliberationId: string,
+): Promise<DeliberationState> {
+  return verifyDeliberationLog(await loadDeliberationLog(client, deliberationId));
+}
+
 export async function persistInitiativeLogWithin(
   client: PgPoolClient,
   log: InitiativeLog,
@@ -308,4 +351,9 @@ export async function listAggregateIds(
   return rows.map((row) => row.aggregate_id.trimEnd());
 }
 
-export { INITIATIVE_AGGREGATE_TYPE, PROBLEM_AGGREGATE_TYPE, PROPOSAL_AGGREGATE_TYPE };
+export {
+  DELIBERATION_AGGREGATE_TYPE,
+  INITIATIVE_AGGREGATE_TYPE,
+  PROBLEM_AGGREGATE_TYPE,
+  PROPOSAL_AGGREGATE_TYPE,
+};

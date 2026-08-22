@@ -12,8 +12,11 @@
  */
 
 import type {
+  Actor,
+  ContributionRecord,
   DecisionResult,
   DecisionState,
+  DeliberationState,
   ExecutionPlan,
   InitiativeState,
   MemberId,
@@ -23,9 +26,22 @@ import type {
   ProposalVersion,
   TaskPauseRecord,
 } from '@koinonia/domain';
+import {
+  can,
+  currentContributions,
+  nextStage,
+  orderContributionsForViewer,
+  readContributionAuthor,
+  referencesOf,
+  stageRule,
+  UnauthorizedError,
+} from '@koinonia/domain';
 import type {
+  AporteDeliberacion,
   DecisionDetalle,
   DecisionResumen,
+  DeliberacionDetalle,
+  DeliberacionResumen,
   Desenlace,
   Evidencia,
   IniciativaDetalle,
@@ -40,9 +56,25 @@ import type {
   TablaTraza,
   VersionPropuesta,
 } from '@koinonia/contracts';
-import { DESENLACE_EN_PALABRAS } from '@koinonia/contracts';
+import {
+  AVISO_AUTORIA_OCULTA,
+  AVISO_AUTORIA_SOLO_DEL_GRUPO,
+  AVISO_AUTORIA_VISIBLE,
+  DESENLACE_EN_PALABRAS,
+  ETAPA_EN_PALABRAS,
+  ETAPA_PARA_QUE_SIRVE,
+  GRAVEDAD_EN_PALABRAS,
+  MODO_POSICION_EN_PALABRAS,
+  RELACION_RAZON_EN_PALABRAS,
+  TIPO_APORTE_EN_PALABRAS,
+} from '@koinonia/contracts';
 
-import { queHaceFaltaParaQuePase, type MetodoSoportado } from './service.js';
+import {
+  ocultaLaAutoria,
+  queHaceFaltaParaQuePase,
+  queSePuedeEscribirAhora,
+  type MetodoSoportado,
+} from './service.js';
 
 function evidenciaDto(
   registro: ProblemState['evidence'][number],
@@ -328,6 +360,216 @@ export function resultadoDto(resultado: DecisionResult, iniciativaId?: string): 
     comprobante: resultado.resultHash,
     comprobanteReglas: resultado.configHash,
     comprobanteLista: resultado.rollHash,
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Deliberación
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ⚠ **Esta proyección es la que impide la fuga de autoría hacia el cliente.**
+ *
+ * `DeliberationState` lleva el `authorId` de cada aporte en memoria, en todas las etapas y a
+ * propósito (ADR-0049). El dominio no puede cerrar eso: quien tiene el estado plegado tiene la
+ * autoría, y un `JSON.stringify(state.contributions)` en cualquier ruta filtraría la etapa entera de
+ * golpe. La única barrera es que **nada de este fichero copie el registro**: cada campo del DTO se
+ * escribe a mano, y el autor sólo aparece si `readContributionAuthor` —la única puerta de lectura
+ * del dominio— lo concede.
+ *
+ * Por eso aquí **no hay ni un `...registro`**. Un spread convertiría cada campo nuevo del motor en
+ * una fuga silenciosa el día que alguien lo añada, sin que nadie tocara este fichero. Y por eso
+ * `esMio` también falta mientras la autoría esté oculta: si viajara, comparar dos respuestas
+ * bastaría para atribuir cada aporte por diferencia, y el motor deniega esa lectura incluso a quien
+ * lo escribió.
+ */
+function autorVisible(
+  state: DeliberationState,
+  actor: Actor,
+  id: ContributionRecord['contributionId'],
+): MemberId | undefined {
+  try {
+    return readContributionAuthor(state, actor, id);
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return undefined;
+    throw error;
+  }
+}
+
+/** Cómo se dice cada arista del grafo. El dibujo se enseña igual, pero con palabras. */
+function comoSeRelaciona(field: string, body: ContributionRecord['body']): string {
+  switch (field) {
+    case 'positionId':
+      return body.kind === 'razon' ? RELACION_RAZON_EN_PALABRAS[body.relation] : 'Se refiere a';
+    case 'supportsReasonId':
+      return 'Respalda';
+    case 'appliesToContributionIds':
+      return 'Se aplica a';
+    case 'alternativeId':
+      return 'Riesgo de';
+    case 'sourcePositionIds':
+      return 'Sale de';
+    default:
+      return 'Se refiere a';
+  }
+}
+
+/** El nombre del aporte en pantalla. Una pregunta y una postura son los dos `posicion` en el motor. */
+function comoSeLlamaElAporte(body: ContributionRecord['body']): string {
+  if (body.kind === 'posicion') return MODO_POSICION_EN_PALABRAS[body.mode];
+  return TIPO_APORTE_EN_PALABRAS[body.kind];
+}
+
+function textoDelAporte(body: ContributionRecord['body']): string {
+  return body.kind === 'riesgo' ? body.impact : body.text;
+}
+
+function aporteDto(
+  state: DeliberationState,
+  actor: Actor,
+  registro: ContributionRecord,
+  vigente: boolean,
+): AporteDeliberacion {
+  const autorId = autorVisible(state, actor, registro.contributionId);
+  const body = registro.body;
+  const referencias = referencesOf(body, registro.supersedesContributionId).filter(
+    (referencia) => referencia.field !== 'supersedesContributionId',
+  );
+  return {
+    id: registro.contributionId,
+    tipo: body.kind,
+    etapa: registro.stage,
+    etapaEnPalabras: ETAPA_EN_PALABRAS[registro.stage],
+    comoSeLlama: comoSeLlamaElAporte(body),
+    ...(body.kind === 'posicion' ? { modo: body.mode } : {}),
+    texto: textoDelAporte(body),
+    ...(body.kind === 'evidencia' && body.source !== undefined ? { fuente: body.source } : {}),
+    ...(body.kind === 'riesgo'
+      ? {
+          gravedad: body.severity,
+          gravedadEnPalabras: GRAVEDAD_EN_PALABRAS[body.severity],
+          mitigacion: body.mitigation,
+        }
+      : {}),
+    responde: referencias.map((referencia) => ({
+      aporteId: referencia.targetId,
+      comoSeRelaciona: comoSeRelaciona(referencia.field, body),
+    })),
+    ...(registro.supersedesContributionId === undefined
+      ? {}
+      : { corrigeA: registro.supersedesContributionId }),
+    vigente,
+    // Los tres juntos o ninguno. `cuando` viaja con la autoría porque un instante al milisegundo
+    // junto a un aporte sin nombre se atribuye con cualquier señal de fuera —«acabo de escribir»,
+    // el momento en que alguien se conectó— sin llegar a intentar la acción denegada.
+    ...(autorId === undefined
+      ? {}
+      : { autorId, esMio: autorId === actor.memberId, cuando: registro.submittedAt }),
+  };
+}
+
+export function deliberacionResumenDto(
+  id: string,
+  state: DeliberationState,
+  problemaTitulo: string,
+): DeliberacionResumen {
+  return {
+    id,
+    problemaId: state.problemId ?? '',
+    problemaTitulo,
+    circuloId: state.circleId ?? '',
+    etapa: state.stage,
+    etapaEnPalabras: ETAPA_EN_PALABRAS[state.stage],
+    queSeHaceEnEstaEtapa: ETAPA_PARA_QUE_SIRVE[state.stage],
+    abreEn: state.opensAt ?? 0,
+    cierraEn: state.closesAt ?? 0,
+    cuantosAportes: state.contributions.length,
+    autoriaVisible: !ocultaLaAutoria(state.stage),
+  };
+}
+
+/**
+ * El detalle, con los aportes **en el orden de esta lectora**.
+ *
+ * El orden se aleatoriza por persona con la semilla que quedó en el historial, para que el primero
+ * de la lista no pese más que el último por estar arriba.
+ *
+ * Quien mira sin cuenta no tiene semilla propia. **No se le devuelve el orden de escritura**: se le
+ * ordena por el identificador del aporte, que es aleatorio y no dice nada. Servirle el orden de
+ * escritura le entregaría, gratis y sin cuenta, la secuencia exacta en que participó cada persona
+ * —justo lo que la permutación existe para no dar—, y encima le daría a quien no entró más
+ * información que a quien entró.
+ */
+export async function deliberacionDetalleDto(
+  id: string,
+  state: DeliberationState,
+  actor: Actor,
+  problemaTitulo: string,
+): Promise<DeliberacionDetalle> {
+  const vigentes = new Set(currentContributions(state).map((c) => c.contributionId));
+  const orden =
+    actor.memberId === undefined
+      ? [...state.contributions].sort((a, b) =>
+          a.contributionId < b.contributionId ? -1 : a.contributionId > b.contributionId ? 1 : 0,
+        )
+      : await orderContributionsForViewer(state, actor.memberId);
+
+  const regla = stageRule(state.stage);
+  const siguiente = nextStage(state.stage);
+  const puedeEscribirEnLaEtapa = regla.kinds.length > 0;
+  const enCirculo =
+    state.circleId !== undefined &&
+    can(actor, 'deliberation:contribute', { kind: 'deliberation', circleId: state.circleId });
+
+  // Tres casos, no dos. La etapa decide si la autoría está oculta **para todo el mundo**; la
+  // pertenencia al círculo decide si además la ve quien está mirando. Decir «ya se ve quién escribió
+  // cada cosa» a alguien que no va a ver ni un nombre es una contradicción en la misma pantalla.
+  const leeLaAutoria =
+    state.circleId !== undefined &&
+    can(actor, 'deliberation:read-authorship', {
+      kind: 'deliberation',
+      stage: state.stage,
+      circleId: state.circleId,
+    });
+
+  return {
+    ...deliberacionResumenDto(id, state, problemaTitulo),
+    avisoDeAutoria: ocultaLaAutoria(state.stage)
+      ? AVISO_AUTORIA_OCULTA
+      : leeLaAutoria
+        ? AVISO_AUTORIA_VISIBLE
+        : AVISO_AUTORIA_SOLO_DEL_GRUPO,
+    aportes: orden.map((registro) =>
+      aporteDto(state, actor, registro, vigentes.has(registro.contributionId)),
+    ),
+    queSePuedeEscribirAhora: queSePuedeEscribirAhora(state.stage),
+    tiposQueSeAdmitenAhora: [...regla.kinds],
+    modosQueSeAdmitenAhora: [...regla.positionModes],
+    relacionesQueSeAdmitenAhora: [...regla.reasonRelations],
+    laSalidaDebeCorregirAOtra: regla.alternativeMustSupersede,
+    puedoAportar: enCirculo && puedeEscribirEnLaEtapa,
+    ...(enCirculo && puedeEscribirEnLaEtapa
+      ? {}
+      : {
+          motivoNoPuedoAportar: !puedeEscribirEnLaEtapa
+            ? 'Esta conversación ya está lista para decidir: acá no se escribe más.'
+            : actor.memberId === undefined
+              ? 'Para aportar hay que entrar con el correo institucional.'
+              : 'Este asunto lo lleva otro grupo, y hay que ser parte de él.',
+        }),
+    puedoAvanzarEtapa:
+      siguiente !== undefined &&
+      state.circleId !== undefined &&
+      can(actor, 'deliberation:advance-stage', {
+        kind: 'deliberation',
+        circleId: state.circleId,
+      }),
+    ...(siguiente === undefined
+      ? {}
+      : {
+          etapaSiguiente: siguiente,
+          etapaSiguienteEnPalabras: ETAPA_EN_PALABRAS[siguiente],
+        }),
   };
 }
 

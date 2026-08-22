@@ -16,7 +16,14 @@
 
 import { toHex } from '@koinonia/crypto';
 import {
+  type Aportar,
+  APORTE_EN_PALABRAS,
+  clavesDeAporte,
+  ETAPA_EN_PALABRAS,
+} from '@koinonia/contracts';
+import {
   type Actor,
+  advanceStage,
   authorize,
   authorizeTaskDeliveryRead,
   authorizeTaskEvidenceRead,
@@ -29,6 +36,22 @@ import {
   castBallotBy,
   closeDecisionBy,
   computeResult,
+  type ContributionBody,
+  type ContributionId,
+  contributionId,
+  deliberationId as toDeliberationId,
+  type DeliberationLog,
+  type DeliberationStage,
+  type DeliberationState,
+  DomainError,
+  nextStage,
+  normalizeLedgerText,
+  openDeliberation,
+  presentationSeed as toPresentationSeed,
+  replayDeliberation,
+  stageRule,
+  submitContribution,
+  verifyDeliberationLog,
   type DecisionConfig,
   type DecisionEvent,
   decisionId,
@@ -124,15 +147,20 @@ import {
 } from '../decision/repository.js';
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
 import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
+import { deliberacionesRetenidas, ocultaLaAutoria } from '../ledger/export.js';
 import { IdempotencyConflictError, type AppendResult } from '../ledger/types.js';
 import { verifyLedger, type LedgerVerification } from '../ledger/verify.js';
 import {
+  DELIBERATION_AGGREGATE_TYPE,
   listAggregateIds,
+  loadDeliberationLog,
+  loadDeliberationState,
   loadInitiativeLog,
   loadInitiativeState,
   loadProblemLog,
   loadProposalLog,
   loadProposalState,
+  persistDeliberationLog,
   persistProblemLog,
   persistInitiativeLogWithin,
   persistProposalLog,
@@ -2422,6 +2450,300 @@ export async function verResumenEntregaTarea(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+// Deliberación
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface DeliberacionConId {
+  readonly id: string;
+  readonly state: DeliberationState;
+}
+
+/**
+ * ¿Esta etapa oculta todavía quién escribió cada aporte?
+ *
+ * Vive en `ledger/export.ts`, con la retención, porque es la misma pregunta: «¿está oculto para todo
+ * el mundo?». No tiene actor y **no sustituye a `authorize`** —nadie lee una autoría por este
+ * camino—; sirve para decidir qué se retiene del historial público y qué frase le toca a la pantalla.
+ */
+export { ocultaLaAutoria };
+
+/**
+ * Los conjuntos de aristas viajan **ordenados** hacia el dominio.
+ *
+ * El motor los exige estrictamente ordenados porque entran en la preimagen de hash del evento
+ * (`graph.ts`, regla 1 de `canonical.ts`): dos implementaciones honestas que los ordenaran distinto
+ * producirían dos huellas del mismo aporte. Ordenarlos aquí **no es acomodar una entrada inválida**
+ * —el duplicado se rechaza en la frontera con Zod, y sigue rechazándose en el motor—: es que el
+ * orden de una casilla marcada en un formulario no es información, y hacérselo escribir al cliente
+ * sería inventar un requisito que ninguna persona puede cumplir a mano.
+ */
+function conjuntoDeAportes(ids: readonly string[]): readonly ContributionId[] {
+  return [...ids].sort().map((id) => contributionId(id));
+}
+
+/** Del cuerpo de la petición al cuerpo del dominio. Nombres del contrato → nombres del motor. */
+function cuerpoDeAporte(input: AportarHttp): ContributionBody {
+  switch (input.tipo) {
+    case 'posicion':
+      return { kind: 'posicion', mode: input.modo, text: normalizeLedgerText(input.texto) };
+    case 'razon':
+      return {
+        kind: 'razon',
+        relation: input.relacion,
+        positionId: contributionId(input.posicionId),
+        text: normalizeLedgerText(input.texto),
+      };
+    case 'evidencia':
+      return {
+        kind: 'evidencia',
+        supportsReasonId: contributionId(input.sostieneRazonId),
+        text: normalizeLedgerText(input.texto),
+        ...(input.fuente === undefined ? {} : { source: normalizeLedgerText(input.fuente) }),
+      };
+    case 'supuesto':
+      return {
+        kind: 'supuesto',
+        appliesToContributionIds: conjuntoDeAportes(input.aplicaA),
+        text: normalizeLedgerText(input.texto),
+      };
+    case 'riesgo':
+      return {
+        kind: 'riesgo',
+        alternativeId: contributionId(input.salidaId),
+        severity: input.gravedad,
+        impact: normalizeLedgerText(input.impacto),
+        mitigation: normalizeLedgerText(input.mitigacion),
+      };
+    case 'alternativa':
+      return {
+        kind: 'alternativa',
+        problemId: input.problemaId,
+        sourcePositionIds: conjuntoDeAportes(input.saleDe),
+        text: normalizeLedgerText(input.texto),
+      };
+  }
+}
+
+/**
+ * Qué se puede escribir **ahora**, en palabras. Sale de la tabla del motor, no de una copia.
+ *
+ * Se nombra por la combinación tipo × modo × relación y no por el tipo a secas. La diferencia no es
+ * cosmética: en `Preguntas` el motor admite un aporte de tipo `posicion`, pero sólo en modo
+ * pregunta. Decir «acá se escribe: postura» en la etapa que rechaza una postura es peor que no
+ * decir nada, y es exactamente lo que hacía la primera versión de esta función.
+ */
+export function queSePuedeEscribirAhora(stage: DeliberationStage): string {
+  const regla = stageRule(stage);
+  if (regla.kinds.length === 0) {
+    return 'En esta etapa ya no se escribe: lo que sigue es una decisión.';
+  }
+  const nombres = clavesDeAporte({
+    tiposQueSeAdmitenAhora: regla.kinds,
+    modosQueSeAdmitenAhora: regla.positionModes,
+    relacionesQueSeAdmitenAhora: regla.reasonRelations,
+  }).map((clave) => APORTE_EN_PALABRAS[clave].nombre.toLowerCase());
+  const lista =
+    nombres.length === 1
+      ? nombres[0]
+      : `${nombres.slice(0, -1).join(', ')} y ${String(nombres.at(-1))}`;
+  const matiz =
+    stage === 'preguntas_aclaratorias'
+      ? ' Todavía no se opina: primero se entiende el problema.'
+      : stage === 'perspectivas'
+        ? ' Todavía no se proponen salidas: primero se dice cómo se ve el problema.'
+        : stage === 'enmiendas'
+          ? ' Cada salida que escribas acá corrige a una anterior.'
+          : '';
+  return `Acá se escribe: ${String(lista)}.${matiz}`;
+}
+
+/**
+ * Traduce el rechazo de la tabla etapa × tipo de aporte a una frase que se entiende.
+ *
+ * La decisión sigue siendo del motor —esta función sólo se ejecuta **después** de que el motor
+ * rechazó— y la etapa sale del estado plegado, no del cliente. Sin esto, la persona leería
+ * «la etapa perspectivas no admite aportes de tipo riesgo; admite [posicion, razon, evidencia,
+ * supuesto]», que es la tabla interna en crudo.
+ */
+function conRechazoEnPalabras(stage: DeliberationStage, error: unknown): never {
+  const traducibles = new Set([
+    'CONTRIBUTION_KIND_NOT_ALLOWED',
+    'POSITION_MODE_NOT_ALLOWED',
+    'REASON_RELATION_NOT_ALLOWED',
+  ]);
+  if (error instanceof DomainError && traducibles.has(error.code)) {
+    throw new ServicioError(
+      error.code,
+      422,
+      `Eso no se escribe en «${ETAPA_EN_PALABRAS[stage]}», que es la etapa en la que va la ` +
+        `conversación. ${queSePuedeEscribirAhora(stage)}`,
+    );
+  }
+  throw error;
+}
+
+async function conLogDeDeliberacion(
+  deps: ServicioDeps,
+  deliberacionId: string,
+  fn: (log: DeliberationLog, state: DeliberationState) => Promise<DeliberationLog>,
+  requestId: string,
+): Promise<DeliberacionConId> {
+  const log = await conCliente(deps.pool, (c) => loadDeliberationLog(c, deliberacionId));
+  if (log.length === 0) {
+    throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa conversación');
+  }
+  // Se verifica la cadena ANTES de escribir encima: añadir un evento a un historial que ya no
+  // cuadra sería sellar la rotura con una firma nueva.
+  const state = await verifyDeliberationLog(log);
+  const siguiente = await fn(log, state);
+  await persistDeliberationLog(deps.pool, siguiente, { requestId });
+  return { id: deliberacionId, state: replayDeliberation(siguiente) };
+}
+
+/**
+ * Abre la deliberación de un problema, en `Preguntas` y con plazo.
+ *
+ * La semilla del orden de presentación **entra como dato**: el dominio no genera azar. Es lo que
+ * permite que cualquiera recompute el orden en que le aparecieron los aportes a otra persona y
+ * compruebe que nadie puso el dedo.
+ */
+export async function abrirDeliberacion(
+  deps: ServicioDeps,
+  actor: Actor,
+  input: {
+    readonly requestId: string;
+    readonly problemaId: string;
+    readonly duracionHoras: number;
+  },
+): Promise<DeliberacionConId> {
+  // «No se delibera sin problema»: se comprueba que el problema EXISTE en el historial, no que el
+  // cliente mandó un identificador con forma de tal.
+  const problema = await verProblema(deps, input.problemaId);
+  const circulo = problema.state.circleId;
+  if (circulo === undefined) {
+    throw new ServicioError('NO_ENCONTRADO', 404, 'ese problema no tiene grupo competente');
+  }
+
+  const id = deps.ports.random.opaqueId();
+  const at = ahora(deps);
+  const log = await openDeliberation(
+    { eventId: nuevoEventId(deps), at, actor },
+    {
+      deliberationId: toDeliberationId(id),
+      problemId: input.problemaId,
+      circleId: circulo,
+      opensAt: at,
+      closesAt: instant(at + input.duracionHoras * HORA_MS),
+      presentationSeed: toPresentationSeed(deps.ports.random.opaqueId()),
+    },
+  );
+  await persistDeliberationLog(deps.pool, log, { requestId: input.requestId });
+  return { id, state: replayDeliberation(log) };
+}
+
+/** Lo que la interfaz manda como aporte. Es el contrato de `@koinonia/contracts`, ya validado. */
+export type AportarHttp = Aportar;
+
+export async function aportarADeliberacion(
+  deps: ServicioDeps,
+  actor: Actor,
+  deliberacionId: string,
+  input: AportarHttp,
+): Promise<DeliberacionConId> {
+  const nuevoId = deps.ports.random.opaqueId();
+  return conLogDeDeliberacion(
+    deps,
+    deliberacionId,
+    async (log, state) => {
+      try {
+        return await submitContribution(
+          log,
+          { eventId: nuevoEventId(deps), at: ahora(deps), actor },
+          {
+            contributionId: contributionId(nuevoId),
+            body: cuerpoDeAporte(input),
+            ...(input.corrigeA === undefined
+              ? {}
+              : { supersedesContributionId: contributionId(input.corrigeA) }),
+          },
+        );
+      } catch (error) {
+        return conRechazoEnPalabras(state.stage, error);
+      }
+    },
+    input.requestId,
+  );
+}
+
+/**
+ * Avanza a la etapa siguiente. La causa **no la elige quien llama**: la deriva el reloj del
+ * servidor contra la ventana vigente, y el dominio comprueba el plazo si dice `deadline`.
+ *
+ * La ventana nueva dura lo mismo que la que se cierra. Es una decisión de producto —el ritmo de la
+ * conversación no cambia porque cambie la etapa— y no del motor, que sólo exige que dure algo.
+ */
+export async function avanzarEtapaDeliberacion(
+  deps: ServicioDeps,
+  actor: Actor,
+  deliberacionId: string,
+  input: { readonly requestId: string },
+): Promise<DeliberacionConId> {
+  return conLogDeDeliberacion(
+    deps,
+    deliberacionId,
+    async (log, state) => {
+      const siguiente = nextStage(state.stage);
+      if (siguiente === undefined) {
+        throw new ServicioError(
+          'ILLEGAL_TRANSITION',
+          422,
+          'esta conversación ya está lista para decidir: no hay una etapa después',
+        );
+      }
+      const at = ahora(deps);
+      const duracion =
+        state.opensAt === undefined || state.closesAt === undefined
+          ? HORA_MS
+          : state.closesAt - state.opensAt;
+      return await advanceStage(
+        log,
+        { eventId: nuevoEventId(deps), at, actor },
+        {
+          to: siguiente,
+          cause: state.closesAt !== undefined && at >= state.closesAt ? 'deadline' : 'manual',
+          opensAt: at,
+          closesAt: instant(at + duracion),
+          presentationSeed: toPresentationSeed(deps.ports.random.opaqueId()),
+        },
+      );
+    },
+    input.requestId,
+  );
+}
+
+export async function listarDeliberaciones(
+  deps: ServicioDeps,
+): Promise<readonly DeliberacionConId[]> {
+  return conCliente(deps.pool, async (client) => {
+    const salida: DeliberacionConId[] = [];
+    for (const id of await listAggregateIds(client, DELIBERATION_AGGREGATE_TYPE)) {
+      salida.push({ id, state: await loadDeliberationState(client, id) });
+    }
+    return salida;
+  });
+}
+
+export async function verDeliberacion(deps: ServicioDeps, id: string): Promise<DeliberacionConId> {
+  return conCliente(deps.pool, async (client) => {
+    const log = await loadDeliberationLog(client, id);
+    if (log.length === 0) {
+      throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa conversación');
+    }
+    return { id, state: await verifyDeliberationLog(log) };
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Integridad
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -2437,6 +2759,8 @@ export interface VerificacionCompleta {
   readonly iniciativasVerificadas: number;
   readonly iniciativasRotas: readonly { readonly id: string; readonly motivo: string }[];
   readonly ejecucionRotas: readonly { readonly id: string; readonly motivo: string }[];
+  readonly deliberacionesVerificadas: number;
+  readonly deliberacionesRotas: readonly { readonly id: string; readonly motivo: string }[];
 }
 
 /**
@@ -2480,6 +2804,24 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
         iniciativasVerificadas++;
       } catch (error) {
         iniciativasRotas.push({
+          id,
+          motivo: error instanceof Error ? error.message : 'motivo desconocido',
+        });
+      }
+    }
+
+    // Las conversaciones se vuelven a armar enteras. No es una comprobación de adorno: el plegado es
+    // donde se revalida que cada aporte sigue a nombre de quien lo escribió y que ninguno responde a
+    // algo que no está. Sin esta fila, una conversación rota sólo se notaría porque el export la
+    // retiene para siempre —y una retención permanente sin alarma es un fallo silencioso.
+    const deliberacionesRotas: { id: string; motivo: string }[] = [];
+    let deliberacionesVerificadas = 0;
+    for (const id of await listAggregateIds(client, DELIBERATION_AGGREGATE_TYPE)) {
+      try {
+        await loadDeliberationState(client, id);
+        deliberacionesVerificadas++;
+      } catch (error) {
+        deliberacionesRotas.push({
           id,
           motivo: error instanceof Error ? error.message : 'motivo desconocido',
         });
@@ -2702,19 +3044,41 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
       iniciativasVerificadas,
       iniciativasRotas,
       ejecucionRotas,
+      deliberacionesVerificadas,
+      deliberacionesRotas,
     };
   });
 }
 
-/** El historial completo, tal cual está: para que cualquiera lo recompute por su cuenta. */
+/**
+ * El historial, tal cual está, para que cualquiera lo recompute por su cuenta — **menos lo que
+ * todavía no se puede publicar**.
+ *
+ * Esta es la superficie de `ledger:export`, que la matriz declara `OPEN`: la sirve cualquier persona
+ * sin cuenta, desde el enlace de descarga de «Verificar integridad». Por eso es aquí donde la deuda
+ * de ADR-0049 se paga de verdad: sin la retención, quien no puede leer una autoría por la API la
+ * leería descargando este fichero.
+ *
+ * Lo retenido va **declarado**, con su motivo en palabras. Un hueco explicado es una decisión que se
+ * puede discutir; un hueco callado sería indistinguible de una manipulación.
+ */
 export async function exportarTodo(deps: ServicioDeps): Promise<{
   readonly formato: number;
   readonly eventos: readonly Record<string, unknown>[];
+  readonly retenidos: readonly Record<string, unknown>[];
 }> {
   return conCliente(deps.pool, async (client) => {
-    const eventos = await readAll(client);
+    const todos = await readAll(client);
+    const retenidas = await deliberacionesRetenidas(client);
+    const idsRetenidos = new Set(retenidas.map((r) => r.aggregateId));
+    const eventos = todos.filter((e) => !idsRetenidos.has(e.event.aggregateId));
     return {
       formato: 1,
+      retenidos: retenidas.map((r) => ({
+        conversacion: r.aggregateId,
+        cuantosHechos: todos.filter((e) => e.event.aggregateId === r.aggregateId).length,
+        motivo: r.motivo,
+      })),
       eventos: eventos.map((e) => ({
         indice: e.leafIndex.toString(),
         agregado: e.event.aggregateId,

@@ -24,10 +24,13 @@ import cookie from '@fastify/cookie';
 import {
   type ApiError,
   abrirDecision as abrirDecisionSchema,
+  abrirDeliberacion as abrirDeliberacionSchema,
   aceptarRevisionTarea as aceptarRevisionTareaSchema,
   agregarEvidenciaTarea as agregarEvidenciaTareaSchema,
   actualizarCapacidad as actualizarCapacidadSchema,
+  aportar as aportarSchema,
   aportarEvidencia as aportarEvidenciaSchema,
+  avanzarEtapa as avanzarEtapaSchema,
   canjeEnlace as canjeEnlaceSchema,
   crearProblema as crearProblemaSchema,
   crearPropuesta as crearPropuestaSchema,
@@ -37,6 +40,7 @@ import {
   bloquearTarea as bloquearTareaSchema,
   type InformeIntegridad,
   mensajeDe,
+  MENSAJES_DELIBERACION,
   type Portada,
   retirarEvidencia as retirarEvidenciaSchema,
   ratificarDecision as ratificarDecisionSchema,
@@ -95,6 +99,8 @@ import {
 import {
   decisionDetalleDto,
   decisionResumenDto,
+  deliberacionDetalleDto,
+  deliberacionResumenDto,
   iniciativaDto,
   problemaDetalleDto,
   problemaResumenDto,
@@ -106,9 +112,12 @@ import { consume, type RateRule, REGLA_ENLACE, REGLA_ESCRITURA } from './rate-li
 import {
   ACTOR_ANONIMO,
   abrirDecision,
+  abrirDeliberacion,
   aceptarRevisionTarea,
   agregarEvidenciaTarea,
+  aportarADeliberacion,
   aportarEvidencia,
+  avanzarEtapaDeliberacion,
   bloquearTarea,
   cerrarDecision,
   crearProblema,
@@ -118,6 +127,7 @@ import {
   entregarTarea,
   exportarTodo,
   listarDecisiones,
+  listarDeliberaciones,
   listarIniciativas,
   listarProblemas,
   listarPropuestas,
@@ -136,6 +146,7 @@ import {
   ServicioError,
   type ServicioDeps,
   verDecision,
+  verDeliberacion,
   verEvidenciaTarea,
   verIniciativa,
   verificarTodo,
@@ -258,13 +269,17 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
       estado,
       cuerpo: {
         codigo: error.code,
-        mensaje: mensajeDe(error.code, error.message),
+        mensaje: mensajeDe(error.code, MENSAJES_DELIBERACION[error.code] ?? error.message),
         queHacer:
           error.reason === 'NOT_AUTHENTICATED'
             ? 'Entrá con tu correo institucional; tu borrador se conserva.'
             : error.reason === 'NOT_THE_OWNER'
               ? 'Esta acción le corresponde a otra persona; podés aportar por los canales abiertos.'
-              : 'Si creés que es un error, cualquier miembro puede llevarlo al Círculo de Garantías.',
+              : // La denegación por etapa no es un problema de papeles y decirlo así sería mentir:
+                // no hay nadie en el grupo que pueda concederla, sólo el paso del tiempo (ADR-0049).
+                error.reason === 'STAGE_STILL_OPEN'
+                ? 'Esperá a que cierre la etapa: entonces aparece, para todo el mundo a la vez.'
+                : 'Si creés que es un error, cualquier miembro puede llevarlo al Círculo de Garantías.',
       },
     };
   }
@@ -284,7 +299,10 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
       error.code === 'TASK_OFFER_ALREADY_ANSWERED';
     return {
       estado: semanticConflict ? 409 : 422,
-      cuerpo: { codigo: error.code, mensaje: mensajeDe(error.code, error.message) },
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code, MENSAJES_DELIBERACION[error.code] ?? error.message),
+      },
     };
   }
   if (error instanceof z.ZodError) {
@@ -988,6 +1006,80 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Deliberación
+  //
+  // Ninguna de estas rutas comprueba un permiso, y no es un olvido: `openDeliberation`,
+  // `submitContribution` y `advanceStage` llaman a `authorize` antes de construir el evento, y
+  // `readContributionAuthor` es la única puerta por la que sale una autoría. Un `preHandler` aquí
+  // protegería exactamente las rutas que existan hoy.
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  async function deliberacionDetalle(
+    request: FastifyRequest,
+    id: string,
+    state: Parameters<typeof deliberacionDetalleDto>[1],
+  ): Promise<ReturnType<typeof deliberacionDetalleDto>> {
+    return deliberacionDetalleDto(
+      id,
+      state,
+      actorDe(request),
+      await tituloDelProblema(state.problemId ?? ''),
+    );
+  }
+
+  app.get('/deliberaciones', async (request) => {
+    const query = parse(z.object({ problema: z.string().optional() }), request.query);
+    const todas = await listarDeliberaciones(deps);
+    const filtradas =
+      query.problema === undefined
+        ? todas
+        : todas.filter(({ state }) => state.problemId === query.problema);
+    const salida = [];
+    for (const { id, state } of filtradas) {
+      salida.push(
+        deliberacionResumenDto(id, state, await tituloDelProblema(state.problemId ?? '')),
+      );
+    }
+    return salida;
+  });
+
+  app.post('/deliberaciones', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const cuerpo = parse(abrirDeliberacionSchema, request.body);
+    const abierta = await abrirDeliberacion(deps, actorDe(request), cuerpo);
+    return await reply
+      .status(201)
+      .send(await deliberacionDetalle(request, abierta.id, abierta.state));
+  });
+
+  app.get('/deliberaciones/:id', async (request) => {
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const { state } = await verDeliberacion(deps, id);
+    return await deliberacionDetalle(request, id, state);
+  });
+
+  app.post('/deliberaciones/:id/aportes', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(aportarSchema, request.body);
+    const escrita = await aportarADeliberacion(deps, actorDe(request), id, cuerpo);
+    return await reply.status(201).send(await deliberacionDetalle(request, id, escrita.state));
+  });
+
+  /**
+   * Avanzar de etapa. Cierra una ventana de escritura **para siempre** y, al salir de Perspectivas,
+   * es además lo que concede la lectura de la autoría. No lleva cuerpo más allá de la clave de
+   * idempotencia: no hay nada que elegir, sólo el sucesor exacto.
+   */
+  app.post('/deliberaciones/:id/etapa', async (request) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(avanzarEtapaSchema, request.body);
+    const avanzada = await avanzarEtapaDeliberacion(deps, actorDe(request), id, cuerpo);
+    return await deliberacionDetalle(request, id, avanzada.state);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
   // Integridad
   // ═══════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1073,6 +1165,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         ...(v.decisionesRotas.length === 0
           ? {}
           : { detalle: v.decisionesRotas.map((d) => `${d.id}: ${d.motivo}`).join(' · ') }),
+      },
+      {
+        id: 'conversaciones',
+        queSeComprobo:
+          'Que cada conversación por etapas se puede volver a armar entera desde el historial: que ' +
+          'ningún aporte cambió de etapa, que cada uno sigue a nombre de quien lo escribió, y que ' +
+          'ninguno responde a algo que no está.',
+        bien: v.deliberacionesRotas.length === 0,
+        queSignifica:
+          v.deliberacionesRotas.length === 0
+            ? `Se volvieron a armar ${String(v.deliberacionesVerificadas)} conversaciones. Nadie ` +
+              'puede atribuirle a otra persona algo que no escribió: el historial lo rechazaría al ' +
+              'volver a leerlo, no sólo al escribirlo.'
+            : 'Alguna conversación no se puede volver a armar desde el historial. Mientras eso pase ' +
+              'no se publica entera, y esta fila no se pone en verde.',
+        ...(v.deliberacionesRotas.length === 0
+          ? {}
+          : { detalle: v.deliberacionesRotas.map((d) => `${d.id}: ${d.motivo}`).join(' · ') }),
       },
       {
         id: 'ejecucion',

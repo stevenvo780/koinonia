@@ -13,7 +13,12 @@
 
 import { z } from 'zod';
 import {
+  CONTRIBUTION_KINDS,
+  DELIBERATION_STAGES,
+  MIN_CONTRIBUTION_LENGTH,
   OUTCOME_CRITERION_EVIDENCE,
+  POSITION_MODES,
+  REASON_RELATIONS,
   TASK_BLOCK_CATEGORIES,
   TASK_CHANGE_REASONS,
   TASK_EVIDENCE_KIND_CODES,
@@ -760,6 +765,440 @@ export const iniciativaDetalle = iniciativaResumen.extend({
   tareas: z.array(tarea),
 });
 export type IniciativaDetalle = z.infer<typeof iniciativaDetalle>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Deliberación
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Las seis ventanas de escritura. Los identificadores son los del motor y **nunca** se muestran:
+ * en pantalla se dicen con `ETAPA_EN_PALABRAS`, que es la lista que manda ADR-0041.
+ */
+export const etapaDeliberacion = z.enum(DELIBERATION_STAGES);
+export type EtapaDeliberacion = z.infer<typeof etapaDeliberacion>;
+
+/** Cómo se llama cada etapa en pantalla. Una palabra, la que usa la gente. */
+export const ETAPA_EN_PALABRAS: Readonly<Record<EtapaDeliberacion, string>> = {
+  preguntas_aclaratorias: 'Preguntas',
+  perspectivas: 'Perspectivas',
+  construccion_alternativas: 'Alternativas',
+  objeciones: 'Objeciones',
+  enmiendas: 'Enmiendas',
+  listo_para_decidir: 'Listo para decidir',
+};
+
+/** Para qué sirve cada etapa, en una frase. Va siempre visible: una etapa sin propósito es un rótulo. */
+export const ETAPA_PARA_QUE_SIRVE: Readonly<Record<EtapaDeliberacion, string>> = {
+  preguntas_aclaratorias:
+    'Primero se entiende el problema. Acá se pregunta lo que no está claro y se responde.',
+  perspectivas:
+    'Acá cada quien dice cómo ve el problema y por qué. Todavía no se proponen soluciones.',
+  construccion_alternativas: 'Con lo dicho, se arman salidas concretas al problema.',
+  objeciones: 'Acá se dice qué puede salir mal en cada salida propuesta, y qué tan grave sería.',
+  enmiendas: 'Cada salida se corrige para responder a lo que se objetó.',
+  listo_para_decidir: 'Acá ya no se escribe. Lo que sigue es una decisión.',
+};
+
+/** Los seis tipos de aporte. También son identificadores del motor: en pantalla, la tabla de abajo. */
+export const tipoAporte = z.enum(CONTRIBUTION_KINDS);
+export type TipoAporte = z.infer<typeof tipoAporte>;
+
+export const TIPO_APORTE_EN_PALABRAS: Readonly<Record<TipoAporte, string>> = {
+  posicion: 'Postura',
+  razon: 'Razón',
+  evidencia: 'Dato que lo respalda',
+  supuesto: 'Supuesto',
+  riesgo: 'Riesgo',
+  alternativa: 'Salida propuesta',
+};
+
+/** Preguntar y afirmar no son el mismo acto y no caben en la misma ventana. */
+export const modoPosicion = z.enum(POSITION_MODES);
+export type ModoPosicion = z.infer<typeof modoPosicion>;
+
+export const MODO_POSICION_EN_PALABRAS: Readonly<Record<ModoPosicion, string>> = {
+  pregunta_aclaratoria: 'Pregunta',
+  afirmacion: 'Postura',
+};
+
+/** Una razón o responde a una pregunta, o sostiene una postura. Nunca las dos cosas. */
+export const relacionRazon = z.enum(REASON_RELATIONS);
+export type RelacionRazon = z.infer<typeof relacionRazon>;
+
+export const RELACION_RAZON_EN_PALABRAS: Readonly<Record<RelacionRazon, string>> = {
+  responde: 'Responde a',
+  sostiene: 'Sostiene',
+};
+
+/** Gravedad declarada de un riesgo. Sin valor por defecto: hay que decirlo. */
+export const gravedadRiesgo = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+]);
+export type GravedadRiesgo = z.infer<typeof gravedadRiesgo>;
+
+export const GRAVEDAD_EN_PALABRAS: Readonly<Record<GravedadRiesgo, string>> = {
+  1: 'Molesta, pero se sigue',
+  2: 'Estorba a algunas personas',
+  3: 'Estorba a todo el grupo',
+  4: 'Deja el asunto sin resolver',
+  5: 'Hace daño difícil de deshacer',
+};
+
+/**
+ * Lo que de verdad se puede escribir, que **no es lo mismo que el tipo de aporte**.
+ *
+ * En `Preguntas` y en `Perspectivas` el motor admite las dos veces un aporte de tipo `posicion`, y
+ * sin embargo son actos distintos: allá una pregunta, acá una postura. Nombrar la fila de la tabla
+ * por su tipo produce el error que se cazó en pruebas —«acá se escribe: postura» en la etapa donde
+ * una postura se rechaza—. Así que el vocabulario de pantalla se construye sobre la combinación
+ * tipo × modo × relación, una sola vez, y lo usan el servidor (para explicar el rechazo) y la
+ * interfaz (para dibujar el formulario). Dos redacciones distintas de lo mismo acaban discrepando.
+ */
+export type ClaveAporte =
+  | 'pregunta'
+  | 'postura'
+  | 'responde'
+  | 'sostiene'
+  | 'razon'
+  | 'evidencia'
+  | 'supuesto'
+  | 'riesgo'
+  | 'alternativa';
+
+export interface AporteEnPalabras {
+  /** Cómo se ofrece en el formulario: «Una pregunta», «Una postura»… */
+  readonly nombre: string;
+  /** Para qué sirve, en una frase. Va debajo del control. */
+  readonly ayuda: string;
+  readonly tipo: TipoAporte;
+}
+
+export const APORTE_EN_PALABRAS: Readonly<Record<ClaveAporte, AporteEnPalabras>> = {
+  pregunta: {
+    nombre: 'Una pregunta',
+    ayuda: 'Algo que no está claro y hace falta entender antes de opinar.',
+    tipo: 'posicion',
+  },
+  postura: {
+    nombre: 'Una postura',
+    ayuda: 'Cómo ves el problema. Todavía no una solución.',
+    tipo: 'posicion',
+  },
+  responde: {
+    nombre: 'Una respuesta a una pregunta',
+    ayuda: 'Contestá una pregunta concreta de las que ya están.',
+    tipo: 'razon',
+  },
+  sostiene: {
+    nombre: 'Una razón que sostiene una postura',
+    ayuda: 'Por qué esa postura se sostiene.',
+    tipo: 'razon',
+  },
+  razon: {
+    nombre: 'Una razón',
+    ayuda: 'Por qué se sostiene lo que se dijo, o la respuesta a una pregunta abierta.',
+    tipo: 'razon',
+  },
+  evidencia: {
+    nombre: 'Un dato que respalda una razón',
+    ayuda: 'Un hecho comprobable. Va pegado a la razón que respalda, no a la conclusión.',
+    tipo: 'evidencia',
+  },
+  supuesto: {
+    nombre: 'Un supuesto',
+    ayuda: 'Algo que se está dando por cierto sin haberlo dicho.',
+    tipo: 'supuesto',
+  },
+  riesgo: {
+    nombre: 'Un riesgo de una salida',
+    ayuda: 'Qué puede salir mal, qué tan grave sería y cómo se reduciría.',
+    tipo: 'riesgo',
+  },
+  alternativa: {
+    nombre: 'Una salida propuesta',
+    ayuda: 'Qué se hace, concretamente, para resolver el problema.',
+    tipo: 'alternativa',
+  },
+};
+
+/** La fila de la tabla de una etapa, resuelta a las opciones concretas que se le ofrecen a alguien. */
+export function clavesDeAporte(reglas: {
+  readonly tiposQueSeAdmitenAhora: readonly TipoAporte[];
+  readonly modosQueSeAdmitenAhora: readonly ModoPosicion[];
+  readonly relacionesQueSeAdmitenAhora: readonly RelacionRazon[];
+}): readonly ClaveAporte[] {
+  const claves: ClaveAporte[] = [];
+  for (const tipo of reglas.tiposQueSeAdmitenAhora) {
+    if (tipo === 'posicion') {
+      for (const modo of reglas.modosQueSeAdmitenAhora) {
+        claves.push(modo === 'pregunta_aclaratoria' ? 'pregunta' : 'postura');
+      }
+      continue;
+    }
+    if (tipo === 'razon') {
+      // Con las dos relaciones abiertas se ofrece una sola opción: obligar a elegir entre «responde»
+      // y «sostiene» cuando las dos valen es hacerle resolver a la persona una ambigüedad nuestra.
+      if (reglas.relacionesQueSeAdmitenAhora.length === 1) {
+        claves.push(reglas.relacionesQueSeAdmitenAhora[0] === 'responde' ? 'responde' : 'sostiene');
+      } else if (reglas.relacionesQueSeAdmitenAhora.length > 1) {
+        claves.push('sostiene');
+        claves.push('responde');
+      }
+      continue;
+    }
+    claves.push(tipo);
+  }
+  return claves;
+}
+
+/**
+ * Lo que la pantalla tiene que decir sobre la autoría mientras Perspectivas siga abierta.
+ *
+ * Está aquí y no en la web porque **es una obligación de ADR-0049**, no una redacción: la protección
+ * es frente a las demás personas que participan, y **no** frente a quien administra el servidor. Un
+ * cliente que dijera «anónimo» a secas estaría prometiendo algo que el sistema no da.
+ */
+export const AVISO_AUTORIA_OCULTA =
+  'Mientras esta etapa esté abierta, nadie ve quién escribió cada cosa: ni vos, ni quien cuida el ' +
+  'procedimiento. Al cerrarla aparecen los nombres, incluido el tuyo. Esto te protege de las demás ' +
+  'personas que participan, no de quien administra el servidor, que sí puede verlo en la máquina.';
+
+export const AVISO_AUTORIA_VISIBLE =
+  'Esta etapa ya cerró, así que cada aporte se muestra con quien lo escribió. Lo que se escribió ' +
+  'antes no cambia: se le suma el nombre.';
+
+/**
+ * Tercer caso, y el que se olvida: la etapa ya cerró pero **quien mira no puede leer la autoría**
+ * porque no entró, o porque este asunto lo lleva otro grupo.
+ *
+ * Sin esta frase la pantalla diría «ya se ve quién escribió cada cosa» y a continuación no mostraría
+ * ni un nombre, que es la clase de contradicción que hace desconfiar de todo lo demás.
+ */
+export const AVISO_AUTORIA_SOLO_DEL_GRUPO =
+  'Esta etapa ya cerró y cada aporte tiene nombre, pero los nombres los ve el grupo que lleva este ' +
+  'asunto. Lo que estás leyendo es el contenido, que es público.';
+
+const textoAporte = z
+  .string()
+  .min(
+    MIN_CONTRIBUTION_LENGTH,
+    'Contá algo más: con menos de veinte caracteres es una reacción, no un aporte.',
+  )
+  .max(4000, 'Quedó muy largo para leerlo en un teléfono. Partilo en dos aportes.');
+
+const listaDeAportes = z
+  .array(opaqueId)
+  .min(1, 'Elegí al menos un aporte al que esto se refiere.')
+  .max(20)
+  .refine((ids) => new Set(ids).size === ids.length, 'Un aporte sólo se referencia una vez.');
+
+/** Abrir una deliberación es un acto de procedimiento, con responsable y con plazo visible. */
+export const abrirDeliberacion = z
+  .object({
+    requestId,
+    problemaId: opaqueId,
+    /** Cuánto dura la primera ventana. Se muestra siempre: un plazo que no se ve no es un plazo. */
+    duracionHoras: z.number().int().min(1).max(720),
+  })
+  .strict();
+export type AbrirDeliberacion = z.infer<typeof abrirDeliberacion>;
+
+const aporteBase = z.object({
+  requestId,
+  /** Corregir es añadir: el aporte original permanece con su fecha y su autoría. */
+  corrigeA: opaqueId.optional(),
+});
+
+/**
+ * Un aporte, con **su arista obligatoria**. No hay una variante suelta: un aporte que no sabe a qué
+ * responde no entra, y eso se decide aquí y otra vez en el motor.
+ */
+export const aportar = z.discriminatedUnion('tipo', [
+  aporteBase
+    .extend({ tipo: z.literal('posicion'), modo: modoPosicion, texto: textoAporte })
+    .strict(),
+  aporteBase
+    .extend({
+      tipo: z.literal('razon'),
+      relacion: relacionRazon,
+      posicionId: opaqueId,
+      texto: textoAporte,
+    })
+    .strict(),
+  aporteBase
+    .extend({
+      tipo: z.literal('evidencia'),
+      sostieneRazonId: opaqueId,
+      texto: textoAporte,
+      fuente: z.string().min(1).max(140).optional(),
+    })
+    .strict(),
+  aporteBase
+    .extend({ tipo: z.literal('supuesto'), aplicaA: listaDeAportes, texto: textoAporte })
+    .strict(),
+  aporteBase
+    .extend({
+      tipo: z.literal('riesgo'),
+      salidaId: opaqueId,
+      gravedad: gravedadRiesgo,
+      impacto: textoAporte,
+      mitigacion: textoAporte,
+    })
+    .strict(),
+  aporteBase
+    .extend({
+      tipo: z.literal('alternativa'),
+      problemaId: opaqueId,
+      saleDe: listaDeAportes,
+      texto: textoAporte,
+    })
+    .strict(),
+]);
+export type Aportar = z.infer<typeof aportar>;
+
+/** Avanzar de etapa cierra una ventana de escritura para siempre. Por eso no lleva nada más. */
+export const avanzarEtapa = z.object({ requestId }).strict();
+export type AvanzarEtapa = z.infer<typeof avanzarEtapa>;
+
+/** Una arista del grafo, ya dicha en palabras: «Sostiene», «Responde a», «Riesgo de». */
+export const vinculoAporte = z.object({ aporteId: opaqueId, comoSeRelaciona: z.string() }).strict();
+export type VinculoAporte = z.infer<typeof vinculoAporte>;
+
+/**
+ * Un aporte tal como sale del servidor.
+ *
+ * `autorId` y `esMio` **faltan** mientras la etapa oculte la autoría, y faltan de verdad: no van
+ * vacíos ni con un valor de relleno. Que falten los dos no es simetría decorativa —si `esMio`
+ * viajara, quien mirara dos respuestas distintas sabría de quién es cada aporte por diferencia, que
+ * es exactamente la fuga que la regla de etapa existe para cerrar (ADR-0049).
+ */
+export const aporteDeliberacion = z
+  .object({
+    id: opaqueId,
+    tipo: tipoAporte,
+    /** En qué ventana se escribió. La etapa vigente puede ser otra. */
+    etapa: etapaDeliberacion,
+    etapaEnPalabras: z.string(),
+    /** Cómo se llama este aporte en pantalla: «Pregunta», «Postura», «Riesgo»… */
+    comoSeLlama: z.string(),
+    /**
+     * Sólo en una `posicion`: si preguntó o si afirmó.
+     *
+     * Hace falta porque el motor valida el **tipo** del destino de una arista y no su modo: una
+     * razón que dice «sostiene» puede apuntar, sin que nada la frene, a una pregunta de la etapa
+     * anterior. La interfaz no puede arreglar esa regla —vive en el motor— pero sí puede no ofrecer
+     * el disparate, y para eso necesita este dato. Queda anotado como hueco del motor.
+     */
+    modo: modoPosicion.optional(),
+    texto: z.string(),
+    fuente: z.string().optional(),
+    gravedad: gravedadRiesgo.optional(),
+    gravedadEnPalabras: z.string().optional(),
+    mitigacion: z.string().optional(),
+    /** Qué sostiene, a qué responde, de qué es riesgo. Es el grafo, dicho en palabras. */
+    responde: z.array(vinculoAporte),
+    /** Si corrige a otro aporte. El corregido **sigue** en la lista, con su fecha. */
+    corrigeA: opaqueId.optional(),
+    /** `false` si alguien lo corrigió después. No desaparece: deja de ser la punta. */
+    vigente: z.boolean(),
+    /**
+     * Cuándo se escribió. **Falta mientras la autoría esté oculta**, y falta por la misma razón que
+     * falta el autor.
+     *
+     * Un instante al milisegundo junto a un aporte sin nombre no es un dato de presentación: es el
+     * canal lateral clásico para desanonimizar. Basta con saber por otra vía —una conversación, un
+     * «ya escribí», el momento en que alguien se conectó— a qué hora escribió una persona para
+     * atribuirle el aporte, sin rozar la acción denegada. La regla queda dicha en una frase: mientras
+     * no se pueda saber **quién**, tampoco se publica **cuándo**.
+     */
+    cuando: instantMs.optional(),
+    autorId: opaqueId.optional(),
+    esMio: z.boolean().optional(),
+  })
+  .strict();
+export type AporteDeliberacion = z.infer<typeof aporteDeliberacion>;
+
+export const deliberacionResumen = z.object({
+  id: opaqueId,
+  problemaId: opaqueId,
+  problemaTitulo: z.string(),
+  circuloId: opaqueId,
+  etapa: etapaDeliberacion,
+  etapaEnPalabras: z.string(),
+  queSeHaceEnEstaEtapa: z.string(),
+  abreEn: instantMs,
+  cierraEn: instantMs,
+  cuantosAportes: z.number().int().nonnegative(),
+  /** `true` cuando cada aporte ya se muestra con quien lo escribió. */
+  autoriaVisible: z.boolean(),
+});
+export type DeliberacionResumen = z.infer<typeof deliberacionResumen>;
+
+export const deliberacionDetalle = deliberacionResumen.extend({
+  /** La verdad sobre la autoría, en castellano llano. Va siempre, oculta o visible. */
+  avisoDeAutoria: z.string(),
+  aportes: z.array(aporteDeliberacion),
+  /** Qué se puede escribir ahora mismo, dicho en palabras y no con identificadores. */
+  queSePuedeEscribirAhora: z.string(),
+  /**
+   * La fila de la tabla del motor para esta etapa, tal cual.
+   *
+   * Va entera —tipos, modos y relaciones— porque si no la interfaz tendría que **volver a derivar**
+   * qué cabe en cada etapa, y ese es el momento exacto en que aparecen dos tablas que se
+   * contradicen: la pantalla ofrecería un control que la orden rechaza, o escondería uno que sí
+   * cabía. Acá el formulario se dibuja con lo que dice el motor y con nada más.
+   */
+  tiposQueSeAdmitenAhora: z.array(tipoAporte),
+  modosQueSeAdmitenAhora: z.array(modoPosicion),
+  relacionesQueSeAdmitenAhora: z.array(relacionRazon),
+  /** `true` en Enmiendas: allí una salida corrige a otra y el formulario tiene que exigirlo. */
+  laSalidaDebeCorregirAOtra: z.boolean(),
+  puedoAportar: z.boolean(),
+  motivoNoPuedoAportar: z.string().optional(),
+  /** Lo decide el servidor con la matriz del motor. La ruta vuelve a comprobarlo igual. */
+  puedoAvanzarEtapa: z.boolean(),
+  etapaSiguiente: etapaDeliberacion.optional(),
+  etapaSiguienteEnPalabras: z.string().optional(),
+});
+export type DeliberacionDetalle = z.infer<typeof deliberacionDetalle>;
+
+/**
+ * Rechazos propios de la deliberación, dichos para quien los lee.
+ *
+ * Viven aquí —y no en `errors.ts`— junto al resto del vocabulario de esta pantalla; `mensajeDe` los
+ * recibe como respaldo desde la capa HTTP, que es la que sabe en qué etapa está la deliberación y
+ * puede decir además qué sí cabe ahora.
+ */
+export const MENSAJES_DELIBERACION: Readonly<Record<string, string>> = {
+  CONTRIBUTION_KIND_NOT_ALLOWED: 'Eso no se escribe en la etapa en la que va la conversación.',
+  POSITION_MODE_NOT_ALLOWED: 'Eso no se escribe en la etapa en la que va la conversación.',
+  REASON_RELATION_NOT_ALLOWED: 'Eso no se escribe en la etapa en la que va la conversación.',
+  AMENDMENT_MUST_SUPERSEDE:
+    'En Enmiendas una salida corrige a otra: elegí cuál estás corrigiendo. Si es una salida nueva, ' +
+    'ya pasó su turno.',
+  WRITE_WINDOW_CLOSED:
+    'El plazo de esta etapa ya venció. Lo que se escribe tarde no se guarda para después: una ' +
+    'perspectiva escrita sin ver las demás no puede reaparecer cuando ya se leyeron todas.',
+  WRITE_WINDOW_NOT_OPEN: 'Esta etapa todavía no abrió. Arriba dice a qué hora empieza.',
+  MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE_REACHED:
+    'Ya escribiste todo lo que cabe por persona en esta etapa. En la siguiente empezás de cero.',
+  UNKNOWN_CONTRIBUTION_REFERENCE: 'Eso a lo que querés responder ya no está en esta conversación.',
+  WRONG_REFERENCE_KIND: 'Eso a lo que querés responder no es de la clase que hace falta acá.',
+  FORWARD_REFERENCE: 'No se puede responder a algo que se escribió después.',
+  ASSUMPTION_WITHOUT_TARGET: 'Decí a qué aporte se le aplica ese supuesto.',
+  ALTERNATIVE_WITHOUT_SOURCE: 'Decí de qué posturas sale esa salida.',
+  DELIBERATION_NOT_OPEN: 'No encontramos esa conversación.',
+  DELIBERATION_ALREADY_OPEN: 'Ese problema ya tiene una conversación abierta.',
+  UNAUTHORIZED_STAGE_STILL_OPEN:
+    'Todavía no se puede saber quién escribió cada cosa. Aparece cuando esta etapa cierre, y no ' +
+    'hay ningún papel en el grupo que lo adelante.',
+  UNAUTHORIZED_STAGE_UNKNOWN: 'No encontramos esa conversación.',
+  UNKNOWN_CONTRIBUTION: 'Ese aporte no está en esta conversación.',
+};
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Integridad

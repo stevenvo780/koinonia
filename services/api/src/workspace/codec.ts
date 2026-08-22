@@ -16,7 +16,16 @@ import {
   type ChainedEvent,
   type ChainedInput,
   circleId,
+  CONTRIBUTION_KINDS,
+  type ContributionBody,
+  contributionId,
+  type ContributionKind,
   decisionId,
+  DELIBERATION_STAGES,
+  type DeliberationEvent,
+  deliberationId,
+  type DeliberationPayload,
+  type DeliberationStage,
   type ExecutionPlan,
   type EvidenceCertainty,
   EVIDENCE_CERTAINTIES,
@@ -30,10 +39,19 @@ import {
   milestoneId,
   OUTCOME_CRITERION_EVIDENCE,
   type OutcomeCriterionEvidence,
+  POSITION_MODES,
+  type PositionMode,
+  presentationSeed,
   type ProblemPayload,
   type ProblemStatus,
   type ProposalPayload,
   proposalId,
+  REASON_RELATIONS,
+  type ReasonRelation,
+  RISK_SEVERITIES,
+  type RiskSeverity,
+  STAGE_ADVANCE_CAUSES,
+  type StageAdvanceCause,
   TASK_BLOCK_CATEGORIES,
   type TaskBlockCategory,
   TASK_CHANGE_REASONS,
@@ -59,6 +77,7 @@ import type { LedgerEventDraft, StoredEvent } from '../ledger/types.js';
 export const PROBLEM_AGGREGATE_TYPE = 'problem';
 export const PROPOSAL_AGGREGATE_TYPE = 'proposal';
 export const INITIATIVE_AGGREGATE_TYPE = 'initiative';
+export const DELIBERATION_AGGREGATE_TYPE = 'deliberation';
 export const WORKSPACE_EVENT_VERSION = 1;
 
 export class WorkspaceCodecError extends Error {
@@ -722,6 +741,279 @@ function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+// Deliberación
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ⚠ El autor viaja **dos veces** y las dos son necesarias.
+ *
+ * `actor` en el sobre y `authorId` en el cuerpo dicen la misma persona, y el plegado del dominio
+ * rechaza el evento si no coinciden (`NOT_THE_AUTHOR`). No es redundancia que se pueda «optimizar»
+ * quitando una: es lo que permite que el replay reejecute la autorización en vez de limitarse a
+ * recomputar un hash (ADR-0049, motivo 4). Quitar `authorId` del cuerpo dejaría la comprobación sin
+ * nada que comparar.
+ *
+ * Y por eso mismo **la autoría no se puede tapar aquí**: las dos copias entran en la preimagen del
+ * hash, así que un evento escrito sin autor no verifica. Lo que hace la capa de servicio es
+ * **retener el evento entero** mientras la etapa lo exija; ver `ledger/export.ts`.
+ */
+const DELIBERATION_BODY_KEYS = {
+  DeliberationOpened: [
+    'problemId',
+    'circleId',
+    'stage',
+    'opensAt',
+    'closesAt',
+    'presentationSeed',
+    'maxContributionsPerAuthorPerStage',
+  ],
+  ContributionSubmitted: ['contributionId', 'stage', 'body', 'authorId'],
+  StageAdvanced: ['from', 'to', 'cause', 'opensAt', 'closesAt', 'presentationSeed'],
+} satisfies Readonly<Record<DeliberationPayload['type'], readonly string[]>>;
+
+/** Las claves exactas de cada clase de aporte. `evidencia` admite además `source`, opcional. */
+const CONTRIBUTION_BODY_KEYS = {
+  posicion: ['kind', 'mode', 'text'],
+  razon: ['kind', 'relation', 'positionId', 'text'],
+  evidencia: ['kind', 'supportsReasonId', 'text'],
+  supuesto: ['kind', 'appliesToContributionIds', 'text'],
+  riesgo: ['kind', 'alternativeId', 'severity', 'impact', 'mitigation'],
+  alternativa: ['kind', 'problemId', 'sourcePositionIds', 'text'],
+} satisfies Readonly<Record<ContributionKind, readonly string[]>>;
+
+function encodeContributionBody(body: ContributionBody): JsonObject {
+  switch (body.kind) {
+    case 'posicion':
+      return { kind: body.kind, mode: body.mode, text: body.text };
+    case 'razon':
+      return {
+        kind: body.kind,
+        relation: body.relation,
+        positionId: body.positionId,
+        text: body.text,
+      };
+    case 'evidencia':
+      return {
+        kind: body.kind,
+        supportsReasonId: body.supportsReasonId,
+        text: body.text,
+        // Omitir, jamás `null`: `{}` y `{"source":null}` hashean distinto (§1.3.d).
+        ...(body.source === undefined ? {} : { source: body.source }),
+      };
+    case 'supuesto':
+      return {
+        kind: body.kind,
+        appliesToContributionIds: [...body.appliesToContributionIds],
+        text: body.text,
+      };
+    case 'riesgo':
+      return {
+        kind: body.kind,
+        alternativeId: body.alternativeId,
+        severity: body.severity,
+        impact: body.impact,
+        mitigation: body.mitigation,
+      };
+    case 'alternativa':
+      return {
+        kind: body.kind,
+        problemId: body.problemId,
+        sourcePositionIds: [...body.sourcePositionIds],
+        text: body.text,
+      };
+  }
+}
+
+function riskSeverity(source: JsonObject, path: string): RiskSeverity {
+  const value = int(source, 'severity', path);
+  if (!(RISK_SEVERITIES as readonly number[]).includes(value)) {
+    throw new WorkspaceCodecError(
+      `${path}.severity`,
+      `${String(value)} no está en {${RISK_SEVERITIES.join(', ')}}`,
+    );
+  }
+  return value as RiskSeverity;
+}
+
+function decodeContributionBody(source: JsonObject, path: string): ContributionBody {
+  const kind = oneOf<ContributionKind>(
+    str(source, 'kind', path),
+    CONTRIBUTION_KINDS,
+    `${path}.kind`,
+  );
+  const expected = CONTRIBUTION_BODY_KEYS[kind];
+  assertExactKeys(
+    source,
+    kind === 'evidencia' && source['source'] !== undefined ? [...expected, 'source'] : expected,
+    path,
+  );
+  switch (kind) {
+    case 'posicion':
+      return {
+        kind,
+        mode: oneOf<PositionMode>(str(source, 'mode', path), POSITION_MODES, `${path}.mode`),
+        text: str(source, 'text', path),
+      };
+    case 'razon':
+      return {
+        kind,
+        relation: oneOf<ReasonRelation>(
+          str(source, 'relation', path),
+          REASON_RELATIONS,
+          `${path}.relation`,
+        ),
+        positionId: contributionId(str(source, 'positionId', path)),
+        text: str(source, 'text', path),
+      };
+    case 'evidencia': {
+      const fuente = optStr(source, 'source', path);
+      return {
+        kind,
+        supportsReasonId: contributionId(str(source, 'supportsReasonId', path)),
+        text: str(source, 'text', path),
+        ...(fuente === undefined ? {} : { source: fuente }),
+      };
+    }
+    case 'supuesto':
+      return {
+        kind,
+        appliesToContributionIds: stringArray(source, 'appliesToContributionIds', path).map(
+          contributionId,
+        ),
+        text: str(source, 'text', path),
+      };
+    case 'riesgo':
+      return {
+        kind,
+        alternativeId: contributionId(str(source, 'alternativeId', path)),
+        severity: riskSeverity(source, path),
+        impact: str(source, 'impact', path),
+        mitigation: str(source, 'mitigation', path),
+      };
+    case 'alternativa':
+      return {
+        kind,
+        problemId: str(source, 'problemId', path),
+        sourcePositionIds: stringArray(source, 'sourcePositionIds', path).map(contributionId),
+        text: str(source, 'text', path),
+      };
+  }
+}
+
+function encodeDeliberationBody(payload: DeliberationPayload): JsonObject {
+  switch (payload.type) {
+    case 'DeliberationOpened':
+      return {
+        problemId: payload.problemId,
+        circleId: payload.circleId,
+        stage: payload.stage,
+        opensAt: payload.opensAt,
+        closesAt: payload.closesAt,
+        presentationSeed: payload.presentationSeed,
+        maxContributionsPerAuthorPerStage: payload.maxContributionsPerAuthorPerStage,
+      };
+    case 'ContributionSubmitted':
+      return {
+        contributionId: payload.contributionId,
+        stage: payload.stage,
+        body: encodeContributionBody(payload.body),
+        authorId: payload.authorId,
+        ...(payload.supersedesContributionId === undefined
+          ? {}
+          : { supersedesContributionId: payload.supersedesContributionId }),
+      };
+    case 'StageAdvanced':
+      return {
+        from: payload.from,
+        to: payload.to,
+        cause: payload.cause,
+        opensAt: payload.opensAt,
+        closesAt: payload.closesAt,
+        presentationSeed: payload.presentationSeed,
+      };
+  }
+}
+
+function assertDeliberationBodyKeys(type: string, body: JsonObject): void {
+  const base = (DELIBERATION_BODY_KEYS as Readonly<Record<string, readonly string[] | undefined>>)[
+    type
+  ];
+  if (base === undefined) {
+    throw new WorkspaceCodecError('eventType', `${type} no es un evento de deliberación`);
+  }
+  assertExactKeys(
+    body,
+    type === 'ContributionSubmitted' && body['supersedesContributionId'] !== undefined
+      ? [...base, 'supersedesContributionId']
+      : base,
+    type,
+  );
+}
+
+function decodeDeliberationBody(type: string, body: JsonObject): DeliberationPayload {
+  assertDeliberationBodyKeys(type, body);
+  switch (type) {
+    case 'DeliberationOpened': {
+      // La etapa de apertura es literal en el tipo del dominio: se comprueba, no se ensancha.
+      const stage = str(body, 'stage', type);
+      if (stage !== 'preguntas_aclaratorias') {
+        throw new WorkspaceCodecError(
+          `${type}.stage`,
+          'una deliberación se abre en preguntas_aclaratorias y en ninguna otra etapa',
+        );
+      }
+      return {
+        type,
+        problemId: str(body, 'problemId', type),
+        circleId: circleId(str(body, 'circleId', type)),
+        stage,
+        opensAt: instant(int(body, 'opensAt', type)),
+        closesAt: instant(int(body, 'closesAt', type)),
+        presentationSeed: presentationSeed(str(body, 'presentationSeed', type)),
+        maxContributionsPerAuthorPerStage: int(body, 'maxContributionsPerAuthorPerStage', type),
+      };
+    }
+    case 'ContributionSubmitted': {
+      const supersedes = optStr(body, 'supersedesContributionId', type);
+      return {
+        type,
+        contributionId: contributionId(str(body, 'contributionId', type)),
+        stage: oneOf<DeliberationStage>(
+          str(body, 'stage', type),
+          DELIBERATION_STAGES,
+          `${type}.stage`,
+        ),
+        body: decodeContributionBody(obj(body, 'body', type), `${type}.body`),
+        authorId: memberId(str(body, 'authorId', type)),
+        ...(supersedes === undefined
+          ? {}
+          : { supersedesContributionId: contributionId(supersedes) }),
+      };
+    }
+    case 'StageAdvanced':
+      return {
+        type,
+        from: oneOf<DeliberationStage>(
+          str(body, 'from', type),
+          DELIBERATION_STAGES,
+          `${type}.from`,
+        ),
+        to: oneOf<DeliberationStage>(str(body, 'to', type), DELIBERATION_STAGES, `${type}.to`),
+        cause: oneOf<StageAdvanceCause>(
+          str(body, 'cause', type),
+          STAGE_ADVANCE_CAUSES,
+          `${type}.cause`,
+        ),
+        opensAt: instant(int(body, 'opensAt', type)),
+        closesAt: instant(int(body, 'closesAt', type)),
+        presentationSeed: presentationSeed(str(body, 'presentationSeed', type)),
+      };
+    default:
+      throw new WorkspaceCodecError('eventType', `${type} no es un evento de deliberación`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Frontera
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -789,6 +1081,21 @@ export function decodeProposalEvent(stored: StoredEvent): ChainedInput<ProposalP
 
 export function encodeInitiativeEvent(event: InitiativeEvent): LedgerEventDraft {
   return encode(event, encodeInitiativeBody);
+}
+
+export function encodeDeliberationEvent(event: DeliberationEvent): LedgerEventDraft {
+  return encode(event, encodeDeliberationBody);
+}
+
+export function decodeDeliberationEvent(stored: StoredEvent): ChainedInput<DeliberationPayload> {
+  const { event, body, id } = decodeEnvelope(stored, DELIBERATION_AGGREGATE_TYPE);
+  return {
+    eventId: eventId(id),
+    aggregateId: deliberationId(event.aggregateId),
+    occurredAt: isoToInstant(event.occurredAt),
+    actor: event.actor === undefined ? 'system' : memberId(event.actor),
+    payload: decodeDeliberationBody(event.eventType, body),
+  };
 }
 
 export function decodeInitiativeEvent(stored: StoredEvent): ChainedInput<InitiativePayload> {

@@ -121,6 +121,44 @@ export function useSesion(): {
   };
 }
 
+/**
+ * Un recorrido por etapas, con la etapa actual marcada **en palabras**.
+ *
+ * Es la pieza que se hace mal siempre: un recorrido de pasos donde el actual sólo se distingue por
+ * el color es invisible para quien no distingue esos colores y para quien usa un lector de pantalla.
+ * Acá el estado va tres veces —`aria-current`, un símbolo con `aria-hidden` y una palabra—, y la
+ * palabra es la que manda (WCAG 2.2 AA, criterio 1.4.1).
+ */
+export function Pasos({
+  titulo,
+  pasos,
+  actual,
+}: {
+  readonly titulo: string;
+  readonly pasos: readonly { readonly id: string; readonly nombre: string }[];
+  readonly actual: string;
+}): ReactNode {
+  const indiceActual = pasos.findIndex((paso) => paso.id === actual);
+  return (
+    <nav aria-label={titulo}>
+      <ol className="tarjetas">
+        {pasos.map((paso, indice) => {
+          const esActual = indice === indiceActual;
+          const yaPaso = indiceActual >= 0 && indice < indiceActual;
+          return (
+            <li key={paso.id} {...(esActual ? { 'aria-current': 'step' as const } : {})}>
+              <span aria-hidden="true">{yaPaso ? '✓ ' : esActual ? '▸ ' : '· '}</span>
+              {esActual ? <strong>{paso.nombre}</strong> : paso.nombre}
+              {esActual && <span className="suave"> — acá va la conversación ahora</span>}
+              {yaPaso && <span className="suave"> — ya cerró</span>}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
+
 export function BarraSesion(): ReactNode {
   const { sesion, cargando } = useSesion();
   if (cargando) return null;

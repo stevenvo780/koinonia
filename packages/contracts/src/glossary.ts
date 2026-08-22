@@ -39,6 +39,16 @@ export const FORBIDDEN_UI_TERMS: readonly string[] = [
   'checksum',
   'sha-256',
   'sha256',
+  // ── Vocabulario del motor de la deliberación (ADR-0046, ADR-0049) ──────────────────────────
+  // Todos nombran cosas que la pantalla sí muestra, y por eso están: la tentación de escribirlos
+  // es real. «Grafo» y «arista» tienen traducción obligatoria —«qué sostiene qué»— porque el dibujo
+  // se enseña igual, sólo que dicho en palabras; «evento» y «seq» son la fontanería del historial y
+  // no le importan a nadie que quiera aportar una idea.
+  'commitment',
+  'evento',
+  'seq',
+  'grafo',
+  'arista',
 ];
 
 /** Traducción tecnicismo → palabra humana (tabla de PRODUCT §7). */
@@ -68,6 +78,18 @@ export const GLOSSARY: Readonly<Record<string, string>> = {
   outcome: 'qué se decidió y qué sigue',
   accountability: 'qué se hizo con lo que se decidió',
   'commit-reveal': 'el número del sorteo se anunció sellado antes y se abrió después',
+  // ── Deliberación ──────────────────────────────────────────────────────────────────────────
+  'grafo de aportes': 'qué sostiene qué',
+  arista: 'a qué responde',
+  'agregado de deliberación': 'la conversación sobre este problema',
+  evento: 'lo que quedó escrito',
+  etapa: 'en qué va la conversación',
+  'ventana de escritura': 'hasta cuándo se puede escribir',
+  'aporte tipado': 'una postura, una razón, un dato, un riesgo o una salida',
+  'orden de presentación': 'el orden en que te aparecen los aportes',
+  'autoría sellada': 'todavía no se ve quién escribió cada cosa',
+  'alcance de etapa': 'hasta que esta etapa cierre',
+  supersede: 'corrige a',
 };
 
 /**
