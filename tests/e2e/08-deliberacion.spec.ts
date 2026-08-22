@@ -69,6 +69,23 @@ test.beforeAll(async () => {
   });
 });
 
+test('se llega a las conversaciones desde la navegación, sin escribir la dirección a mano', async ({
+  page,
+}) => {
+  // La pantalla estaba entera y funcionando, y no estaba enlazada desde ningún sitio: para una
+  // persona real no existía. El resto de este fichero navegaba con `page.goto`, que es justamente
+  // lo que oculta ese fallo —un `goto` llega igual a una pantalla huérfana—. Esta prueba entra por
+  // donde entra alguien: pulsando.
+  await ponerSesionEnNavegador(page, lucia);
+  await page.goto('/');
+  await page
+    .getByRole('navigation', { name: 'Principal' })
+    .getByRole('link', { name: 'Deliberaciones' })
+    .click();
+  await expect(page).toHaveURL(/\/deliberaciones$/u);
+  await expect(page.getByRole('heading', { level: 1, name: 'Deliberaciones' })).toBeVisible();
+});
+
 test('quien cuida el procedimiento abre la conversación desde la pantalla', async ({ page }) => {
   await ponerSesionEnNavegador(page, lucia);
   await page.goto('/deliberaciones');

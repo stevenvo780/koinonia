@@ -42,6 +42,18 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
               <li>
                 <Link href="/problemas">Problemas</Link>
               </li>
+              {/*
+                Va entre Problemas y Decisiones porque ése es el recorrido real: un problema se
+                conversa y después se decide. Faltaba, y sin el enlace la pantalla existía sólo para
+                quien supiera escribir la dirección a mano, que es no existir.
+
+                El texto del enlace es el mismo que el `h1` de destino, igual que los demás: quien
+                navega con lector de pantalla salta por la lista de enlaces y tiene que reconocer a
+                dónde llegó.
+              */}
+              <li>
+                <Link href="/deliberaciones">Deliberaciones</Link>
+              </li>
               <li>
                 <Link href="/decisiones">Decisiones</Link>
               </li>
