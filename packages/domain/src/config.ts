@@ -260,25 +260,28 @@ export interface Delegation {
 }
 
 /**
- * Punto de extensión de la democracia líquida (PARTE C).
+ * Democracia líquida (PARTE C). Los cuatro frenos de ADR-0029 viven aquí, y los cuatro son de
+ * dominio: caducidad obligatoria, resolución determinista, tope de profundidad y tope de
+ * concentración.
  *
- * DECISIÓN: el tipo existe completo y el motor lo transporta, pero `enabled: true` se **rechaza** en
- * esta entrega con `DELEGATION_NOT_IMPLEMENTED`. Aceptarlo y no resolverlo sería exactamente el
- * fallo ingenuo que INV-32 describe —«desactivar la delegación en silencio»—, con el que alguien
- * cree que su delegado vota por él y su voto simplemente no existe. Fallar cerrado y decirlo.
- * El punto de extensión real es `WeightResolver` en `tally/common.ts`: cuando la PARTE C entre, el
- * quórum, el escrutinio y los índices de concentración ya están escritos sobre pesos y sobre `E`.
+ * `enabled: true` es una configuración **válida** desde esta entrega. Lo que se rechaza es
+ * combinarla con `privacy: 'secret-ballot'` (C.7.a / ADR-0030), y hacerlo es una compuerta dura: la
+ * decisión **no se abre**. La delegación «inerte» —aceptarla y no resolverla— es la peor de las
+ * opciones posibles y la que INV-32 describe como fallo ingenuo: alguien cree que su delegado vota
+ * por él y su voto simplemente no existe.
  */
 export interface DelegationConfig {
   readonly enabled: boolean;
-  /** Profundidad máxima de la cadena, en ARISTAS. Default 4. */
+  /** Profundidad máxima de la cadena, en ARISTAS. Default 4 (C.4.c, `GOVERNANCE.md` §5). */
   readonly maxDepth: number;
-  /** Tope de poder por delegado, como fracción del CENSO. Default 1/10. */
+  /** Tope de poder por delegado, como fracción del CENSO. Default 1/10 ⇒ 30 de 300 (C.5.a). */
   readonly cap: Fraction;
   readonly overflowPolicy: 'return-to-delegator';
-  /** Vigencia máxima al conceder, en ms. Default ≈ un semestre. */
+  /** Vigencia máxima al conceder, en ms. Default ≈ un semestre (C.1.a). */
   readonly maxValidity: number;
+  /** Antelación del aviso de cadena rota, en ms. Default 24 h (C.4.3). */
   readonly brokenChainNotice: number;
+  /** Ventana de última palabra, en ms. Default 0: visible desde que el delegado vota (C.7.d). */
   readonly lastWordWindow: number;
 }
 
@@ -364,16 +367,36 @@ export const MAX_ROUNDS_HARD_CAP = 5;
 /** Ventana de impugnación por defecto: 72 h. */
 export const DEFAULT_CHALLENGE_WINDOW_MS = 72 * 60 * 60 * 1000;
 
-/** Delegación apagada: la única configuración aceptable mientras la PARTE C no esté implementada. */
+/**
+ * Vigencia máxima de una delegación: **un semestre** (≈ 180 días).
+ *
+ * DECISIÓN C.1.a: no existe la delegación perpetua. Las perpetuas se acumulan por inercia —se delega
+ * una vez en primer semestre y el poder queda congelado cinco años en personas que quizá ya ni
+ * están—, y la caducidad obliga a **reafirmar** el mandato, que es el acto político relevante.
+ * Es un tope duro: `maxValidity` no puede superarlo (`GOVERNANCE.md` §5, «vencimiento obligatorio de
+ * máximo un semestre»).
+ */
+export const MAX_DELEGATION_VALIDITY_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** Antelación por defecto del aviso de cadena rota: 24 h (C.4.3, `GOVERNANCE.md` §5). */
+export const DEFAULT_BROKEN_CHAIN_NOTICE_MS = 24 * 60 * 60 * 1000;
+
+/** Delegación apagada: el default institucional. Delegar es un acto explícito de configuración. */
 export const DELEGATION_DISABLED: DelegationConfig = {
   enabled: false,
   maxDepth: 4,
   cap: { num: 1n, den: 10n },
   overflowPolicy: 'return-to-delegator',
-  maxValidity: 180 * 24 * 60 * 60 * 1000,
-  brokenChainNotice: 24 * 60 * 60 * 1000,
+  maxValidity: MAX_DELEGATION_VALIDITY_MS,
+  brokenChainNotice: DEFAULT_BROKEN_CHAIN_NOTICE_MS,
   lastWordWindow: 0,
 };
+
+/**
+ * Delegación encendida con los valores por defecto de ADR-0029: cadenas de cuatro pasos, tope de una
+ * décima parte del censo (30 de 300) y devolución del excedente al delegante.
+ */
+export const DELEGATION_ENABLED: DelegationConfig = { ...DELEGATION_DISABLED, enabled: true };
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Preimagen canónica y hash
@@ -849,28 +872,96 @@ function validateEarlyClose(config: DecisionConfig): void {
 }
 
 function validatePrivacyAndDelegation(config: DecisionConfig): void {
-  // C.7.a / INV-32. La compuerta C6 hace hoy inalcanzable esta rama desde `openDecision`, pero la
-  // regla es independiente y debe existir como control propio: cuando el secreto exista de verdad,
-  // seguirá siendo incompatible con la delegación.
-  if (config.privacy === 'secret-ballot' && config.delegation.enabled) {
+  const delegation = config.delegation;
+
+  // ═══ C.7.a / ADR-0030 / INV-32 — compuerta dura ═══
+  //
+  // No «inerte», no «desaconsejada»: `enabled ∧ secret-ballot` es una configuración INVÁLIDA y la
+  // decisión no se abre. La razón es C.7.2 y no la comodidad: el voto secreto existe para hacer
+  // imposible la coacción, y lo logra porque el votante **no puede demostrarle a un tercero cómo
+  // votó**. La delegación destruye esa propiedad por construcción: al coaccionador no le hace falta
+  // saber cómo votaste, le basta con exigirte que delegues en él, y eso sí es verificable —el propio
+  // delegado ve su lista de delegantes—. Un voto secreto con delegación es un voto secreto con una
+  // puerta trasera pública; ofrece la apariencia de protección sin la protección, que es peor que no
+  // tener secreto porque induce a confiar.
+  //
+  // La compuerta C6 hace hoy inalcanzable esta rama desde `openDecision`, pero la regla es
+  // independiente y debe existir como control propio: cuando el secreto exista de verdad, seguirá
+  // siendo incompatible con la delegación.
+  if (config.privacy === 'secret-ballot' && delegation.enabled) {
     reject(
       'SECRET_BALLOT_WITH_DELEGATION',
       'un voto secreto con delegación es un voto secreto con una puerta trasera pública y ' +
-        'verificable: al coaccionador le basta con exigirte que delegues en él (C.7.a)',
+        'verificable: al coaccionador le basta con exigirte que delegues en él (C.7.a / ADR-0030)',
     );
   }
-  if (config.delegation.enabled) {
-    reject(
-      'DELEGATION_NOT_IMPLEMENTED',
-      'la democracia líquida (PARTE C) no está implementada en esta versión del motor. Aceptar la ' +
-        'delegación y no resolverla haría que un voto delegado simplemente no existiera',
-    );
-  }
-  requireProper(config.delegation.cap, 'delegation.cap');
-  if (config.delegation.maxDepth < 1) {
+
+  requireProper(delegation.cap, 'delegation.cap');
+  if (!Number.isSafeInteger(delegation.maxDepth) || delegation.maxDepth < 1) {
     reject(
       'FRACTION_OUT_OF_RANGE',
-      'delegation.maxDepth se mide en aristas y debe ser ≥ 1 (C.4.2)',
+      'delegation.maxDepth se mide en aristas y debe ser un entero ≥ 1 (C.4.2)',
+    );
+  }
+  if (!Number.isSafeInteger(delegation.brokenChainNotice) || delegation.brokenChainNotice < 0) {
+    reject('FRACTION_OUT_OF_RANGE', 'delegation.brokenChainNotice no puede ser negativa (C.4.3)');
+  }
+  if (!Number.isSafeInteger(delegation.lastWordWindow) || delegation.lastWordWindow < 0) {
+    reject('FRACTION_OUT_OF_RANGE', 'delegation.lastWordWindow no puede ser negativa (C.7.d)');
+  }
+
+  if (!delegation.enabled) return;
+
+  // ═══ Caducidad obligatoria (C.1.a / ADR-0029 / `GOVERNANCE.md` §5) ═══
+  if (!Number.isSafeInteger(delegation.maxValidity) || delegation.maxValidity < 1) {
+    reject(
+      'FRACTION_OUT_OF_RANGE',
+      'delegation.maxValidity debe ser un intervalo positivo (C.1.a)',
+    );
+  }
+  if (delegation.maxValidity > MAX_DELEGATION_VALIDITY_MS) {
+    reject(
+      'DELEGATION_VALIDITY_TOO_LONG',
+      'el vencimiento obligatorio es de máximo un semestre y la renovación es explícita, jamás ' +
+        'automática: una delegación que nadie renueva debe morir sola (C.1.a / ADR-0029)',
+    );
+  }
+
+  // ═══ El tope tiene que dejar sitio al voto propio Y a una delegación (C.5) ═══
+  //
+  // `capWeight = ⌊cap·N⌋`.
+  //  - Si sale 0, INV-27 («ninguna papeleta pesa más que el tope») es insatisfacible: el peso propio
+  //    vale 1 y no es devolvible.
+  //  - Si sale 1, la delegación queda habilitada y a la vez es IMPOSIBLE: toda concesión se
+  //    rechazaría por tope y el registro público mostraría un mecanismo que no funciona. Es la
+  //    delegación «inerte» que ADR-0030 e INV-32 rechazan, sólo que por aritmética en vez de por
+  //    modo de privacidad, y con el mismo efecto: alguien cree que puede delegar y no puede.
+  //
+  // En los dos casos se rechaza al abrir, que es cuando todavía se puede corregir el parámetro.
+  const capWeight =
+    (delegation.cap.num * BigInt(config.electorate.censusSize)) / delegation.cap.den;
+  if (capWeight < 2n) {
+    reject(
+      'DELEGATION_CAP_TOO_SMALL',
+      `el tope de concentración ⌊${delegation.cap.num.toString()}·` +
+        `${String(config.electorate.censusSize)}/${delegation.cap.den.toString()}⌋ vale ` +
+        `${capWeight.toString()} voto(s): con ese censo la delegación quedaría habilitada y a la ` +
+        'vez sería imposible de ejercer (C.5)',
+    );
+  }
+
+  // ═══ Lo constituyente se vota con la propia mano (D.1.b / `GOVERNANCE.md` §5) ═══
+  //
+  // «Nunca se delega […] la reforma de estas reglas **más allá del voto directo mínimo**.» La regla
+  // no es prohibir la delegación en un acto constituyente: es que exista un piso de participación
+  // DIRECTA por debajo del cual el acto no vale. Sin `minDirectParticipation` esa frase no es
+  // verificable por el motor y una reforma estatutaria podría aprobarse con doce personas votando
+  // por doscientas ochenta, que es exactamente lo que D.1.b existe para impedir.
+  if (config.constituentAct !== undefined && config.quorum.minDirectParticipation === undefined) {
+    reject(
+      'CONSTITUENT_ACT_NEEDS_MIN_DIRECT',
+      'un acto constituyente con delegación habilitada exige quorum.minDirectParticipation: para ' +
+        'lo constituyente la comunidad debe aparecer con su propia mano (D.1.b / ADR-0029)',
     );
   }
 }

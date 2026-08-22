@@ -29,16 +29,30 @@ import { validateBallot } from './ballot.js';
 import {
   assertHardSecrecySupported,
   type DecisionConfig,
+  type Delegation,
   type DraftConfig,
   type EarlyCloseConfig,
   isThresholdMethod,
   validateDecisionConfig,
 } from './config.js';
+import {
+  assertDelegationGrantable,
+  assertDelegationRevocable,
+  assertNoDelegationInSecretBallot,
+  type ChainBrokenNotice,
+  chainBrokenNotices,
+  type DelegationResolution,
+  delegationWeightResolver,
+  resolveDelegation,
+  revokeIn,
+  supersededByGrant,
+} from './delegation.js';
 import { PreconditionError, SeedCommitmentMismatch } from './errors.js';
 import { cmpFraction, type Fraction, ratio } from './fraction.js';
 import {
   type BallotId,
   type DecisionId,
+  type DelegationId,
   type EventId,
   type Hash,
   type Instant,
@@ -59,6 +73,9 @@ import {
 import { checkQuorum, type QuorumCheck, quorumFailureAction, quorumNarrative } from './quorum.js';
 import { type DecisionStatus, type LifecycleStatus, nextStatus } from './state-machine.js';
 import {
+  concentrationReport,
+  concentrationStep,
+  concentrationTable,
   computeResultHash,
   countBinary,
   type DecisionResult,
@@ -70,6 +87,7 @@ import {
   type MethodTally,
   type Outcome,
   type ProofStep,
+  type ProofTable,
   representedMembers,
   step,
   type TallyContext,
@@ -112,6 +130,11 @@ export interface DecisionState {
   readonly closedAt: Instant | undefined;
   readonly closeCause: CloseCause | undefined;
   readonly objections: readonly ObjectionRecord[];
+  /**
+   * Registro de delegaciones que este log conoce (PARTE C), en orden de concesión y con su
+   * `revokedAt` ya aplicado. Es el grafo que `resolveDelegation` usa en el escrutinio.
+   */
+  readonly delegations: readonly Delegation[];
   /** Semilla revelada (`seedAdmin` ‖ faro), si la hubo. */
   readonly seed: string | undefined;
   readonly resultHash: Hash | undefined;
@@ -136,6 +159,7 @@ export function initialState(decision: DecisionId): DecisionState {
     closedAt: undefined,
     closeCause: undefined,
     objections: [],
+    delegations: [],
     seed: undefined,
     resultHash: undefined,
     outcomeKind: undefined,
@@ -328,15 +352,78 @@ export function apply(state: DecisionState, event: DecisionEvent): DecisionState
       return { ...base, voided: [...state.voided, payload.ballotId] };
     }
 
-    case 'DelegationGranted':
-    case 'DelegationRevoked':
-      // Punto de extensión (PARTE C). La configuración ya rechaza `delegation.enabled`, de modo que
-      // un log legal no contiene estos eventos; se mantienen en la tabla de transiciones para que
-      // añadir la democracia líquida no obligue a tocar la máquina de estados.
-      throw new PreconditionError(
-        'DELEGATION_NOT_IMPLEMENTED',
-        'la democracia líquida (PARTE C) no está implementada en esta versión del motor',
+    case 'DelegationGranted': {
+      const config = requireConfig(state);
+      const delegation = payload.delegation;
+      // ═══ Nadie delega por otro ═══
+      //
+      // La misma razón que en `BallotCast`: la comprobación va en el PLEGADO, que es el único sitio
+      // por el que pasa todo log, venga de donde venga. Un log fabricado a mano en el que Marta
+      // concede la delegación de Ana no se pliega. Y en la delegación importa aún más que en la
+      // papeleta: C.7.2 explica que el canal de coacción de la democracia líquida no es «votá esto»
+      // sino «delegá en mí».
+      if (delegation.delegator !== event.actor) {
+        throw new PreconditionError(
+          'DELEGATION_NOT_SELF_GRANTED',
+          `el evento lo firma ${String(event.actor)} y la delegación se atribuye a ` +
+            `${delegation.delegator}: nadie concede el mandato de otra persona`,
+        );
+      }
+      if (delegation.grantedSeq !== event.seq) {
+        throw new PreconditionError(
+          'DELEGATION_SEQ_MISMATCH',
+          'la delegación debe llevar el `seq` del evento que la transporta: es la clave del orden ' +
+            'LIFO de devolución por tope (C.5.b.2)',
+        );
+      }
+      if (delegation.grantedAt !== event.occurredAt) {
+        throw new PreconditionError(
+          'DELEGATION_TIME_MISMATCH',
+          'D.3.c: el instante lo asigna el motor en el punto de serialización, no el cliente',
+        );
+      }
+      assertDelegationGrantable(config, state.delegations, delegation);
+      // DECISIÓN C.1.b — una sola delegación activa por `(delegante, ámbito)`. La especificación
+      // dice que conceder una nueva «emite automáticamente `DelegationRevoked` de la anterior»,
+      // pero `apply` es un PLIEGUE PURO sobre el log: no puede emitir eventos. Se resuelve
+      // desplazando la anterior aquí, con `revokedAt = grantedAt` de la nueva, exactamente el
+      // instante que la spec fija. Así el efecto es el mismo, el log no crece con un evento que
+      // nadie firmó, y —lo que importa— un log traído de fuera con dos concesiones al mismo ámbito
+      // y sin la revocación intermedia se pliega al MISMO estado. Reportado como errata E-39.
+      const superseded = supersededByGrant(state.delegations, delegation);
+      const base_ =
+        superseded === undefined
+          ? state.delegations
+          : revokeIn(state.delegations, superseded.delegationId, delegation.grantedAt);
+      return { ...base, delegations: [...base_, delegation] };
+    }
+
+    case 'DelegationRevoked': {
+      requireConfig(state);
+      const revoked = assertDelegationRevocable(
+        state.delegations,
+        payload.delegationId,
+        payload.at,
       );
+      if (revoked.delegator !== event.actor) {
+        throw new PreconditionError(
+          'DELEGATION_NOT_SELF_REVOKED',
+          `el evento lo firma ${String(event.actor)} y el mandato es de ${revoked.delegator}: ` +
+            'sólo quien delegó revoca',
+        );
+      }
+      if (payload.at !== event.occurredAt) {
+        throw new PreconditionError(
+          'DELEGATION_TIME_MISMATCH',
+          'INV-24: la revocación tiene efecto en el instante EXACTO en que se serializa, no en el ' +
+            'que declare el cliente',
+        );
+      }
+      return {
+        ...base,
+        delegations: revokeIn(state.delegations, payload.delegationId, payload.at),
+      };
+    }
 
     case 'ObjectionRaised': {
       const config = requireConfig(state);
@@ -767,9 +854,19 @@ export async function draftDecision(
  */
 export async function openDecision(
   log: DecisionLog,
-  input: CommandMeta & { readonly config: DecisionConfig },
+  input: CommandMeta & {
+    readonly config: DecisionConfig;
+    /**
+     * Registro de delegaciones de la comunidad, para la compuerta de ADR-0030. Es opcional porque
+     * el registro no vive en el log de esta decisión (una delegación por tema vale para todas las
+     * decisiones de ese tema, incluidas las que aún no existen); sin él la compuerta se reduce a la
+     * de C.7.a, que mira sólo `delegation.enabled`.
+     */
+    readonly delegations?: readonly Delegation[];
+  },
 ): Promise<DecisionLog> {
   assertHardSecrecySupported(input.config.privacy);
+  assertNoDelegationInSecretBallot(input.config, input.delegations ?? [], input.at);
   const state = replay(log);
   nextStatus(state.status, 'DecisionOpened');
   validateDecisionConfig(input.config);
@@ -839,6 +936,109 @@ export async function castBallotBy(
 }
 
 /**
+ * Concede una delegación (PARTE C). `grantedAt` y `grantedSeq` los asigna el motor en el punto de
+ * serialización, igual que en una papeleta y por la misma razón: el reloj del cliente lo controla el
+ * atacante, y `grantedSeq` es además la clave del orden LIFO de devolución por tope (C.5.b.2).
+ *
+ * Todo lo que puede salir mal se comprueba **aquí, al conceder** —ciclo, tope, caducidad, padrón—:
+ * un rechazo ahora es un mensaje accionable; el mismo hecho descubierto en el escrutinio es silencio
+ * irreversible (C.4.a, C.5.b.1).
+ */
+export async function grantDelegation(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & {
+    readonly delegation: Omit<Delegation, 'grantedAt' | 'grantedSeq' | 'revokedAt'>;
+  },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  nextStatus(state.status, 'DelegationGranted');
+  const delegation: Delegation = {
+    ...input.delegation,
+    grantedAt: input.at,
+    grantedSeq: log.length + 1,
+  };
+  assertDelegationGrantable(config, state.delegations, delegation);
+  return emit(log, state, {
+    eventId: input.eventId,
+    decisionId: config.decisionId,
+    occurredAt: input.at,
+    actor: delegation.delegator,
+    payload: { type: 'DelegationGranted', delegation },
+  });
+}
+
+/** `grantDelegation` con autorización del dominio: sólo se delega el voto propio. */
+export async function grantDelegationBy(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & {
+    readonly by: Actor;
+    readonly delegation: Omit<Delegation, 'grantedAt' | 'grantedSeq' | 'revokedAt'>;
+  },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  authorize(input.by, 'decision:cast-ballot', {
+    kind: 'decision',
+    subject: input.delegation.delegator,
+    circleId: config.circleId,
+  });
+  return grantDelegation(log, {
+    eventId: input.eventId,
+    at: input.at,
+    delegation: input.delegation,
+  });
+}
+
+/**
+ * Revoca una delegación, **con efecto inmediato** (C.2, INV-24, `GOVERNANCE.md` §5).
+ *
+ * «Revocable en cualquier momento, incluso si el delegado ya votó»: como el grafo se resuelve en
+ * `closedAt` y no se cachea al abrir, una revocación un milisegundo antes del cierre saca la arista
+ * del escrutinio. Revocar sin votar **no es abstenerse**: el peso queda en silencio y no suma a la
+ * participación (regla de oro 4 de C.3.1).
+ */
+export async function revokeDelegation(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & { readonly delegationId: DelegationId },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  nextStatus(state.status, 'DelegationRevoked');
+  const delegation = assertDelegationRevocable(state.delegations, input.delegationId, input.at);
+  return emit(log, state, {
+    eventId: input.eventId,
+    decisionId: config.decisionId,
+    occurredAt: input.at,
+    actor: delegation.delegator,
+    payload: { type: 'DelegationRevoked', delegationId: input.delegationId, at: input.at },
+  });
+}
+
+/** `revokeDelegation` con autorización del dominio: sólo quien delegó revoca. */
+export async function revokeDelegationBy(
+  log: DecisionLog,
+  input: Omit<CommandMeta, 'actor'> & {
+    readonly by: Actor;
+    readonly delegationId: DelegationId;
+  },
+): Promise<DecisionLog> {
+  const state = replay(log);
+  const config = requireConfig(state);
+  const delegation = assertDelegationRevocable(state.delegations, input.delegationId, input.at);
+  authorize(input.by, 'decision:cast-ballot', {
+    kind: 'decision',
+    subject: delegation.delegator,
+    circleId: config.circleId,
+  });
+  return revokeDelegation(log, {
+    eventId: input.eventId,
+    at: input.at,
+    delegationId: input.delegationId,
+  });
+}
+
+/**
  * Cierre con autorización del dominio: cuidar el procedimiento es un encargo, no un derecho general.
  */
 export async function closeDecisionBy(
@@ -904,7 +1104,7 @@ export async function closeDecision(
   }
 
   const tickAt: Instant = input.cause === 'window' ? window.closesAt : input.at;
-  const quorum = quorumAtClose(state, tickAt, input.resolver ?? directWeightResolver);
+  const quorum = quorumAtClose(state, tickAt, input.resolver ?? resolverFor(state));
 
   if (!quorum.passed) {
     const action = quorumFailureAction(config, state.extensionsUsed, window.closesAt);
@@ -933,6 +1133,46 @@ export async function closeDecision(
       ...(input.signers === undefined ? {} : { signers: input.signers }),
     },
   });
+}
+
+/**
+ * El resolutor de pesos que corresponde a este estado.
+ *
+ * Con `delegation.enabled` es el de la PARTE C, cerrado sobre las delegaciones que el log conoce;
+ * sin ella, una persona un voto. **Nunca se elige por parámetro por defecto**: si el resolutor
+ * directo se aplicara a una decisión abierta con delegación, el voto de cada delegante
+ * desaparecería sin traza, que es el fallo ingenuo de INV-32 con otra ropa.
+ */
+export function resolverFor(state: DecisionState): WeightResolver {
+  const config = state.config;
+  if (config === undefined || !config.delegation.enabled) return directWeightResolver;
+  return delegationWeightResolver(state.delegations);
+}
+
+/**
+ * Resolución completa de la democracia líquida en un instante dado: pesos, cadenas rotas, ciclos y
+ * devoluciones por tope. Es lo que la interfaz necesita para explicar «quién votó por mí».
+ */
+export function delegationAt(state: DecisionState, at: Instant): DelegationResolution {
+  const config = requireConfig(state);
+  return resolveDelegation(config, state.ballots, state.delegations, at);
+}
+
+/**
+ * C.4.3 — los avisos de cadena rota que corresponde emitir para esta decisión, como DATO.
+ *
+ * El dominio decide a quién y cuándo; enviar es de la capa de aplicación. Se evalúa con el grafo tal
+ * como está en el instante de aviso (`closesAt − brokenChainNotice`), que es justo el sentido del
+ * aviso: «con lo que hay ahora mismo, tu voto no se está contando; todavía podés votar».
+ */
+export function brokenChainNoticesFor(state: DecisionState): readonly ChainBrokenNotice[] {
+  const config = requireConfig(state);
+  if (!config.delegation.enabled) return [];
+  const closesAt = state.closesAt ?? config.window.closesAt;
+  const noticeAt = instant(
+    Math.max(closesAt - config.delegation.brokenChainNotice, config.window.opensAt),
+  );
+  return chainBrokenNotices(config, delegationAt(state, noticeAt), closesAt);
 }
 
 /** Contexto de escrutinio de una decisión ya cerrada. */
@@ -1065,6 +1305,24 @@ export async function tallyDecision(input: TallyInput): Promise<DecisionResult> 
     ),
   );
 
+  // ═══ C.6 — la concentración de voz va en la PRUEBA, no en un panel interno ═══
+  //
+  // ADR-0029 lo exige literalmente: «el `HHI*` va en la `Proof`». Y por eso entra en la preimagen
+  // del `resultHash`: quien audita recalcula el índice con la tabla de pesos y, si no coincide, el
+  // hash tampoco cuadra. Un indicador de concentración que vive fuera del objeto firmado es un
+  // indicador que se puede maquillar.
+  //
+  // Sólo se publica cuando la delegación está habilitada. Sin ella todos los pesos valen 1 por
+  // construcción (B.0.a), `HHI*` es idénticamente 0 y CR1 es `1/N`: un paso que no informa de nada
+  // y que además movería el `resultHash` de todas las decisiones ya cerradas sin delegación.
+  const concentration = config.delegation.enabled
+    ? concentrationReport(ballots, config.electorate.censusSize)
+    : undefined;
+  const concentrationSteps: ProofStep[] =
+    concentration === undefined ? [] : [concentrationStep(concentration)];
+  const concentrationTables: ProofTable[] =
+    concentration !== undefined && concentration.high ? [concentrationTable(concentration)] : [];
+
   const publicSeed =
     input.seed === undefined
       ? undefined
@@ -1096,8 +1354,8 @@ export async function tallyDecision(input: TallyInput): Promise<DecisionResult> 
     },
     quorumCheck: { passed: quorum.passed, detail: quorum.detail },
     proof: {
-      steps: [...quorumSteps, ...(method?.steps ?? [])],
-      tables: method?.tables ?? [],
+      steps: [...quorumSteps, ...concentrationSteps, ...(method?.steps ?? [])],
+      tables: [...concentrationTables, ...(method?.tables ?? [])],
       narrative:
         method === undefined
           ? `${quorumNarrative(quorum)} Por eso no se publica ningún recuento: sin la participación ` +
@@ -1112,7 +1370,7 @@ export async function tallyDecision(input: TallyInput): Promise<DecisionResult> 
 /** Escruta una decisión ya cerrada a partir de su log. Envoltura de `tallyDecision`. */
 export async function computeResult(
   log: DecisionLog,
-  resolver: WeightResolver = directWeightResolver,
+  resolver?: WeightResolver,
 ): Promise<DecisionResult> {
   const state = replay(log);
   const config = requireConfig(state);
@@ -1132,7 +1390,7 @@ export async function computeResult(
     objections: state.objections,
     seed: state.seed,
     computedFromSeq: state.lastSeq,
-    resolver,
+    resolver: resolver ?? resolverFor(state),
   });
 }
 
@@ -1271,6 +1529,17 @@ export function irreversibility(
 ): 'approved' | 'rejected' | 'open' {
   const method = config.method;
   if (!isThresholdMethod(method)) return 'open'; // D.4.b
+  // ═══ Con delegación, la cota deja de ser una cota ═══
+  //
+  // Los dos supuestos que sostienen el cálculo —«la participación sólo puede crecer» y «cada
+  // movible mueve exactamente 1»— son falsos bajo la PARTE C. Revocar sin votar RESTA
+  // participación (regla de oro 4 de C.3.1: el peso queda en silencio); una delegación que caduca
+  // durante la ventana rompe una cadena y resta tantos como la cadena llevara; y quien vota
+  // directo mueve su 1 a su papeleta **y a la vez** se lo quita a la de su delegado, que es un
+  // movimiento de 2 en el marcador. Declarar irreversible un resultado que todavía puede darse
+  // vuelta es cerrar la urna antes de tiempo con la firma del motor detrás. Se devuelve `open`.
+  // Reportado como errata E-42.
+  if (config.delegation.enabled) return 'open';
   // (1) el quórum sólo puede crecer ⇒ el peor caso de quórum es el estado actual.
   if (!live.quorumMet) return 'open';
   const movable = live.movableUnassigned;
@@ -1350,11 +1619,7 @@ function causeToMode(cause: 'early-irreversible' | 'full-turnout'): EarlyCloseCo
 }
 
 /** Estado en vivo derivado del log, para evaluar la irreversibilidad sin cerrar. */
-export function liveTally(
-  log: DecisionLog,
-  at: Instant,
-  resolver: WeightResolver = directWeightResolver,
-): LiveTally {
+export function liveTally(log: DecisionLog, at: Instant, resolver?: WeightResolver): LiveTally {
   return liveTallyFrom(replay(log), at, resolver);
 }
 
@@ -1362,10 +1627,15 @@ export function liveTally(
 export function liveTallyFrom(
   state: DecisionState,
   at: Instant,
-  resolver: WeightResolver = directWeightResolver,
+  resolver?: WeightResolver,
 ): LiveTally {
   const config = requireConfig(state);
-  const ballots = effectiveBallots(config, state.ballots, tallyContextOf(state, at), resolver);
+  const ballots = effectiveBallots(
+    config,
+    state.ballots,
+    tallyContextOf(state, at),
+    resolver ?? resolverFor(state),
+  );
   const counts = isThresholdMethod(config.method)
     ? countBinary(ballots, config.method.kind)
     : { approve: 0, reject: 0, abstain: 0 };

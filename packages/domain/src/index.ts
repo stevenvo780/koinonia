@@ -136,10 +136,13 @@ export {
   computeConfigHash,
   configHashPreimage,
   type ConstituentAct,
+  DEFAULT_BROKEN_CHAIN_NOTICE_MS,
   DEFAULT_CHALLENGE_WINDOW_MS,
   DEFAULT_EARLY_CLOSE,
   DEFAULT_TIE_BREAK,
   DELEGATION_DISABLED,
+  DELEGATION_ENABLED,
+  MAX_DELEGATION_VALIDITY_MS,
   type DecisionConfig,
   type DecisionConfigDraft,
   type DecisionMethod,
@@ -186,6 +189,44 @@ export {
   validateBallot,
   validateObjection,
 } from './ballot.js';
+
+// ── Democracia líquida (PARTE C) ────────────────────────────────────────────────────────────────
+export {
+  compareDelegationPriority,
+  type ChainOutcome,
+  findSupersededDelegation,
+  isDelegationActive,
+  isVigent,
+  matchesScope,
+  projectedRepresented,
+  reachesInUnion,
+  type ScopeSubject,
+  scopeKey,
+  scopeSpecificity,
+  type UnassignedReason,
+  unionEdges,
+  walkChain,
+  wouldCreateCycle,
+} from './delegation-graph.js';
+
+export {
+  assertDelegationGrantable,
+  assertDelegationRevocable,
+  assertNoDelegationInSecretBallot,
+  capWeight,
+  type ChainBrokenNotice,
+  chainBrokenNotices,
+  type DelegationAssignment,
+  type DelegationResolution,
+  delegationSlot,
+  delegationWeightResolver,
+  hasActiveDelegationsFor,
+  resolveDelegation,
+  revokeIn,
+  supersededByGrant,
+  type UnassignedMember,
+  vigentDelegations,
+} from './delegation.js';
 
 // ── Máquina de estados ──────────────────────────────────────────────────────────────────────────
 export {
@@ -318,6 +359,19 @@ export {
   type WeightResolver,
 } from './tally/index.js';
 
+// Índices de concentración de C.6. Se exportan desde `tally/common.js` porque son parte del marco
+// común del escrutinio, no de ningún método concreto.
+export {
+  type ConcentrationReport,
+  concentrationRatio,
+  concentrationReport,
+  concentrationStep,
+  concentrationTable,
+  HIGH_CONCENTRATION_CR1,
+  HIGH_CONCENTRATION_HHI,
+  normalizedHerfindahl,
+} from './tally/common.js';
+
 // ── Autorización (en el DOMINIO, no en la ruta) ─────────────────────────────────────────────────
 export {
   ACTIONS,
@@ -346,6 +400,7 @@ export * from './deliberation/index.js';
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,
+  brokenChainNoticesFor,
   castBallot,
   castBallotBy,
   closeDecision,
@@ -354,7 +409,10 @@ export {
   computeResult,
   currentWindow,
   type DecisionState,
+  delegationAt,
   draftDecision,
+  grantDelegation,
+  grantDelegationBy,
   initialState,
   irreversibility,
   type LiveTally,
@@ -365,7 +423,10 @@ export {
   ratifyDecisionBy,
   recordResult,
   replay,
+  resolverFor,
   revealSeed,
+  revokeDelegation,
+  revokeDelegationBy,
   tallyDecision,
   type TallyInput,
   verifyLog,

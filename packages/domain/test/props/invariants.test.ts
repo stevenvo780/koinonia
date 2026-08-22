@@ -735,10 +735,14 @@ describe('E.4 — pesos y concentración', () => {
               }).not.toThrow();
             }
           }
-          if (delegacion) {
+          // INV-32, literal: `secret-ballot ∧ delegation.enabled ⇒ rechazado`. Antes de la PARTE C
+          // esta rama exigía que TODA delegación se rechazara, que era la ausencia del mecanismo y
+          // no el invariante. Con la PARTE C implementada, la delegación se acepta salvo aquí: el
+          // voto secreto con delegación es un voto secreto con puerta trasera pública (C.7.a).
+          if (delegacion && privacy === 'secret-ballot') {
             expect(() => {
               validateDecisionConfig(mutada);
-            }).toThrow();
+            }).toThrow(/SECRET_BALLOT_WITH_DELEGATION/u);
           }
         },
       ),

@@ -18,6 +18,7 @@ import {
   instant,
   InvalidConfigError,
   isThresholdMethod,
+  MAX_DELEGATION_VALIDITY_MS,
   MAX_EXTENSIONS_HARD_CAP,
   MAX_ROUNDS_HARD_CAP,
   ratio,
@@ -91,7 +92,24 @@ describe('C6 — compuerta de secreto duro', () => {
     }).toThrow(/SECRET_BALLOT_WITH_DELEGATION/u);
   });
 
-  it('la delegación habilitada se rechaza en vez de desactivarse en silencio', async () => {
+  it('la delegación habilitada es una configuración VÁLIDA desde la PARTE C', async () => {
+    // Sucede al test histórico «se rechaza en vez de desactivarse en silencio», que codificaba la
+    // ausencia de la PARTE C. Lo que se conserva de él es lo que INV-32 exige de verdad: la
+    // delegación nunca se desactiva en silencio. Ahora se resuelve; antes se rechazaba.
+    const config = await buildConfig({
+      electorate: await buildElectorate(30),
+      method: planToMethod({ kind: 'simple-majority', abstentionPolicy: 'exclude' }),
+      delegationEnabled: true,
+    });
+    expect(config.delegation.enabled).toBe(true);
+    expect(() => {
+      validateDecisionConfig(config);
+    }).not.toThrow();
+  });
+
+  it('un tope de concentración que no deja sitio al voto propio se rechaza al abrir', async () => {
+    // ⌊1/10 · 3⌋ = 0 votos: con ese censo ninguna papeleta podría contar, ni la de quien vota por
+    // sí mismo. INV-27 sería insatisfacible. Se rechaza al abrir en vez de anular votos directos.
     expect(
       await reason(async () =>
         buildConfig({
@@ -100,7 +118,50 @@ describe('C6 — compuerta de secreto duro', () => {
           delegationEnabled: true,
         }),
       ),
-    ).toBe('DELEGATION_NOT_IMPLEMENTED');
+    ).toBe('DELEGATION_CAP_TOO_SMALL');
+  });
+
+  it('un acto constituyente con delegación exige un piso de participación DIRECTA', async () => {
+    // `GOVERNANCE.md` §5: nunca se delega «la reforma de estas reglas más allá del voto directo
+    // mínimo». Sin `minDirectParticipation` la frase no es verificable por el motor y una reforma
+    // estatutaria podría aprobarse con doce personas votando por doscientas ochenta (D.1.b).
+    const electorate = await buildElectorate(30);
+    expect(
+      await reason(async () =>
+        buildConfig({
+          electorate,
+          method: planToMethod({ kind: 'simple-majority', abstentionPolicy: 'exclude' }),
+          constituentAct: 'reform-student-statute',
+          delegationEnabled: true,
+        }),
+      ),
+    ).toBe('CONSTITUENT_ACT_NEEDS_MIN_DIRECT');
+
+    const conPiso = await buildConfig({
+      electorate,
+      method: planToMethod({ kind: 'simple-majority', abstentionPolicy: 'exclude' }),
+      constituentAct: 'reform-student-statute',
+      delegationEnabled: true,
+      quorum: { ...NO_QUORUM, minDirectParticipation: ratio(1, 3) },
+    });
+    expect(() => {
+      validateDecisionConfig(conPiso);
+    }).not.toThrow();
+  });
+
+  it('no existe la delegación perpetua: la vigencia máxima es un semestre', async () => {
+    const electorate = await buildElectorate(30);
+    const config = await buildConfig({
+      electorate,
+      method: planToMethod({ kind: 'simple-majority', abstentionPolicy: 'exclude' }),
+      delegationEnabled: true,
+    });
+    expect(() => {
+      validateDecisionConfig({
+        ...config,
+        delegation: { ...config.delegation, maxValidity: MAX_DELEGATION_VALIDITY_MS + 1 },
+      });
+    }).toThrow(/DELEGATION_VALIDITY_TOO_LONG/u);
   });
 });
 

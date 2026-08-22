@@ -396,6 +396,144 @@ export function gini(weights: readonly number[]): Fraction {
   return normalize({ num: sum, den: 2n * BigInt(n) * BigInt(total) });
 }
 
+/**
+ * `HHI* = (HHI − 1/n) / (1 − 1/n)` — el indicador NORMATIVO de C.6.a.
+ *
+ * Se calcula de una sola vez con enteros, sin construir `HHI` ni `1/n` por separado:
+ *
+ * ```
+ * HHI − 1/n = (n·S − W²) / (n·W²)          1 − 1/n = (n−1)/n
+ * HHI*      = (n·S − W²) / (W² · (n−1))    con S = Σ wᵢ², W = Σ wᵢ
+ * ```
+ *
+ * Nada de coma flotante en ningún paso (ADR-0027): `n·S − W²` es exactamente 0 con reparto uniforme,
+ * y `Math.pow` sobre cocientes daría un `−1.1e−16` que convierte «perfectamente repartido» en una
+ * fracción negativa que `fraction()` rechaza.
+ *
+ * **Con `n ≤ 1` se devuelve `0/1`.** C.6 define `HHI* ∈ [0, 1]` con `1/n ≤ HHI ≤ 1`, pero para
+ * `n = 1` numerador y denominador de la normalización son ambos cero: `HHI* = 0/0`. Una sola
+ * papeleta es a la vez el reparto perfectamente uniforme (todo el mundo tiene lo mismo) y la
+ * concentración máxima (una persona decide), y la fórmula no distingue. Se resuelve por el lado
+ * conservador de la definición —`HHI*` mide **desigualdad entre votantes** y con un votante no hay
+ * desigualdad— y el riesgo real queda cubierto por `CR1 = w₁/N`, que en ese caso vale exactamente lo
+ * que debe valer. Reportado como errata E-41.
+ */
+export function normalizedHerfindahl(weights: readonly number[]): Fraction {
+  const n = BigInt(weights.length);
+  if (n <= 1n) return ratio(0, 1);
+  let squares = 0n;
+  let total = 0n;
+  for (const weight of weights) {
+    squares += BigInt(weight) * BigInt(weight);
+    total += BigInt(weight);
+  }
+  if (total === 0n) return ratio(0, 1);
+  return normalize({ num: n * squares - total * total, den: total * total * (n - 1n) });
+}
+
+/**
+ * `CR1 = w₁ / N` — «la persona con más votos delegados representa al X % de la comunidad» (C.6).
+ *
+ * Es el único de los tres índices que un humano interpreta sin explicación, y por eso es el que se
+ * muestra. El denominador es el CENSO, no el peso ejercido: un CR1 sobre el peso ejercido subiría
+ * cuando **baja** la participación, que es exactamente al revés de lo que se quiere comunicar.
+ */
+export function concentrationRatio(weights: readonly number[], census: number): Fraction {
+  if (census <= 0) return ratio(0, 1);
+  return ratio(
+    weights.reduce((top, w) => (w > top ? w : top), 0),
+    census,
+  );
+}
+
+/** Umbral de alarma de C.6.a: `HHI* ≥ 0.15`. Fracción exacta, nunca `0.15` en coma flotante. */
+export const HIGH_CONCENTRATION_HHI: Fraction = { num: 3n, den: 20n };
+/** Umbral de alarma de C.6.a: `CR1 ≥ 1/20`. */
+export const HIGH_CONCENTRATION_CR1: Fraction = { num: 1n, den: 20n };
+
+/** Los índices de C.6 juntos, ya evaluados contra el umbral de alarma. */
+export interface ConcentrationReport {
+  readonly hhi: Fraction;
+  readonly normalizedHhi: Fraction;
+  readonly gini: Fraction;
+  readonly cr1: Fraction;
+  readonly totalWeight: number;
+  readonly census: number;
+  /** `HHI* ≥ 3/20 ∨ CR1 ≥ 1/20` (C.6.a). Sin efecto jurídico: marca, no invalida (C.5.c). */
+  readonly high: boolean;
+  /** Los cinco mayores pesos, descendente y con desempate estable por `voter`. */
+  readonly top: readonly { readonly voter: MemberId; readonly weight: number }[];
+}
+
+/** Cuántos delegados lista el bloque «Concentración alta» de C.6.a. */
+const TOP_DELEGATES = 5;
+
+export function concentrationReport(
+  ballots: readonly EffectiveBallot[],
+  census: number,
+): ConcentrationReport {
+  const weights = ballots.map((b) => b.weight);
+  const normalizedHhi = normalizedHerfindahl(weights);
+  const cr1 = concentrationRatio(weights, census);
+  return {
+    hhi: herfindahl(weights),
+    normalizedHhi,
+    gini: gini(weights),
+    cr1,
+    totalWeight: totalWeight(ballots),
+    census,
+    high:
+      cmpFraction(normalizedHhi, HIGH_CONCENTRATION_HHI) >= 0 ||
+      cmpFraction(cr1, HIGH_CONCENTRATION_CR1) >= 0,
+    top: [...ballots]
+      .sort((a, b) => (a.weight !== b.weight ? b.weight - a.weight : compareIds(a.voter, b.voter)))
+      .slice(0, TOP_DELEGATES)
+      .map((b) => ({ voter: b.voter, weight: b.weight })),
+  };
+}
+
+/**
+ * El paso de la demostración que hace **visible y recomputable** la concentración de voz (C.6).
+ *
+ * Va en la `Proof`, no en un panel interno: ADR-0029 lo dice literalmente. Quien audita puede
+ * recalcular `HHI*` con la tabla de pesos de la propia prueba y comprobar que coincide; si no
+ * coincidiera, el `resultHash` tampoco cuadraría, porque la prueba entra en su preimagen.
+ */
+export function concentrationStep(report: ConcentrationReport): ProofStep {
+  return step(
+    'C1',
+    `La concentración de voz medida con el índice Herfindahl–Hirschman normalizado es ` +
+      `${toFractionString(report.normalizedHhi)} y la persona con más peso representa a ` +
+      `${toFractionString(report.cr1)} de la comunidad. ` +
+      (report.high
+        ? 'Supera el umbral de alarma (HHI* ≥ 3/20 o CR1 ≥ 1/20): el poder está concentrado. ' +
+          'No invalida la decisión; la marca.'
+        : 'No supera el umbral de alarma (HHI* ≥ 3/20 o CR1 ≥ 1/20).'),
+    {
+      hhi: toFractionString(report.hhi),
+      hhiNormalizado: toFractionString(report.normalizedHhi),
+      gini: toFractionString(report.gini),
+      cr1: toFractionString(report.cr1),
+      pesoTotal: report.totalWeight,
+      censo: report.census,
+      concentracionAlta: report.high ? 'sí' : 'no',
+    },
+  );
+}
+
+/** Bloque «Concentración alta» de C.6.a: los cinco mayores delegados y sus pesos. */
+export function concentrationTable(report: ConcentrationReport): ProofTable {
+  return {
+    title: 'Concentración alta: mayores pesos',
+    columns: ['Votante', 'Peso', 'Sobre el censo'],
+    rows: report.top.map((entry) => [
+      entry.voter,
+      entry.weight,
+      toFractionString(ratio(entry.weight, Math.max(1, report.census))),
+    ]),
+  };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Resultado y demostración (A.6)
 // ═════════════════════════════════════════════════════════════════════════════════════════════
