@@ -107,3 +107,85 @@ porque suenan a rigor.
    escrutinio.
 3. **Quien revisa no es quien implementa, y quien confirma una corrección no es quien la propuso** —
    la misma regla de `TESTING.md` §9, por la misma razón.
+
+## 5. Registro de ruteo de la sesión 2026-08-21
+
+Cierra la sesión que dejó el repositorio en `36b37c2` (603 pruebas en verde, 41 ficheros). El detalle
+del estado está en `docs/HANDOFF.md`; aquí queda **sólo lo que sirve para decidir a quién se le da
+qué la próxima vez**.
+
+### 5.1 El plan declarado, y por qué no se ejecutó
+
+El ruteo se declaró antes de empezar, como manda el procedimiento: `gemini/pro` para la investigación
+de contexto largo, `codex/sol` con `effort: high` para la criptografía, `codex/terra` para la teoría
+de la elección social, `gemini/flash` para la normativa. **No sobrevivió al contacto con la
+infraestructura.** `delegar_a_cloud` (MCP `cloud-offload`) **falló en 4 de 5 intentos**:
+
+| Proveedor | Fallo |
+|---|---|
+| `codex/gpt-5.6-sol`, `codex/gpt-5.6-terra` | `invalid ID token format` — autenticación del CLI de Codex rota |
+| `gemini/pro`, `gemini/flash`, `minimax/MiniMax-M3` | `MCP error -32001: Request timed out` en todo lo no trivial |
+
+La **única** llamada que completó fue a `minimax/MiniMax-M3` con salida de ~15 líneas. Todo lo que
+pedía **≥600 palabras** de generación reventó, incluso troceado (se probó a 2800, 2000 y 600-900).
+**El trabajo no sobrevive al timeout**: se inspeccionó el disco después y no había quedado nada
+escrito. Los CLIs delegados **sí** tienen `bash` y `write` reales —la llamada que funcionó creó
+ficheros—, así que el patrón «escribí a disco y devolveme 5 líneas» **es viable pero no salva el
+timeout**, porque éste cubre la generación entera.
+
+**Consecuencia de ruteo:** todo terminó ejecutándose en subagentes `task`. El presupuesto abundante de
+MiniMax, destinado a **QA exploratorio masivo** y a la **matriz de navegadores**, quedó **sin usar por
+transporte, no por criterio**. Cuando el transporte se arregle, **ese es el primer trabajo que debe
+irse a MiniMax**.
+
+> **Regla que deja el episodio:** un plan de ruteo no está validado hasta que el **transporte** está
+> probado. La comprobación barata —una llamada trivial por proveedor— cuesta segundos y habría
+> reasignado el plan entero antes de perder los primeros lanzamientos.
+
+### 5.2 Lo que se delegó a subagentes `task`, y con qué resultado
+
+| Tarea | Resultado | Hallazgos que entregó |
+|---|---|---|
+| `packages/anchor` — anclaje externo, 3 clases de independencia, quórum 2-de-3 | **80 pruebas en verde** | `GitForgeClient` sin implementación real y `httpCalendar()` nunca ejecutado contra un calendario: **lo reportó en vez de fingirlo** |
+| `packages/verifier-cli` — verificador independiente en español | **33 pruebas en verde**, incluidos los 7 escenarios de ataque | Bug propio encontrado por su test: `directorySource()` acusaba de `EXPORT_INCOMPLETO` a un paquete intacto con ruta relativa |
+| `services/api` — persistencia del ledger, blindaje, HTTP | **17 unitarias + 110 de integración** contra PostgreSQL real | **Tres errores autodestructivos de la spec**: la `RULE ON DELETE DO INSTEAD NOTHING` que volvía mudo el blindaje, el `ORDER BY tree_size` que ordenaba como texto, y `count(*) = max(leaf_index)+1` que no ve el truncamiento de la cola |
+| Corte vertical — capa HTTP, interfaz Next.js, E2E | **28 escenarios**, verdes en chromium/firefox/chrome-movil | Reportó **sin ambigüedad** que WebKit y Safari móvil no arrancan por librerías del sistema ausentes, y **los dejó en rojo** en vez de silenciarlos |
+| Documentación normativa (`TESTING.md`, `ARCHITECTURE.md`, README) | Entregada | — |
+
+**Dos instrucciones explícitas que funcionaron y se repiten tal cual:**
+
+- «**Si un test revela un bug, arreglá la implementación, nunca la aserción.**»
+- «**Prefiero un informe honesto de lo roto a un verde inventado.**» Varios agentes reportaron lo que
+  no pudieron hacer en lugar de fingirlo, que es exactamente el comportamiento que se quiere.
+
+### 5.3 Límites operativos medidos
+
+- **Máximo 2-3 subagentes `task` pesados en paralelo.** Por encima, abortan con
+  `Tool execution aborted`. **Se perdieron cuatro lanzamientos** aprendiéndolo.
+- **Nunca dos agentes sobre los mismos ficheros a la vez.** Ocurrió: dos colisionaron, uno se refugió
+  en un *worktree* y commiteó en una rama, y quedaron **migraciones duplicadas, lint cruzado y un
+  `tsconfig` huérfano**; costó una ronda entera de reconciliación. **Particionar por fichero, y
+  decirlo explícitamente en el prompt.**
+- **Escritura por pasadas** en documentos largos: crear el fichero con las primeras secciones y luego
+  añadir. Si el agente aborta, no se pierde todo.
+- **Exigir salida real pegada** de `pnpm test` / `typecheck` / `lint`, y que digan sin ambigüedad si
+  **Docker** y los **navegadores** arrancaron de verdad.
+
+### 5.4 El aprendizaje confirmado: implementar encuentra lo que revisar no
+
+La sesión **replicó en dos rondas más** el patrón de §4.1, y con eso deja de ser una anécdota de dos
+casos. Los tres errores de `services/api` de §5.2 comparten la firma exacta de E1: **no producen un
+fallo, producen un sistema que se sabotea en silencio** —un blindaje que aprueba el borrado, una
+cadena que se bifurca sin avisar, una prueba de contigüidad ciega justo al ataque más atractivo—. Los
+tres estaban **dentro de las secciones que mejor demuestran dominar el tema**, y los tres pasaron por
+revisión de lectura sin que nadie los viera.
+
+**Consecuencia de ruteo, ya sin matices:** para validar una especificación, la tarea correcta **no es
+«revisala»**, sino **«implementá esta parte y contame qué no se puede escribir»** — o, si aún no toca
+implementar, **«escribí los invariantes»**. Un revisor entrega contradicciones **entre** documentos;
+un implementador entrega errores **dentro** de uno. Sólo el segundo tipo es autodestructivo.
+
+**Deuda que deja la sesión:** los hallazgos de estas dos rondas **no están volcados** a
+`00-contradicciones-resueltas.md` (viven sólo en comentarios de código y nombres de test), y la cifra
+«unos 20» de ese documento y de `TESTING.md` se quedó corta. Registrado como tarea 14 en
+`HANDOFF.md` §7.
