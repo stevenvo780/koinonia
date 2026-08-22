@@ -3,17 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 
-import type { ProblemaResumen } from '@koinonia/contracts';
+import { ESTADO_PROBLEMA_EN_PALABRAS, type ProblemaResumen } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../components/marco';
 import { cuando, traer } from '../../lib/api';
-
-const ESTADO_EN_PALABRAS: Readonly<Record<string, string>> = {
-  'recogiendo-evidencia': 'Recogiendo evidencia',
-  'con-propuesta': 'Ya tiene propuesta',
-  resuelto: 'Resuelto',
-  archivado: 'Archivado',
-};
 
 export default function Problemas(): ReactNode {
   const [problemas, setProblemas] = useState<ProblemaResumen[] | undefined>(undefined);
@@ -38,13 +31,13 @@ export default function Problemas(): ReactNode {
       {problemas === undefined && error === undefined && <Cargando que="los problemas" />}
 
       {problemas?.length === 0 && (
-        <div className="vacio">
-          <h2>Nadie ha escrito todavía un problema</h2>
+        <section className="vacio" aria-labelledby="sin-problemas-titulo">
+          <h2 id="sin-problemas-titulo">Nadie ha escrito todavía un problema</h2>
           <p>
             El primero que se escriba va a ser el primero del Instituto. Si el tuyo le toca a otro
             grupo, no importa: se reenvía solo y te decimos por qué.
           </p>
-        </div>
+        </section>
       )}
 
       {problemas !== undefined && problemas.length > 0 && (
@@ -55,9 +48,7 @@ export default function Problemas(): ReactNode {
                 <Link href={`/problemas/${problema.id}`}>{problema.titulo}</Link>
               </h2>
               <p>
-                <span className="etiqueta">
-                  {ESTADO_EN_PALABRAS[problema.estado] ?? problema.estado}
-                </span>{' '}
+                <span className="etiqueta">{ESTADO_PROBLEMA_EN_PALABRAS[problema.estado]}</span>{' '}
                 <span className="suave">desde el {cuando(problema.desde)}</span>
               </p>
               <p className="suave">

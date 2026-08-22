@@ -128,6 +128,8 @@ describe('contrato HTTP de propuestas e iniciativas', () => {
       resultadoDecision.parse({
         decisionId: id,
         iniciativaId: id,
+        // El resultado dice siempre de qué es: la pantalla encabezaba con «Resultado» a secas.
+        titulo: 'Abrir la sala de estudio hasta las nueve',
         desenlace: 'approved',
         desenlaceEnPalabras: 'Aprobada',
         relato: 'La propuesta alcanzó la participación y el apoyo requeridos.',

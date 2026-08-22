@@ -522,8 +522,17 @@ test('mis tareas permite aceptar y explica por qué una dependencia impide comen
   ).toBeVisible();
   await expect(tarjetaRapida).toBeFocused();
   await expect(tarjetaRapida.getByRole('button', { name: 'Comenzar la tarea' })).toBeDisabled();
-  await expect(tarjetaRapida.getByText(`Antes deben completarse: ${tituloPrevia}.`)).toBeVisible();
 
+  // La razón se sigue dando —si no, el botón apagado sería un misterio—, pero **como cuenta**: la
+  // tarea de la que depende ésta es de otra persona, y «Mis tareas» ya no recibe trabajo ajeno.
+  // Antes decía «Antes deben completarse: ⟨título de la tarea de la responsable⟩», que es
+  // exactamente el dato que esta pantalla no tiene por qué tener.
+  await expect(
+    tarjetaRapida.getByText('Antes tiene que completarse otra tarea de la que depende esta'),
+  ).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(tituloPrevia);
+
+  // En la iniciativa, en cambio, se nombra: ahí es donde ese trabajo se rinde en público.
   await page.goto(`/iniciativas/${iniciativaId}`);
   const tarjeta = page.getByRole('article', { name: tituloDependiente });
   await expect(tarjeta.getByText(`${tituloPrevia} (pendiente)`, { exact: false })).toBeVisible();

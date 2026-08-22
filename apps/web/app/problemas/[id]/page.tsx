@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, type SyntheticEvent, type ReactNode }
 
 import {
   CERTEZA_EN_PALABRAS,
+  ESTADO_PROBLEMA_EN_PALABRAS,
   type Certeza,
   type ProblemaDetalle,
   type PropuestaResumen,
@@ -116,8 +117,8 @@ export default function DetalleProblema(): ReactNode {
     <>
       <h1>{problema.titulo}</h1>
       <p className="suave">
-        <span className="etiqueta">{problema.estado.replace(/-/gu, ' ')}</span> · escrito el{' '}
-        {cuando(problema.desde)}
+        <span className="etiqueta">{ESTADO_PROBLEMA_EN_PALABRAS[problema.estado]}</span> · escrito
+        el {cuando(problema.desde)}
       </p>
 
       <p style={{ whiteSpace: 'pre-wrap' }}>{problema.cuerpo}</p>

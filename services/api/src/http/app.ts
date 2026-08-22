@@ -102,6 +102,7 @@ import {
   deliberacionDetalleDto,
   deliberacionResumenDto,
   iniciativaDto,
+  misTareasDto,
   problemaDetalleDto,
   problemaResumenDto,
   propuestaDetalleDto,
@@ -623,6 +624,25 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     );
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Tareas propias
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Sólo lo tuyo, decidido en el servidor.
+   *
+   * «Mis tareas» pedía `/iniciativas` —el detalle completo de todas— y filtraba en el navegador. El
+   * título y la descripción del trabajo de cualquiera llegaban al teléfono de cualquiera. Acá el
+   * sujeto no se puede elegir: sale de la sesión, igual que en `/mi/capacidad`, y sin sesión esto
+   * es un 401 y no una lista vacía —que sería la respuesta que invita a probar.
+   */
+  app.get('/mi/tareas', async (request) => {
+    // No hay selector de sujeto, tampoco escondido como query param.
+    parse(z.object({}).strict(), request.query);
+    const yo = sujetoPropioDe(request);
+    return misTareasDto(await listarIniciativas(deps), yo);
+  });
+
   /** Selector acotado: sólo integrantes vigentes del círculo que la persona ya puede consultar. */
   app.get('/circulos/:id/miembros', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
@@ -855,7 +875,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const cuerpo = parse(z.object({ requestId: z.uuid() }), request.body);
     const cerrada = await cerrarDecision(deps, actorDe(request), id, cuerpo);
-    return resultadoDto(cerrada.resultado, cerrada.iniciativaId);
+    const [tituloCerrada] = await tituloDeDecision(
+      cerrada.state.config?.proposalId ?? '',
+      cerrada.state.proposalVersionHash ?? '',
+    );
+    return resultadoDto(cerrada.resultado, tituloCerrada, cerrada.iniciativaId);
   });
 
   app.post('/decisiones/:id/ratificar', async (request, reply) => {
@@ -876,7 +900,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get('/decisiones/:id/resultado', async (request) => {
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const found = await resultadoDeDecision(deps, id);
-    return resultadoDto(found.resultado, found.iniciativaId);
+    const [titulo] = await tituloDeDecision(
+      found.state.config?.proposalId ?? '',
+      found.state.proposalVersionHash ?? '',
+    );
+    return resultadoDto(found.resultado, titulo, found.iniciativaId);
   });
 
   app.get('/iniciativas', async (request) => {
@@ -1118,11 +1146,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         bien: v.materialPrivado.ok,
         queSignifica: v.materialPrivado.ok
           ? `Se autenticaron ${String(v.materialPrivado.openedCount)} aperturas privadas y ` +
-            `${String(v.materialPrivado.suppressedCount)} supresiones append-only autorizadas ` +
-            'por una solicitud propia. Sus textos ' +
-            'no se publicaron ni se incluyeron en este informe. Esta comprobación es local: el export público no contiene ciphertexts.'
+            `${String(v.materialPrivado.suppressedCount)} supresiones autorizadas por una ` +
+            'solicitud propia, que se anotaron sin borrar nada de lo anterior. Sus textos ' +
+            'no se publicaron ni se incluyeron en este informe. Esta comprobación es local: lo que ' +
+            'se descarga para comprobar por tu cuenta no lleva esos textos cifrados.'
           : 'Falta, sobra o no se puede autenticar material privado comprometido por el historial. ' +
-            'El ledger público sigue siendo comprobable, pero esta parte mutable no debe mostrarse en verde.',
+            'El historial público sigue siendo comprobable, pero esta parte, que sí puede cambiar, ' +
+            'no debe mostrarse en verde.',
         ...(v.materialPrivado.ok
           ? {}
           : {
@@ -1213,8 +1243,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         explicacion:
           'Descargá el historial público y pasalo por la herramienta independiente para comprobar ' +
           'cadenas, resultados, referencias y anclajes sin confiar en este servidor. El material ' +
-          'privado no sale en ese export: su fila de esta página es una auditoría local de ' +
-          'disponibilidad y commitments, no una prueba independiente de sus ciphertexts.',
+          'privado no sale en esa descarga: su fila de esta página es una revisión hecha acá mismo ' +
+          '—que el material está y que cuadra con el compromiso público que quedó anotado—, y no ' +
+          'una prueba independiente de sus textos cifrados.',
         comando: 'npx @koinonia/verificador historial.json',
         urlDeDescarga: '/integridad/exportar',
       },

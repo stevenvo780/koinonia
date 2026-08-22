@@ -11,6 +11,7 @@ import {
   type CategoriaAyudaTarea,
   type CategoriaBloqueoTarea,
   type IniciativaDetalle,
+  type MiTarea,
   type MotivoRespuestaTarea,
   type Tarea,
 } from '@koinonia/contracts';
@@ -32,16 +33,30 @@ const ESTADO_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
   completada: 'Completada',
 };
 
-interface TareaConIniciativa {
-  readonly iniciativaId: string;
-  readonly objetivo: string;
-  readonly tarea: Tarea;
-  readonly dependenciasPendientes: readonly string[];
-}
-
 interface Intento {
   readonly huella: string;
   readonly requestId: string;
+}
+
+/**
+ * Reconstruye la fila propia a partir de la iniciativa que devuelve la mutación.
+ *
+ * La respuesta del POST trae la iniciativa entera, incluidas tareas de otras personas. Se usa lo
+ * único que hace falta —la tarea propia y cuántas dependencias le faltan— y **el resto se descarta
+ * en el acto**: no se guarda en el estado, así que no sobrevive al manejador.
+ */
+function filaPropia(iniciativa: IniciativaDetalle, tareaId: string): MiTarea | undefined {
+  const tarea = iniciativa.tareas.find((candidata) => candidata.id === tareaId);
+  if (tarea === undefined) return undefined;
+  return {
+    iniciativaId: iniciativa.id,
+    objetivo: iniciativa.objetivo,
+    tarea,
+    dependenciasPendientes: tarea.dependeDe.filter((dependenciaId) => {
+      const dependencia = iniciativa.tareas.find((otra) => otra.id === dependenciaId);
+      return dependencia?.estado !== 'completada';
+    }).length,
+  };
 }
 
 function dividirMinutos(total: number): { horas: string; minutos: string } {
@@ -66,8 +81,8 @@ export default function MisTareas(): ReactNode {
 
   const [capacidad, setCapacidad] = useState<CapacidadPropia | undefined>(undefined);
   const [capacidadDe, setCapacidadDe] = useState<string | undefined>(undefined);
-  const [iniciativas, setIniciativas] = useState<IniciativaDetalle[] | undefined>(undefined);
-  const [iniciativasDe, setIniciativasDe] = useState<string | undefined>(undefined);
+  const [misTareas, setMisTareas] = useState<MiTarea[] | undefined>(undefined);
+  const [misTareasDe, setMisTareasDe] = useState<string | undefined>(undefined);
   const [horas, setHoras] = useState('');
   const [minutos, setMinutos] = useState('');
   const [errorCapacidad, setErrorCapacidad] = useState<unknown>(undefined);
@@ -81,7 +96,7 @@ export default function MisTareas(): ReactNode {
   const guardadoGeneracionRef = useRef(0);
   const accionGeneracionRef = useRef(0);
   const capacidadCargaGeneracionRef = useRef(0);
-  const iniciativasCargaGeneracionRef = useRef(0);
+  const tareasCargaGeneracionRef = useRef(0);
   const ultimaIdentidadConfirmadaRef = useRef<string | undefined>(undefined);
   const borradorCapacidadDeRef = useRef<string | undefined>(undefined);
   const borradorCapacidadSucioRef = useRef(false);
@@ -119,24 +134,26 @@ export default function MisTareas(): ReactNode {
     }
   }
 
-  async function cargarIniciativas(owner: string): Promise<IniciativaDetalle[] | undefined> {
-    const generacion = ++iniciativasCargaGeneracionRef.current;
+  /**
+   * Pide **sólo las tareas propias**.
+   *
+   * Antes pedía `/iniciativas`, que devuelve el detalle completo de todas: llegaban al teléfono el
+   * título y la descripción del trabajo de todo el Instituto, y `esMia` sólo decidía qué se
+   * pintaba. Lo que no se envía no se puede filtrar por error, y en una conexión que se paga por
+   * megabyte tampoco se paga.
+   */
+  async function cargarTareas(owner: string): Promise<MiTarea[] | undefined> {
+    const generacion = ++tareasCargaGeneracionRef.current;
     setErrorTareas(undefined);
     try {
-      const actuales = await traer<IniciativaDetalle[]>('/iniciativas');
-      if (
-        miembroActualRef.current !== owner ||
-        iniciativasCargaGeneracionRef.current !== generacion
-      )
+      const actuales = await traer<MiTarea[]>('/mi/tareas');
+      if (miembroActualRef.current !== owner || tareasCargaGeneracionRef.current !== generacion)
         return undefined;
-      setIniciativas(actuales);
-      setIniciativasDe(owner);
+      setMisTareas(actuales);
+      setMisTareasDe(owner);
       return actuales;
     } catch (fallo: unknown) {
-      if (
-        miembroActualRef.current === owner &&
-        iniciativasCargaGeneracionRef.current === generacion
-      )
+      if (miembroActualRef.current === owner && tareasCargaGeneracionRef.current === generacion)
         setErrorTareas(fallo);
       return undefined;
     }
@@ -145,11 +162,11 @@ export default function MisTareas(): ReactNode {
   useEffect(() => {
     // Los datos privados se vuelven irrepresentables en cuanto cambia o desaparece el sujeto.
     capacidadCargaGeneracionRef.current += 1;
-    iniciativasCargaGeneracionRef.current += 1;
+    tareasCargaGeneracionRef.current += 1;
     setCapacidad(undefined);
     setCapacidadDe(undefined);
-    setIniciativas(undefined);
-    setIniciativasDe(undefined);
+    setMisTareas(undefined);
+    setMisTareasDe(undefined);
     setErrorCapacidad(undefined);
     setErrorTareas(undefined);
     setErrorAccion(undefined);
@@ -178,7 +195,7 @@ export default function MisTareas(): ReactNode {
     }
     ultimaIdentidadConfirmadaRef.current = miembroId;
     void cargarCapacidad(miembroId);
-    void cargarIniciativas(miembroId);
+    void cargarTareas(miembroId);
     // Las funciones verifican el owner capturado antes de adoptar cualquier promesa tardía.
   }, [cargandoSesion, miembroId]);
 
@@ -284,9 +301,12 @@ export default function MisTareas(): ReactNode {
     setConfirmacion(undefined);
     const cuerpo = { ...input.cuerpo, requestId };
     const adoptar = (actualizada: IniciativaDetalle, mensaje: string): void => {
-      setIniciativas((actuales) =>
-        actuales?.map((iniciativa) =>
-          iniciativa.id === actualizada.id ? actualizada : iniciativa,
+      const fila = filaPropia(actualizada, input.tarea.id);
+      setMisTareas((actuales) =>
+        actuales?.map((item) =>
+          item.iniciativaId === actualizada.id && item.tarea.id === input.tarea.id && fila
+            ? fila
+            : item,
         ),
       );
       intentos.current.delete(input.clave);
@@ -318,7 +338,7 @@ export default function MisTareas(): ReactNode {
           falloDefinitivo = segundoFallo;
         }
       }
-      await cargarIniciativas(miembroId);
+      await cargarTareas(miembroId);
       if (miembroActualRef.current !== miembroId || accionGeneracionRef.current !== generacion)
         return;
       setErrorAccion(falloDefinitivo);
@@ -345,23 +365,9 @@ export default function MisTareas(): ReactNode {
   }
 
   const capacidadVisible = capacidadDe === miembroId ? capacidad : undefined;
-  const iniciativasVisibles = iniciativasDe === miembroId ? iniciativas : undefined;
-  const tareas =
-    iniciativasVisibles?.flatMap((iniciativa) =>
-      iniciativa.tareas
-        .filter((tarea) => tarea.esMia)
-        .map((tarea) => ({
-          iniciativaId: iniciativa.id,
-          objetivo: iniciativa.objetivo,
-          tarea,
-          dependenciasPendientes: tarea.dependeDe
-            .map((dependenciaId) =>
-              iniciativa.tareas.find((candidata) => candidata.id === dependenciaId),
-            )
-            .filter((dependencia) => dependencia?.estado !== 'completada')
-            .map((dependencia) => dependencia?.titulo ?? 'Una tarea anterior'),
-        })),
-    ) ?? [];
+  // Ya no hace falta filtrar: el servidor no manda nada que no sea de esta persona.
+  const tareas = (misTareasDe === miembroId ? misTareas : undefined) ?? [];
+  const tareasVisibles = misTareasDe === miembroId ? misTareas : undefined;
   const pendientes = tareas.filter(({ tarea }) => tarea.estado === 'ofrecida');
   const compromisos = tareas.filter(
     ({ tarea }) =>
@@ -485,15 +491,13 @@ export default function MisTareas(): ReactNode {
           <button
             className="boton secundario"
             type="button"
-            onClick={() => void cargarIniciativas(sesion.miembroId)}
+            onClick={() => void cargarTareas(sesion.miembroId)}
           >
             Reintentar tareas
           </button>
         )}
-        {iniciativasVisibles === undefined && errorTareas === undefined && (
-          <Cargando que="tus tareas" />
-        )}
-        {iniciativasVisibles !== undefined && tareas.length === 0 && (
+        {tareasVisibles === undefined && errorTareas === undefined && <Cargando que="tus tareas" />}
+        {tareasVisibles !== undefined && tareas.length === 0 && (
           <div className="vacio">
             <p>
               <strong>No tenés tareas. Eso está bien:</strong> no todo el mundo tiene que estar
@@ -505,7 +509,7 @@ export default function MisTareas(): ReactNode {
             </p>
           </div>
         )}
-        {iniciativasVisibles !== undefined && tareas.length > 0 && (
+        {tareasVisibles !== undefined && tareas.length > 0 && (
           <>
             <GrupoTareas
               titulo="Ofertas pendientes"
@@ -548,7 +552,7 @@ function GrupoTareas({
   onMutar,
 }: {
   readonly titulo: string;
-  readonly tareas: readonly TareaConIniciativa[];
+  readonly tareas: readonly MiTarea[];
   readonly accionEnCurso: string | undefined;
   readonly onMutar: Mutar;
 }): ReactNode {
@@ -581,12 +585,17 @@ function TareaRapida({
   accionEnCurso,
   onMutar,
 }: {
-  readonly item: TareaConIniciativa;
+  readonly item: MiTarea;
   readonly accionEnCurso: string | undefined;
   readonly onMutar: Mutar;
 }): ReactNode {
   const { iniciativaId, objetivo, tarea, dependenciasPendientes } = item;
-  const [motivo, setMotivo] = useState<MotivoRespuestaTarea | ''>('');
+  // Dos motivos y no uno. Rechazar una oferta y pedir que un compromiso ya asumido pase a otra
+  // persona son actos distintos, y compartían estado: el motivo elegido para lo primero seguía
+  // seleccionado cuando la tarea cambiaba de estado y aparecía el segundo formulario, así que se
+  // podía enviar como motivo de reasignación algo que se eligió para otra pregunta.
+  const [motivoOferta, setMotivoOferta] = useState<MotivoRespuestaTarea | ''>('');
+  const [motivoReasignacion, setMotivoReasignacion] = useState<MotivoRespuestaTarea | ''>('');
   const [bloqueo, setBloqueo] = useState<CategoriaBloqueoTarea | ''>('');
   const [ayuda, setAyuda] = useState<CategoriaAyudaTarea | ''>('');
   const cas = { offerId: tarea.ofertaId, revision: tarea.revision };
@@ -650,11 +659,11 @@ function TareaRapida({
           <form
             onSubmit={(evento) => {
               evento.preventDefault();
-              if (motivo === '') return;
+              if (motivoOferta === '') return;
               mutar(
                 'rechazar',
                 'respuestas',
-                { ...cas, tipo: 'rechazar', motivo },
+                { ...cas, tipo: 'rechazar', motivo: motivoOferta },
                 'La oferta quedó rechazada sin atribuirte el trabajo.',
               );
             }}
@@ -666,9 +675,9 @@ function TareaRapida({
                 aria-describedby={`ayuda-rechazo-${tarea.id}`}
                 required
                 disabled={ocupado}
-                value={motivo}
+                value={motivoOferta}
                 onChange={(evento) => {
-                  setMotivo(evento.target.value as MotivoRespuestaTarea);
+                  setMotivoOferta(evento.target.value as MotivoRespuestaTarea);
                 }}
               >
                 <option value="">Elegí una opción</option>
@@ -682,19 +691,19 @@ function TareaRapida({
                 Sólo se registra esta categoría cerrada.
               </span>
             </div>
-            <button className="boton secundario" disabled={ocupado || motivo === ''}>
+            <button className="boton secundario" disabled={ocupado || motivoOferta === ''}>
               Rechazar oferta
             </button>
             <button
               className="boton secundario"
               type="button"
-              disabled={ocupado || motivo === ''}
+              disabled={ocupado || motivoOferta === ''}
               onClick={() => {
-                if (motivo === '') return;
+                if (motivoOferta === '') return;
                 mutar(
                   'reasignar-oferta',
                   'respuestas',
-                  { ...cas, tipo: 'pedir-reasignacion', motivo },
+                  { ...cas, tipo: 'pedir-reasignacion', motivo: motivoOferta },
                   'Pediste que la oferta se dirija a otra persona sin atribuirte el trabajo.',
                 );
               }}
@@ -708,15 +717,22 @@ function TareaRapida({
       {tarea.estado === 'aceptada' && (
         <div>
           <p className="suave" id={`ayuda-iniciar-rapido-${tarea.id}`}>
-            {dependenciasPendientes.length === 0
+            {/*
+             * Cuántas faltan, no cuáles: los títulos son de tareas de otras personas y esta
+             * pantalla ya no los recibe. Quién las lleva y cómo van se lee en la iniciativa, que
+             * es donde ese trabajo se rinde en público —y el enlace está al pie de esta tarjeta.
+             */}
+            {dependenciasPendientes === 0
               ? 'Comenzá cuando el trabajo realmente empiece.'
-              : `Antes deben completarse: ${dependenciasPendientes.join(', ')}.`}
+              : dependenciasPendientes === 1
+                ? 'Antes tiene que completarse otra tarea de la que depende esta. Podés verla en la iniciativa.'
+                : `Antes tienen que completarse ${String(dependenciasPendientes)} tareas de las que depende esta. Podés verlas en la iniciativa.`}
           </p>
           <button
             className="boton"
             type="button"
             aria-describedby={`ayuda-iniciar-rapido-${tarea.id}`}
-            disabled={ocupado || dependenciasPendientes.length > 0}
+            disabled={ocupado || dependenciasPendientes > 0}
             onClick={() => {
               mutar('iniciar', 'iniciar', cas, 'La tarea quedó en curso desde ahora.');
             }}
@@ -812,16 +828,42 @@ function TareaRapida({
         </form>
       )}
 
+      {/*
+       * Reanudar, que estaba sólo en la iniciativa. Una tarea en pausa se ve acá, se declara acá y
+       * se pide ayuda acá; obligar a irse a otra pantalla justo para volver al trabajo dejaba a
+       * quien pidió ayuda sin la única acción que le quedaba pendiente.
+       */}
+      {(tarea.estado === 'bloqueada' || tarea.estado === 'en-apoyo') &&
+        tarea.pausaActual !== undefined && (
+          <p>
+            <button
+              className="boton"
+              type="button"
+              disabled={ocupado}
+              onClick={() => {
+                mutar(
+                  'reanudar',
+                  'reanudar',
+                  { ...cas, pauseId: tarea.pausaActual?.id },
+                  'La tarea volvió a estar en curso.',
+                );
+              }}
+            >
+              {accionEnCurso === `reanudar-${tarea.id}` ? 'Reanudando…' : 'Reanudar la tarea'}
+            </button>
+          </p>
+        )}
+
       {puedeReasignar && (
         <form
           className="respuesta-tarea"
           onSubmit={(evento) => {
             evento.preventDefault();
-            if (motivo === '') return;
+            if (motivoReasignacion === '') return;
             mutar(
               'reasignar',
               'respuestas',
-              { ...cas, tipo: 'pedir-reasignacion', motivo },
+              { ...cas, tipo: 'pedir-reasignacion', motivo: motivoReasignacion },
               'Pediste otra persona y el compromiso dejó de figurar a tu cargo.',
             );
           }}
@@ -835,9 +877,9 @@ function TareaRapida({
               aria-describedby={`ayuda-reasignacion-${tarea.id}`}
               required
               disabled={ocupado}
-              value={motivo}
+              value={motivoReasignacion}
               onChange={(evento) => {
-                setMotivo(evento.target.value as MotivoRespuestaTarea);
+                setMotivoReasignacion(evento.target.value as MotivoRespuestaTarea);
               }}
             >
               <option value="">Elegí una opción</option>
@@ -851,7 +893,7 @@ function TareaRapida({
               No se guarda texto libre ni capacidad privada.
             </span>
           </div>
-          <button className="boton secundario" disabled={ocupado || motivo === ''}>
+          <button className="boton secundario" disabled={ocupado || motivoReasignacion === ''}>
             Pedir reasignación
           </button>
         </form>

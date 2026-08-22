@@ -33,10 +33,17 @@ export default function Decisiones(): ReactNode {
       <section aria-labelledby="abiertas-titulo">
         <h2 id="abiertas-titulo">Abiertas</h2>
         {decisiones !== undefined && abiertas.length === 0 ? (
-          <div className="vacio">
+          // El estado vacío se anuncia y ofrece por dónde seguir. Antes era un párrafo suelto:
+          // decía que no había nada y dejaba a la persona sin ningún sitio adonde ir.
+          <div className="vacio" role="status">
             <p>
               No hay ninguna decisión abierta. <strong>Así debe ser la mayoría del tiempo:</strong>{' '}
               si hay más de tres por semana, algo está mal en cómo estamos decidiendo.
+            </p>
+            <p>
+              Lo que se decide sale de un problema y de una propuesta escrita antes.{' '}
+              <Link href="/problemas">Mirá los problemas abiertos</Link> o{' '}
+              <Link href="/deliberaciones">las conversaciones en curso</Link>.
             </p>
           </div>
         ) : (

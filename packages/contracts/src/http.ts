@@ -115,6 +115,21 @@ export const estadoProblema = z.enum([
 ]);
 export type EstadoProblema = z.infer<typeof estadoProblema>;
 
+/**
+ * Cómo se dice cada estado en pantalla. **Una sola regla**, y por eso está acá.
+ *
+ * La lista y el detalle decían el mismo estado de dos formas distintas: la lista lo buscaba en una
+ * tabla propia («Recogiendo evidencia») y el detalle se limitaba a cambiar los guiones por espacios
+ * («recogiendo evidencia»). Dos redacciones del mismo hecho hacen dudar de si son el mismo hecho,
+ * que es exactamente lo que esta pantalla no se puede permitir.
+ */
+export const ESTADO_PROBLEMA_EN_PALABRAS: Readonly<Record<EstadoProblema, string>> = {
+  'recogiendo-evidencia': 'Recogiendo evidencia',
+  'con-propuesta': 'Ya tiene propuesta',
+  resuelto: 'Resuelto',
+  archivado: 'Archivado',
+};
+
 export const certeza = z.enum(['visto', 'me-lo-contaron', 'lo-supongo']);
 export type Certeza = z.infer<typeof certeza>;
 
@@ -381,6 +396,14 @@ export const DESENLACE_EN_PALABRAS: Readonly<Record<Desenlace, string>> = {
 
 export const resultadoDecision = z.object({
   decisionId: opaqueId,
+  /**
+   * El título de lo que se decidió.
+   *
+   * La pantalla encabezaba con «Resultado» a secas: quien llega desde un enlace compartido —que es
+   * como llega casi todo el mundo— veía un veredicto sin saber de qué. Un resultado sin su asunto
+   * no se puede ni citar ni discutir.
+   */
+  titulo: z.string(),
   /** Presente únicamente cuando el cierre aprobado creó su iniciativa. */
   iniciativaId: opaqueId.optional(),
   desenlace,
@@ -765,6 +788,31 @@ export const iniciativaDetalle = iniciativaResumen.extend({
   tareas: z.array(tarea),
 });
 export type IniciativaDetalle = z.infer<typeof iniciativaDetalle>;
+
+/**
+ * Una tarea **propia**, con lo justo para decidir qué hacer con ella.
+ *
+ * `GET /mi/tareas` existe porque «Mis tareas» se armaba pidiendo `/iniciativas`, es decir, el
+ * detalle completo de todas las iniciativas del Instituto: el título y la descripción del trabajo
+ * de todo el mundo viajaban al teléfono de cualquiera y se quedaban en memoria, y el `esMia` que
+ * parecía filtrar era sólo una condición de pintado. Con datos móviles contados eso además se paga.
+ *
+ * `dependenciasPendientes` es **un número y no una lista de títulos** a propósito. La pantalla sólo
+ * necesita saber si puede empezar y cuánto falta; los nombres de esas tareas se leen en la
+ * iniciativa, que es donde ese trabajo se rinde en público. Un endpoint propio que devolviera
+ * títulos ajenos no sería un endpoint propio.
+ */
+export const miTarea = z.object({
+  iniciativaId: opaqueId,
+  /** El objetivo de la iniciativa: sitúa la tarea sin obligar a otra petición. */
+  objetivo: z.string(),
+  tarea,
+  dependenciasPendientes: z.number().int().nonnegative(),
+});
+export type MiTarea = z.infer<typeof miTarea>;
+
+export const misTareas = z.array(miTarea);
+export type MisTareas = z.infer<typeof misTareas>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Deliberación

@@ -12,6 +12,7 @@
  */
 
 import AxeBuilder from '@axe-core/playwright';
+import { forbiddenTermsIn } from '@koinonia/contracts';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
 import {
@@ -38,30 +39,13 @@ let decisionId: string;
 let iniciativaId: string;
 let resultadoDecisionId: string;
 
-/** Términos que no pueden aparecer en pantalla nunca (PRODUCT §7, ADR-0041). */
-const JERGA_PROHIBIDA = [
-  'blockchain',
-  'merkle',
-  'hash',
-  'event sourcing',
-  'condorcet',
-  'sociocracia',
-  'sociocratico',
-  'schulze',
-  'ledger',
-  'payload',
-  'endpoint',
-  'sha-256',
-  'sha256',
-];
-
-function sinAcentos(texto: string): string {
-  return texto
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/gu, '')
-    .toLowerCase();
-}
-
+/*
+ * La lista de jerga prohibida estaba **copiada a mano** en este fichero, y una copia se queda
+ * atrás: le faltaban trece de los términos del contrato —«evento», «grafo», «arista»,
+ * «commitment», «seq», «quorum», «cripto», «nonce», «checksum», «append-only», «supermayoria»,
+ * «beatpath», «event-sourcing»—. Se usa `forbiddenTermsIn`, que es la lista ejecutable de
+ * `@koinonia/contracts`, para que añadir un término prohibido baste con añadirlo en un sitio.
+ */
 async function revisar(page: Page, ruta: string): Promise<void> {
   await page.goto(ruta);
   await page.waitForLoadState('networkidle');
@@ -79,10 +63,8 @@ async function revisar(page: Page, ruta: string): Promise<void> {
   expect(graves, `Violaciones serias o críticas en ${ruta}:\n${detalle}`).toEqual([]);
 
   // La regla de oro, sobre el texto visible.
-  const visible = sinAcentos(await page.locator('body').innerText());
-  for (const termino of JERGA_PROHIBIDA) {
-    expect(visible, `«${termino}» no puede aparecer en ${ruta}`).not.toContain(sinAcentos(termino));
-  }
+  const visible = await page.locator('body').innerText();
+  expect(forbiddenTermsIn(visible), `jerga en ${ruta}`).toEqual([]);
 }
 
 async function tabularHasta(page: Page, destino: Locator, maximo = 40): Promise<void> {

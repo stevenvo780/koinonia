@@ -211,11 +211,13 @@ function iniciativaConHistoria(): InitiativeState {
 
 describe('presentación pública de objeciones', () => {
   it('conserva la prueba sin exponer identificadores internos en la interfaz', () => {
-    const dto = resultadoDto(resultadoConObjecion());
+    const dto = resultadoDto(resultadoConObjecion(), 'Ampliar el horario de la sala de estudio');
     expect(dto.pasos[0]?.explicacion).toBe('Queda 1 objeción admitida sin integrar.');
     expect(dto.tablas[0]?.columnas[0]).toBe('Referencia');
     expect(dto.tablas[0]?.filas[0]?.[0]).toBe('Objeción 1');
     expect(JSON.stringify(dto)).not.toContain(OBJECTION_ID);
+    // El resultado dice de qué es: un veredicto sin su asunto no se puede citar ni discutir.
+    expect(dto.titulo).toBe('Ampliar el horario de la sala de estudio');
   });
 });
 

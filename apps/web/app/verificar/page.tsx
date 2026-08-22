@@ -45,9 +45,26 @@ export default function Verificar(): ReactNode {
 
       <p>
         Todo lo que pasa acá queda escrito en orden, y cada cosa escrita va enganchada a la
-        anterior. Si alguien cambiara, borrara o moviera una sola, el enganche dejaría de cuadrar y
-        esta página lo diría. No hace falta que entiendas cómo funciona: hace falta que puedas
-        comprobarlo.
+        anterior. Si alguien cambiara, borrara o moviera una sola, el enganche dejaría de cuadrar.
+      </p>
+
+      {/*
+       * La salvedad iba en el tercer párrafo y la promesa iba en el primero, que es el orden que
+       * convierte una herramienta honesta en una garantía fingida. Este informe lo produce el mismo
+       * servidor que guarda el historial: si ese servidor estuviera comprometido, podría enseñar
+       * verde. Decirlo primero es lo que hace que el paso de comprobarlo por tu cuenta —abajo— se
+       * entienda como el que de verdad importa, y no como una curiosidad para gente técnica.
+       * «Prefiero un hueco declarado a una garantía fingida» sostiene el proyecto entero, y esta es
+       * la pantalla donde se cobra.
+       */}
+      <p>
+        <strong>Esta página no es prueba de sí misma.</strong> El informe que ves abajo lo hace el
+        mismo servidor que guarda el historial, así que comprueba su propio trabajo: sirve para
+        detectar un fallo o una manipulación torpe, no para descartar que el servidor entero esté
+        mintiendo. Lo único que no depende de nosotros es que lo compruebes vos, y por eso al final
+        de esta página está el historial completo para descargar y la herramienta independiente que
+        lo revisa, que es aparte y de código abierto. No hace falta que entiendas cómo funciona;
+        hace falta que puedas hacerlo.
       </p>
 
       <p>

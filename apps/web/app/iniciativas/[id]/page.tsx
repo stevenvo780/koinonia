@@ -17,6 +17,7 @@ import {
   EVIDENCIA_CRITERIO_EN_PALABRAS,
   MOTIVO_CAMBIOS_EN_PALABRAS,
   MOTIVO_RESPUESTA_TAREA_EN_PALABRAS,
+  datetimeLocalColombia,
   instanteColombia,
   type CategoriaAyudaTarea,
   type CategoriaBloqueoTarea,
@@ -385,6 +386,11 @@ export default function DetalleIniciativa(): ReactNode {
     sesion.circulos.includes(iniciativa.circuloId) &&
     (sesion.roles.includes('facilitator') || sesion.roles.includes('guarantees'));
 
+  // Tope de la fecha de una tarea: el del hito al que aporta, y si todavía no se eligió ninguno,
+  // el de la revisión de la iniciativa. Es la misma regla que aplica el servidor.
+  const topeTarea =
+    iniciativa.hitos.find((hito) => hito.id === hitoTarea)?.venceEn ?? iniciativa.revisarEn;
+
   return (
     <>
       <p className="suave">
@@ -600,6 +606,9 @@ export default function DetalleIniciativa(): ReactNode {
                   aria-describedby="ayuda-vence-hito"
                   type="datetime-local"
                   required
+                  // El servidor ya rechaza una fecha posterior a la revisión; el campo lo dice
+                  // antes, para que el selector del teléfono no ofrezca meses imposibles.
+                  max={datetimeLocalColombia(iniciativa.revisarEn)}
                   value={venceHito}
                   onChange={(e) => {
                     setVenceHito(e.target.value);
@@ -619,6 +628,8 @@ export default function DetalleIniciativa(): ReactNode {
             <form className="formulario-acotado" onSubmit={(e) => void ofrecerTarea(e)}>
               <fieldset disabled={accionEnCurso !== undefined}>
                 <legend>Ofrecer una tarea</legend>
+                {/* Mientras no haya hito elegido, el tope que se puede prometer es el de la
+                    revisión de la iniciativa; en cuanto lo hay, manda el del hito. */}
                 <div className="campo">
                   <label htmlFor="hito-tarea">¿A qué hito aporta?</label>
                   <select
@@ -701,11 +712,18 @@ export default function DetalleIniciativa(): ReactNode {
                     id="vence-tarea"
                     type="datetime-local"
                     required
+                    aria-describedby="ayuda-vence-tarea"
+                    // El tope es el del hito elegido, que es lo que el servidor comprueba; si
+                    // todavía no hay hito elegido, el de la revisión de la iniciativa.
+                    max={datetimeLocalColombia(topeTarea)}
                     value={venceTarea}
                     onChange={(e) => {
                       setVenceTarea(e.target.value);
                     }}
                   />
+                  <span className="ayuda" id="ayuda-vence-tarea">
+                    No puede pasar de la fecha de su hito: {cuando(topeTarea)}.
+                  </span>
                 </div>
                 <div className="campo">
                   <label htmlFor="esfuerzo-tarea">Tiempo estimado, en minutos</label>
@@ -1193,7 +1211,14 @@ function TareaVisible({
                     Sólo queda pública esta categoría general.
                   </span>
                 </div>
-                <button className="boton secundario">Declarar bloqueo</button>
+                {/*
+                 * Deshabilitado mientras falte la causa. Antes el botón estaba disponible y el
+                 * manejador hacía `return` sin decir nada: se pulsaba, no pasaba nada, y no había
+                 * forma de saber si el fallo era del botón, de la red o de una misma.
+                 */}
+                <button className="boton secundario" disabled={categoriaBloqueo === ''}>
+                  Declarar bloqueo
+                </button>
               </fieldset>
             </form>
           </div>
@@ -1239,7 +1264,9 @@ function TareaVisible({
                   Pedir ayuda detiene el trabajo; no es una sanción.
                 </span>
               </div>
-              <button className="boton secundario">Pedir ayuda</button>
+              <button className="boton secundario" disabled={categoriaAyuda === ''}>
+                Pedir ayuda
+              </button>
             </fieldset>
           </form>
         )}
@@ -1302,7 +1329,10 @@ function TareaVisible({
                     se abre únicamente por una acción autorizada.
                   </span>
                 </div>
-                <button className="boton secundario">Guardar evidencia restringida</button>
+                {/* El campo pide 10 caracteres como mínimo; el botón espera a que los haya. */}
+                <button className="boton secundario" disabled={notaEvidencia.trim().length < 10}>
+                  Guardar evidencia restringida
+                </button>
               </fieldset>
             </form>
           )}
@@ -1360,7 +1390,8 @@ function TareaVisible({
                   }}
                 />
                 <span className="ayuda" id={`ayuda-resumen-${tarea.id}`}>
-                  El resumen no entra al ledger público.
+                  Esto lo leen sólo vos y quien revise la entrega. No sale en el historial que
+                  cualquiera puede consultar ni en lo que se descarga para comprobarlo.
                 </span>
               </div>
               <button
@@ -1419,7 +1450,9 @@ function TareaVisible({
                       Sólo esta categoría queda en el historial.
                     </span>
                   </div>
-                  <button className="boton secundario">Pedir cambios</button>
+                  <button className="boton secundario" disabled={motivoCambios === ''}>
+                    Pedir cambios
+                  </button>
                 </fieldset>
               </form>
               <form
@@ -1460,7 +1493,9 @@ function TareaVisible({
                       ))}
                     </select>
                   </div>
-                  <button className="boton">Aceptar y completar</button>
+                  <button className="boton" disabled={evidenciaCriterio === ''}>
+                    Aceptar y completar
+                  </button>
                 </fieldset>
               </form>
             </div>

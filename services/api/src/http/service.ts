@@ -2288,7 +2288,11 @@ async function iniciativaDeResultado(
 export async function resultadoDeDecision(
   deps: ServicioDeps,
   decisionIdRaw: string,
-): Promise<{ readonly resultado: DecisionResult; readonly iniciativaId?: string }> {
+): Promise<{
+  readonly resultado: DecisionResult;
+  readonly state: DecisionState;
+  readonly iniciativaId?: string;
+}> {
   const { log, state } = await verDecision(deps, decisionIdRaw);
   if (state.closedAt === undefined) {
     throw new ServicioError(
@@ -2307,6 +2311,7 @@ export async function resultadoDeDecision(
     );
     return {
       resultado,
+      state,
       ...(initiative === undefined ? {} : { iniciativaId: initiative.initiativeId }),
     };
   });

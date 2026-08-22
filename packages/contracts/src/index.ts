@@ -29,4 +29,4 @@ export {
 } from './ids.js';
 
 export * from './http.js';
-export { instanteColombia } from './time.js';
+export { datetimeLocalColombia, instanteColombia } from './time.js';

@@ -8,7 +8,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
-import type { IniciativaDetalle } from '@koinonia/contracts';
+import { forbiddenTermsIn, type IniciativaDetalle } from '@koinonia/contracts';
 
 import {
   apiAnonima,
@@ -108,6 +108,12 @@ async function revisarAccesibilidad(page: Page, estado: string): Promise<void> {
     )
     .join('\n');
   expect(analisis.violations, `Violaciones de accesibilidad en ${estado}:\n${detalle}`).toEqual([]);
+
+  // Estos estados son los únicos que llegan a dibujar las pantallas de trabajo con sesión, tarea
+  // propia y formularios abiertos. `04-accesibilidad` revisa la jerga sin sesión, así que de la
+  // mitad de esta interfaz no veía ni una palabra: es donde llevaba escrito «ledger».
+  const visible = await page.locator('body').innerText();
+  expect(forbiddenTermsIn(visible), `jerga en ${estado}`).toEqual([]);
 }
 
 test.beforeAll(async () => {

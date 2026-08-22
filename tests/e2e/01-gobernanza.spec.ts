@@ -193,7 +193,12 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
   await page.goto(`/decisiones/${decisionId}`);
   await page.getByRole('button', { name: 'Cerrar y publicar el resultado' }).click();
   await expect(page).toHaveURL(`/decisiones/${decisionId}/resultado`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Resultado' })).toBeVisible();
+  // El encabezado dice **de qué** es el resultado. Decía «Resultado» a secas, y a esta pantalla se
+  // llega casi siempre por un enlace que alguien pasó: un veredicto sin su asunto no se puede citar.
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Pedir que la sala abra hasta las 9' }),
+  ).toBeVisible();
+  await expect(page.getByText('Resultado de la decisión sobre:')).toBeVisible();
   await expect(page.getByText('Aprobada').first()).toBeVisible();
   // La demostración, en castellano y paso por paso.
   await expect(

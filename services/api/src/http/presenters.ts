@@ -45,6 +45,7 @@ import type {
   Desenlace,
   Evidencia,
   IniciativaDetalle,
+  MisTareas,
   PausaTarea,
   PlanEjecucion,
   PasoTraza,
@@ -54,6 +55,7 @@ import type {
   PropuestaResumen,
   ResultadoDecision,
   TablaTraza,
+  Tarea,
   VersionPropuesta,
 } from '@koinonia/contracts';
 import {
@@ -343,9 +345,14 @@ function tablaDto(tabla: DecisionResult['proof']['tables'][number]): TablaTraza 
   };
 }
 
-export function resultadoDto(resultado: DecisionResult, iniciativaId?: string): ResultadoDecision {
+export function resultadoDto(
+  resultado: DecisionResult,
+  titulo: string,
+  iniciativaId?: string,
+): ResultadoDecision {
   return {
     decisionId: resultado.decisionId,
+    titulo,
     ...(iniciativaId === undefined ? {} : { iniciativaId }),
     desenlace: desenlaceDe(resultado.outcome),
     desenlaceEnPalabras: DESENLACE_EN_PALABRAS[desenlaceDe(resultado.outcome)],
@@ -625,69 +632,115 @@ export function iniciativaDto(
       venceEn: milestone.dueAt,
       planificadoEn: milestone.plannedAt,
     })),
-    tareas: state.tasks.map((task) => ({
-      id: task.taskId,
-      hitoId: task.milestoneId,
-      destinatarioId: task.offeredTo,
-      ...(task.assigneeId === undefined ? {} : { responsableId: task.assigneeId }),
-      ofertaId: task.currentOfferId,
-      revision: task.lastSeq,
-      titulo: task.title,
-      descripcion: task.description,
-      venceEn: task.dueAt,
-      esfuerzoMinutos: task.effortMinutes,
-      dependeDe: [...task.dependsOn],
-      estado: task.status,
-      ...(task.startedAt === undefined ? {} : { iniciadaEn: task.startedAt }),
-      pausas: task.pauses.map(pausaTareaDto),
-      ...(task.currentPause === undefined
+    tareas: state.tasks.map((task) => tareaDto(task, state, quien)),
+  };
+}
+
+/**
+ * Una tarea, dicha en la lengua de la pantalla.
+ *
+ * Se extrajo de `iniciativaDto` para que `GET /mi/tareas` presente la tarea **exactamente igual**
+ * que la iniciativa. Dos redacciones del mismo objeto acaban divergiendo, y la que diverge siempre
+ * es la que decide si algo es tuyo.
+ */
+export function tareaDto(
+  task: InitiativeState['tasks'][number],
+  state: InitiativeState,
+  quien?: MemberId,
+): Tarea {
+  return {
+    id: task.taskId,
+    hitoId: task.milestoneId,
+    destinatarioId: task.offeredTo,
+    ...(task.assigneeId === undefined ? {} : { responsableId: task.assigneeId }),
+    ofertaId: task.currentOfferId,
+    revision: task.lastSeq,
+    titulo: task.title,
+    descripcion: task.description,
+    venceEn: task.dueAt,
+    esfuerzoMinutos: task.effortMinutes,
+    dependeDe: [...task.dependsOn],
+    estado: task.status,
+    ...(task.startedAt === undefined ? {} : { iniciadaEn: task.startedAt }),
+    pausas: task.pauses.map(pausaTareaDto),
+    ...(task.currentPause === undefined
+      ? {}
+      : {
+          pausaActual: pausaTareaDto(task.currentPause),
+        }),
+    solicitudesDeAyuda: task.helpRequests.map((request) => ({
+      id: request.helpRequestId,
+      pausaId: request.pauseId,
+      categoria: request.category,
+      solicitadaEn: request.requestedAt,
+    })),
+    evidencias: task.evidence.map((evidence) => ({
+      id: evidence.evidenceId,
+      tipo: evidence.kindCode,
+      tamano: evidence.sizeClass,
+      visibilidad: evidence.visibility,
+      agregadaEn: evidence.addedAt,
+      puedeAbrirse:
+        quien !== undefined &&
+        (evidence.addedBy === quien || state.executionPlan.responsibleId === quien),
+    })),
+    entregas: task.deliveries.map((delivery) => ({
+      id: delivery.deliveryId,
+      evidenciaIds: [...delivery.evidenceIds],
+      entregadaEn: delivery.deliveredAt,
+      puedeAbrirse:
+        quien !== undefined &&
+        (delivery.deliveredBy === quien || state.executionPlan.responsibleId === quien),
+      ...(delivery.review === undefined
         ? {}
         : {
-            pausaActual: pausaTareaDto(task.currentPause),
+            revision:
+              delivery.review.type === 'changes-requested'
+                ? {
+                    tipo: 'cambios-solicitados' as const,
+                    motivo: delivery.review.reason,
+                    revisadaEn: delivery.review.at,
+                  }
+                : {
+                    tipo: 'aceptada' as const,
+                    evidenciaCriterio: delivery.review.outcomeCriterionEvidence,
+                    revisadaEn: delivery.review.at,
+                  },
           }),
-      solicitudesDeAyuda: task.helpRequests.map((request) => ({
-        id: request.helpRequestId,
-        pausaId: request.pauseId,
-        categoria: request.category,
-        solicitadaEn: request.requestedAt,
-      })),
-      evidencias: task.evidence.map((evidence) => ({
-        id: evidence.evidenceId,
-        tipo: evidence.kindCode,
-        tamano: evidence.sizeClass,
-        visibilidad: evidence.visibility,
-        agregadaEn: evidence.addedAt,
-        puedeAbrirse:
-          quien !== undefined &&
-          (evidence.addedBy === quien || state.executionPlan.responsibleId === quien),
-      })),
-      entregas: task.deliveries.map((delivery) => ({
-        id: delivery.deliveryId,
-        evidenciaIds: [...delivery.evidenceIds],
-        entregadaEn: delivery.deliveredAt,
-        puedeAbrirse:
-          quien !== undefined &&
-          (delivery.deliveredBy === quien || state.executionPlan.responsibleId === quien),
-        ...(delivery.review === undefined
-          ? {}
-          : {
-              revision:
-                delivery.review.type === 'changes-requested'
-                  ? {
-                      tipo: 'cambios-solicitados' as const,
-                      motivo: delivery.review.reason,
-                      revisadaEn: delivery.review.at,
-                    }
-                  : {
-                      tipo: 'aceptada' as const,
-                      evidenciaCriterio: delivery.review.outcomeCriterionEvidence,
-                      revisadaEn: delivery.review.at,
-                    },
-            }),
-      })),
-      ...(task.currentDeliveryId === undefined ? {} : { entregaActualId: task.currentDeliveryId }),
-      ...(task.completedAt === undefined ? {} : { completadaEn: task.completedAt }),
-      esMia: quien !== undefined && (task.assigneeId === quien || task.offeredTo === quien),
     })),
+    ...(task.currentDeliveryId === undefined ? {} : { entregaActualId: task.currentDeliveryId }),
+    ...(task.completedAt === undefined ? {} : { completadaEn: task.completedAt }),
+    esMia: quien !== undefined && (task.assigneeId === quien || task.offeredTo === quien),
   };
+}
+
+/**
+ * Las tareas **propias**, y nada más.
+ *
+ * El filtro es del servidor: `esMia` deja de ser una condición de pintado y pasa a ser la condición
+ * de existencia de la fila. Lo que no es tuyo no se serializa, así que no puede filtrarse por un
+ * fallo de la interfaz, no ocupa la conexión y no queda en la memoria del teléfono.
+ *
+ * De las dependencias sale **cuántas faltan**, no cuáles: para decidir si podés empezar alcanza el
+ * número, y los títulos son de tareas de otras personas.
+ */
+export function misTareasDto(
+  iniciativas: readonly { readonly id: string; readonly state: InitiativeState }[],
+  quien: MemberId,
+): MisTareas {
+  return iniciativas.flatMap(({ id, state }) =>
+    state.tasks
+      .filter((task) => task.assigneeId === quien || task.offeredTo === quien)
+      .map((task) => ({
+        iniciativaId: id,
+        objetivo: state.executionPlan.objective,
+        tarea: tareaDto(task, state, quien),
+        dependenciasPendientes: task.dependsOn.filter((dependencyId) => {
+          const dependencia = state.tasks.find((otra) => otra.taskId === dependencyId);
+          // Una dependencia que no aparece en el estado se cuenta como pendiente: nunca se anuncia
+          // «ya podés empezar» a partir de una ausencia.
+          return dependencia?.status !== 'completada';
+        }).length,
+      })),
+  );
 }

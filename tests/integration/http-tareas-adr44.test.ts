@@ -21,6 +21,7 @@ import {
   instant,
   proposalId,
 } from '@koinonia/domain';
+import { forbiddenTermsIn } from '@koinonia/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -1006,13 +1007,17 @@ describe.skipIf(!env.ok)(`API de tareas ADR-0044${skipNote(env)}`, () => {
       }>()
       .comprobaciones.find((check) => check.id === 'material-privado');
     expect(afterPrivate).toEqual(expect.objectContaining({ bien: true }));
-    expect(afterPrivate?.queSignifica).toMatch(/1 supresiones append-only/u);
+    // «append-only» está en FORBIDDEN_UI_TERMS y esta frase se lee en `/verificar`. Se dice lo
+    // mismo en castellano, y se comprueba además que ya no aparece la palabra prohibida.
+    expect(afterPrivate?.queSignifica).toMatch(/1 supresiones autorizadas/u);
+    expect(afterPrivate?.queSignifica).toMatch(/sin borrar nada de lo anterior/u);
+    expect(forbiddenTermsIn(afterPrivate?.queSignifica ?? '')).toEqual([]);
     expect(after.body).not.toContain(fixture.content);
     expect(after.body).not.toContain(fixture.evidenceId);
     expect(
       after.json<{ comoComprobarloVosMismo: { explicacion: string } }>().comoComprobarloVosMismo
         .explicacion,
-    ).toMatch(/material privado no sale.*auditoría local/iu);
+    ).toMatch(/material privado no sale.*una revisión hecha acá mismo/iu);
 
     await expect(
       executeAuthorizedErasure(e.pool, request.solicitudId, {

@@ -36,7 +36,14 @@ export default function Resultado(): ReactNode {
 
   return (
     <>
-      <h1>Resultado</h1>
+      {/*
+       * El encabezado decía «Resultado» y nada más. A esta pantalla se llega casi siempre desde un
+       * enlace que alguien pasó, así que quien llega no trae contexto: un veredicto sin decir de
+       * qué no se puede ni citar ni discutir, y con un lector de pantalla el título de la página
+       * era literalmente una palabra.
+       */}
+      <p className="suave">Resultado de la decisión sobre:</p>
+      <h1>{resultado.titulo}</h1>
 
       {/* El desenlace, con símbolo y palabra: nada depende sólo del color. */}
       <div className={`comprobacion ${aprobada ? 'bien' : 'mal'}`}>

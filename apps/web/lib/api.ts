@@ -32,11 +32,17 @@ async function leerError(respuesta: Response): Promise<ErrorDeApi> {
     const cuerpo = (await respuesta.json()) as ApiError;
     return new ErrorDeApi(respuesta.status, cuerpo);
   } catch {
+    // Decía «si estás sin conexión, lo que ves es lo último que se descargó», y era engañoso dos
+    // veces: en una primera visita no hay nada descargado —la pantalla está vacía, no vieja—, y
+    // este camino ni siquiera es el de estar sin conexión, porque sin red `fetch` ni llega acá.
+    // Acá el servidor sí contestó, con un error que no supimos leer. Se dice eso y nada más: no se
+    // afirma que lo escrito se guardara, porque no lo sabemos.
     return new ErrorDeApi(respuesta.status, {
       codigo: 'ERROR_INTERNO',
       mensaje:
-        'No pudimos hablar con el servidor. Si estás sin conexión, lo que ves es lo último que se ' +
-        'descargó.',
+        'El servidor contestó con un error que no pudimos leer. No sabemos si lo que mandaste llegó ' +
+        'a guardarse. Volvé a cargar la pantalla antes de escribirlo otra vez, para no dejarlo dos ' +
+        'veces.',
     });
   }
 }

@@ -301,9 +301,10 @@ test('dos toques seguidos en «cerrar y publicar» cierran la decisión una sola
   const api = await apiDirecta(lucia);
   const resultado = await api.get(`/decisiones/${decisionParaCierre}/resultado`);
   expect(resultado.status(), await resultado.text()).toBe(200);
-  const cuerpo = (await resultado.json()) as { comprobante: string };
+  const cuerpo = (await resultado.json()) as { titulo: string; comprobante: string };
   await api.dispose();
   expect(cuerpo.comprobante).toMatch(/^[0-9a-f]{64}$/u);
+  expect(cuerpo.titulo).toContain('Abrir la sala hasta las nueve');
 });
 
 test('aportar dos veces seguidas deja un aporte, no dos', async ({ page }) => {

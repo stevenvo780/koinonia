@@ -28,3 +28,16 @@ export function instanteColombia(valor: string): number {
   }
   return localAsUtc + DESFASE_COLOMBIA_MS;
 }
+
+/**
+ * El inverso exacto: un instante, escrito como lo espera un `datetime-local` en hora de Colombia.
+ *
+ * Existe para poder poner `max` en esos campos. El servidor ya rechazaba una fecha posterior al
+ * plazo —y lo decía con una frase clara—, pero enterarse después de rellenar el formulario es
+ * enterarse tarde: el selector nativo del teléfono ofrecía alegremente meses que iban a ser
+ * rechazados. Se deriva de la misma constante que `instanteColombia` para que el límite que enseña
+ * la pantalla y el que aplica el servidor no puedan separarse.
+ */
+export function datetimeLocalColombia(ms: number): string {
+  return new Date(ms - DESFASE_COLOMBIA_MS).toISOString().slice(0, 16);
+}
