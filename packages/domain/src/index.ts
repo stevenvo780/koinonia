@@ -397,6 +397,9 @@ export * from './workspace/index.js';
 // ── Deliberación estructurada por etapas ────────────────────────────────────────────────────────
 export * from './deliberation/index.js';
 
+// ── Constitución digital: las reglas como datos versionados (§6) ─────────────────────────────────
+export * from './constitution/index.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,

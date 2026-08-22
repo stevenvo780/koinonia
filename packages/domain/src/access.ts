@@ -108,6 +108,12 @@ export type Action =
   | 'deliberation:contribute'
   | 'deliberation:advance-stage'
   | 'deliberation:read-authorship'
+  | 'constitution:read'
+  | 'constitution:found'
+  | 'constitution:propose-reform'
+  | 'constitution:record-vote'
+  | 'constitution:approve'
+  | 'constitution:ratify'
   | 'initiative:plan'
   | 'task:offer'
   | 'task:reoffer'
@@ -145,6 +151,12 @@ export const ACTIONS: readonly Action[] = [
   'deliberation:contribute',
   'deliberation:advance-stage',
   'deliberation:read-authorship',
+  'constitution:read',
+  'constitution:found',
+  'constitution:propose-reform',
+  'constitution:record-vote',
+  'constitution:approve',
+  'constitution:ratify',
   'initiative:plan',
   'task:offer',
   'task:reoffer',
@@ -171,6 +183,7 @@ export type ResourceKind =
   | 'proposal'
   | 'decision'
   | 'deliberation'
+  | 'constitution'
   | 'initiative'
   | 'task'
   | 'ledger';
@@ -368,6 +381,61 @@ const RULES: Readonly<Record<Action, Rule>> = {
   // cualquier miembro del círculo. La protección es frente a los pares, incluido quien llame a la
   // API saltándose la interfaz; **no** frente a quien administra el servidor y lee la base de datos.
   'deliberation:read-authorship': { ...CIRCLE_MEMBER, deniedDuringStage: 'perspectivas' },
+
+  // ─── Constitución digital (§6) ─────────────────────────────────────────────────────────────
+  // Ninguna de estas reglas lleva `circleOnly`, y no es un olvido: el cuerpo competente para las
+  // reglas es la **Asamblea**, que es todo el censo (§3, fila 13 «vota todo el censo»). Exigir
+  // pertenencia a un círculo sería inventar un requisito que el documento no pone y, peor, dejar
+  // fuera de su propia constitución a quien no esté inscrito en ningún círculo.
+  //
+  // Y `tech-admin` no aparece en NINGUNA de las cinco de escritura. Es la tabla del §7 —«no puede
+  // cambiar umbrales, quórums, plazos, pesos o dominios», «no puede firmar la puesta en vigor de
+  // una reforma»— escrita donde se aplica.
+  'constitution:read': OPEN,
+  'constitution:found': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: false,
+    deniedDuringStage: undefined,
+  },
+  // Proponer una reforma es un derecho de miembro: lo que la frena son las 30 firmas (10 % del
+  // censo), que se cuentan en el dominio y no aquí. Un permiso de rol para proponer convertiría a
+  // la facilitación en portera de lo que la asamblea puede discutir.
+  'constitution:propose-reform': MEMBER,
+  'constitution:record-vote': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: false,
+    deniedDuringStage: undefined,
+  },
+  // §6.6: la puesta en vigor exige M de N firmas de Garantías. `subjectOnly` es lo que impide que
+  // una sola persona escriba las tres: cada aprobación se atribuye a quien la hace. **No es una
+  // firma criptográfica** —ver la cabecera de `constitution/commands.ts`—: quien administra el
+  // servidor puede fabricarlas. Lo que hay es detección, no prevención, y está declarado.
+  'constitution:approve': {
+    roles: ['guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: true,
+    readerOnly: false,
+    circleOnly: false,
+    deniedDuringStage: undefined,
+  },
+  'constitution:ratify': {
+    roles: ['facilitator', 'guarantees'],
+    authenticated: true,
+    ownerOnly: false,
+    subjectOnly: false,
+    readerOnly: false,
+    circleOnly: false,
+    deniedDuringStage: undefined,
+  },
 
   // ADR-0044: descomponer la iniciativa y volver a ofrecer trabajo pertenece a quien asumió el plan.
   'initiative:plan': OWNER_IN_CIRCLE,
