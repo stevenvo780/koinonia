@@ -1,0 +1,62 @@
+name: Mutación
+
+# `docs/TESTING.md` §10: la cobertura dice qué líneas se ejecutaron; la mutación dice si las
+# aserciones sirven de algo. Estuvo definida y sin ejecutar desde que se escribió el documento, que
+# es la peor de las dos opciones: el umbral daba la impresión de estar vigilado y no vigilaba nada.
+#
+# ⚠ HOY ESTE TRABAJO FALLA, y falla a propósito. La puntuación real es 61,93 % contra un umbral de
+# 85 %. Bajar el umbral para poner esto en verde sería tapar exactamente el hallazgo que la
+# herramienta existe para producir; el informe subido como artefacto lleva la lista de mutantes que
+# sobreviven, que es el trabajo pendiente.
+#
+# NO se engancha a los pull requests todavía, aunque §10 lo pida («en todo PR que lo toque»). Con la
+# puntuación por debajo del umbral, un guardián en el PR bloquearía cualquier cambio en
+# `packages/domain` sin relación con el motivo del rojo. Se engancha el día que la puntuación pase
+# de 85 %, y ese día el guardián sí protege algo en vez de estorbar.
+
+on:
+  schedule:
+    # 06:30 UTC = 01:30 en Bogotá. Cada noche.
+    - cron: '30 6 * * *'
+  workflow_dispatch:
+    inputs:
+      ambito:
+        description: 'Ámbito a mutar: vacío (todo), crypto, tally o reglas'
+        required: false
+        default: ''
+
+concurrency:
+  group: mutacion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutacion:
+    name: Stryker · ${{ inputs.ambito || 'crypto + tally + reglas' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Stryker sólo lanza las pruebas unitarias de `packages/crypto` y `packages/domain`
+      # (`stryker.config.vitest.mjs`). No hace falta Docker: `tests/integration/**` queda fuera a
+      # propósito, porque relanzar testcontainers una vez por mutante son días, no minutos.
+      - run: pnpm run mutation
+        env:
+          KOINONIA_MUTAR: ${{ inputs.ambito }}
+
+      # `!cancelled()`: el informe es lo que hay que mirar JUSTO cuando el paso anterior falla.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: informe-mutacion
+          path: reports/mutation/
+          retention-days: 30

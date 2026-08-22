@@ -21,7 +21,8 @@
     "build:web": "pnpm --filter @koinonia/web run build",
     "dev": "node scripts/dev.mjs",
     "e2e": "tsc --build packages/contracts services/api && playwright test",
-    "e2e:matriz": "tsc --build packages/contracts services/api && KOINONIA_MATRIZ=completa playwright test"
+    "e2e:matriz": "tsc --build packages/contracts services/api && KOINONIA_MATRIZ=completa playwright test",
+    "mutation": "stryker run"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -31,6 +32,8 @@
     "@koinonia/crypto": "workspace:*",
     "@koinonia/domain": "workspace:*",
     "@playwright/test": "^1.62.1",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.1",
     "eslint": "^10.9.0",

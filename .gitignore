@@ -32,3 +32,7 @@ next-env.d.ts
 /playwright-report/
 /test-results/
 /tests/e2e/.entorno.json
+
+# Informe de mutación (Stryker). Se sube como artefacto de CI, no se versiona: son megabytes de
+# HTML generado que cambian entero en cada corrida.
+/reports/
