@@ -10,19 +10,35 @@
  * puerta de escritura no lo permita. `isAcyclic` existe de todos modos, pero para **comprobar la
  * afirmación** en los tests, no para sostenerla.
  *
- * ═══ Cada arista tiene un tipo de destino ═══
+ * ═══ Cada arista tiene un tipo de destino, y algunas además un MODO ═══
  *
  * Una `evidencia` que «apoya» una `posicion` es exactamente el salto que hace irrevisable una
  * discusión: el dato pasa a respaldar la conclusión sin pasar por la razón que la une. Aquí el
  * destino se comprueba contra el tipo exigido y se rechaza si no coincide.
  *
- * ═══ DECISIÓN: una corrección supersede a un aporte del MISMO tipo ═══
+ * El tipo no basta cuando dentro de un tipo hay dos actos distintos. `posicion` es preguntar **o**
+ * afirmar, y una `razon` declara cuál de los dos hace: `responde` a una pregunta, `sostiene` una
+ * afirmación. Comprobar sólo el tipo dejaba pasar una razón que dice «sostiene» apuntando a una
+ * pregunta aclaratoria de la etapa anterior —un aporte que afirma estar respaldando algo que nadie
+ * afirmó—. La interfaz ya no ofrecía ese destino, pero una regla que sólo vive en el formulario no
+ * es una regla: se salta llamando a la API. Ahora la arista lleva también el modo exigido.
+ *
+ * ═══ DECISIÓN: una corrección supersede a un aporte del MISMO tipo y de la MISMA persona ═══
  *
  * El diseño exige que en `enmiendas` una `alternativa` supersede a otra, pero no dice qué puede
  * superseder un aporte de otro tipo. Se resuelve con la regla general —se supersede al mismo tipo—
  * en vez de con un caso especial: una `razon` corrige una `razon`. Superseder cruzando tipos
  * convertiría `supersedes` en una arista sin significado, y de paso haría que la exigencia de
  * `enmiendas` fuera una excepción en lugar de una instancia de la regla. Se declara aquí.
+ *
+ * Y **la corrección es de quien escribió el original**. Sin esa condición `supersedes` era una
+ * escalada horizontal con todas las letras: `currentContributions` deja fuera lo supersedido, así
+ * que cualquiera podía retirar de la vista el aporte de cualquier otra persona escribiendo uno suyo
+ * que dijera corregirlo. El original no se borraba —eso nunca pasó—, pero dejaba de ser lo que la
+ * pantalla enseña, que es todo lo que hace falta para silenciar a alguien. Corregir lo ajeno no es
+ * un permiso que le falte a nadie: es un acto que no existe. Para discrepar del aporte de otra
+ * persona están las aristas —una razón, un riesgo, una alternativa—, que **añaden** en vez de
+ * desplazar.
  *
  * ═══ Las listas de aristas son CONJUNTOS ordenados ═══
  *
@@ -34,7 +50,7 @@
  */
 
 import { PreconditionError } from '../errors.js';
-import { isStrictlySorted } from '../ids.js';
+import { isStrictlySorted, type MemberId } from '../ids.js';
 import {
   type ContributionBody,
   type ContributionId,
@@ -42,13 +58,28 @@ import {
   type ContributionRecord,
   type DeliberationState,
   findContribution,
+  type PositionMode,
 } from './types.js';
 
-/** Una arista declarada por un aporte, con el tipo que exige de su destino. */
+/** Una arista declarada por un aporte, con lo que exige de su destino. */
 export interface ContributionReference {
   readonly targetId: ContributionId;
   /** Tipo exigido al destino; `undefined` ⇒ sirve cualquier aporte. */
   readonly expectedKind: ContributionKind | undefined;
+  /**
+   * Modo exigido al destino cuando es una `posicion`; `undefined` ⇒ sirve cualquiera.
+   *
+   * Preguntar y afirmar son dos actos distintos con el mismo tipo. Una arista que sólo mira el tipo
+   * los confunde, y confundirlos es lo que permite «sostener» una pregunta.
+   */
+  readonly expectedMode: PositionMode | undefined;
+  /**
+   * ¿El destino tiene que ser de la misma persona que escribe? Sólo la arista de corrección.
+   *
+   * Es un dato de la arista y no un `if` suelto en la comprobación para que la regla se pueda leer
+   * —y recorrer en un test— en el mismo sitio donde se declara qué apunta a qué.
+   */
+  readonly sameAuthor: boolean;
   /** Campo que produce la arista. Sólo para el mensaje de rechazo. */
   readonly field: string;
 }
@@ -70,35 +101,67 @@ export function referencesOf(
     {
       targetId: supersedesContributionId,
       expectedKind: body.kind,
+      expectedMode: undefined,
+      sameAuthor: true,
       field: 'supersedesContributionId',
     },
   ];
 }
+
+/** El modo que exige una razón de la posición a la que apunta. Es la tabla de `ReasonRelation`. */
+const MODO_QUE_EXIGE_LA_RAZON: Readonly<Record<'responde' | 'sostiene', PositionMode>> = {
+  responde: 'pregunta_aclaratoria',
+  sostiene: 'afirmacion',
+};
 
 function ownReferences(body: ContributionBody): readonly ContributionReference[] {
   switch (body.kind) {
     case 'posicion':
       return [];
     case 'razon':
-      return [{ targetId: body.positionId, expectedKind: 'posicion', field: 'positionId' }];
+      return [
+        {
+          targetId: body.positionId,
+          expectedKind: 'posicion',
+          expectedMode: MODO_QUE_EXIGE_LA_RAZON[body.relation],
+          sameAuthor: false,
+          field: 'positionId',
+        },
+      ];
     case 'evidencia':
       return [
-        { targetId: body.supportsReasonId, expectedKind: 'razon', field: 'supportsReasonId' },
+        {
+          targetId: body.supportsReasonId,
+          expectedKind: 'razon',
+          expectedMode: undefined,
+          sameAuthor: false,
+          field: 'supportsReasonId',
+        },
       ];
     case 'supuesto':
       return body.appliesToContributionIds.map((targetId) => ({
         targetId,
         expectedKind: undefined,
+        expectedMode: undefined,
+        sameAuthor: false,
         field: 'appliesToContributionIds',
       }));
     case 'riesgo':
       return [
-        { targetId: body.alternativeId, expectedKind: 'alternativa', field: 'alternativeId' },
+        {
+          targetId: body.alternativeId,
+          expectedKind: 'alternativa',
+          expectedMode: undefined,
+          sameAuthor: false,
+          field: 'alternativeId',
+        },
       ];
     case 'alternativa':
       return body.sourcePositionIds.map((targetId) => ({
         targetId,
         expectedKind: 'posicion' as const,
+        expectedMode: undefined,
+        sameAuthor: false,
         field: 'sourcePositionIds',
       }));
   }
@@ -123,16 +186,23 @@ function assertSortedSets(body: ContributionBody): void {
 }
 
 /**
- * Comprueba las aristas de un aporte que se escribe en la posición `seq` de la cadena.
+ * Comprueba las aristas de un aporte que se escribe en la posición `seq` de la cadena, escrito por
+ * `authorId`.
  *
- * Rechaza —nunca acomoda— si el destino no existe, si es de otro tipo o si no es anterior. La
- * comprobación de anterioridad es la que sostiene la aciclicidad de todo el grafo.
+ * Rechaza —nunca acomoda— si el destino no existe, si es de otro tipo, si es del modo equivocado, si
+ * no es anterior, o si una corrección apunta al aporte de otra persona. La comprobación de
+ * anterioridad es la que sostiene la aciclicidad de todo el grafo.
+ *
+ * El `authorId` es un **parámetro obligatorio** y no un extra opcional a propósito: una firma con la
+ * autoría opcional deja que un llamante nuevo se olvide de pasarla y pierda la comprobación sin que
+ * nada se ponga en rojo. Aquí, olvidarse no compila.
  */
 export function assertReferences(
   state: DeliberationState,
   seq: number,
   body: ContributionBody,
   supersedesContributionId: ContributionId | undefined,
+  authorId: MemberId,
 ): void {
   assertSortedSets(body);
   for (const reference of referencesOf(body, supersedesContributionId)) {
@@ -155,6 +225,25 @@ export function assertReferences(
         'WRONG_REFERENCE_KIND',
         `${reference.field} exige un aporte de tipo ${reference.expectedKind} y apunta a uno de ` +
           `tipo ${target.body.kind}`,
+      );
+    }
+    if (
+      reference.expectedMode !== undefined &&
+      (target.body.kind !== 'posicion' || target.body.mode !== reference.expectedMode)
+    ) {
+      throw new PreconditionError(
+        'WRONG_REFERENCE_MODE',
+        `${reference.field} exige una posición en modo ${reference.expectedMode} y apunta a ` +
+          (target.body.kind === 'posicion'
+            ? `una en modo ${target.body.mode}`
+            : `un aporte de tipo ${target.body.kind}`),
+      );
+    }
+    if (reference.sameAuthor && target.authorId !== authorId) {
+      throw new PreconditionError(
+        'SUPERSEDES_ANOTHER_AUTHOR',
+        'una corrección sólo alcanza a un aporte de quien la escribe: corregir el de otra persona ' +
+          'la retiraría de lo vigente, que es silenciarla sin borrar nada',
       );
     }
   }

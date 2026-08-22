@@ -1088,10 +1088,11 @@ export const aporteDeliberacion = z
     /**
      * Sólo en una `posicion`: si preguntó o si afirmó.
      *
-     * Hace falta porque el motor valida el **tipo** del destino de una arista y no su modo: una
-     * razón que dice «sostiene» puede apuntar, sin que nada la frene, a una pregunta de la etapa
-     * anterior. La interfaz no puede arreglar esa regla —vive en el motor— pero sí puede no ofrecer
-     * el disparate, y para eso necesita este dato. Queda anotado como hueco del motor.
+     * Hace falta para que el formulario no ofrezca lo que el motor va a rechazar: una razón que
+     * dice «sostiene» va sobre una afirmación y una que dice «responde» va sobre una pregunta, y
+     * las dos son `posicion`. El motor **ya comprueba el modo del destino** —lo hacía sólo con el
+     * tipo, y ese hueco está cerrado—, así que esto ya no sostiene la regla: la anticipa, que es lo
+     * que le toca a una interfaz.
      */
     modo: modoPosicion.optional(),
     texto: z.string(),
@@ -1188,6 +1189,12 @@ export const MENSAJES_DELIBERACION: Readonly<Record<string, string>> = {
     'Ya escribiste todo lo que cabe por persona en esta etapa. En la siguiente empezás de cero.',
   UNKNOWN_CONTRIBUTION_REFERENCE: 'Eso a lo que querés responder ya no está en esta conversación.',
   WRONG_REFERENCE_KIND: 'Eso a lo que querés responder no es de la clase que hace falta acá.',
+  WRONG_REFERENCE_MODE:
+    'Una razón que sostiene va sobre una postura, y una que responde va sobre una pregunta. Lo que ' +
+    'elegiste es de la otra clase.',
+  SUPERSEDES_ANOTHER_AUTHOR:
+    'Sólo podés corregir lo que escribiste vos. Lo de otra persona no se corrige: se le responde, ' +
+    'y las dos cosas quedan.',
   FORWARD_REFERENCE: 'No se puede responder a algo que se escribió después.',
   ASSUMPTION_WITHOUT_TARGET: 'Decí a qué aporte se le aplica ese supuesto.',
   ALTERNATIVE_WITHOUT_SOURCE: 'Decí de qué posturas sale esa salida.',

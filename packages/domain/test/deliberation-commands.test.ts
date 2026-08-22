@@ -405,6 +405,53 @@ describe('grafo tipado', () => {
     ).rejects.toMatchObject({ code: 'WRONG_REFERENCE_KIND' });
   });
 
+  it('una razón que dice SOSTENER no puede apuntar a una pregunta aclaratoria', async () => {
+    // El destino es del tipo correcto —`posicion`— y por eso pasaba: lo que no encajaba era el
+    // modo. Una razón que declara sostener una pregunta afirma estar respaldando algo que nadie
+    // llegó a afirmar, y deja en el grafo un apoyo a una postura inexistente.
+    const log = await guion('perspectivas');
+    await expect(
+      aportar(log, julian, cid(20), {
+        kind: 'razon',
+        relation: 'sostiene',
+        positionId: cid(1),
+        text: TEXT,
+      }),
+    ).rejects.toMatchObject({ code: 'WRONG_REFERENCE_MODE' });
+  });
+
+  it('y una que dice RESPONDER no puede apuntar a una afirmación', async () => {
+    // En Alternativas caben las dos relaciones, así que aquí la etapa no tapa el error: si el
+    // rechazo llega, llega por la arista y no por la tabla de la etapa.
+    const log = await guion('construccion_alternativas');
+    await expect(
+      aportar(log, julian, cid(21), {
+        kind: 'razon',
+        relation: 'responde',
+        positionId: cid(4),
+        text: TEXT,
+      }),
+    ).rejects.toMatchObject({ code: 'WRONG_REFERENCE_MODE' });
+
+    // Y las dos combinaciones correctas, en esa misma etapa, sí entran.
+    await expect(
+      aportar(log, julian, cid(22), {
+        kind: 'razon',
+        relation: 'responde',
+        positionId: cid(1),
+        text: TEXT,
+      }),
+    ).resolves.toBeDefined();
+    await expect(
+      aportar(log, julian, cid(23), {
+        kind: 'razon',
+        relation: 'sostiene',
+        positionId: cid(4),
+        text: TEXT,
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it('el original permanece cuando otro aporte lo supersede', async () => {
     const state = replayDeliberation(await guion('listo_para_decidir'));
     expect(state.contributions.map((c) => c.contributionId)).toContain(cid(6));
@@ -416,6 +463,79 @@ describe('grafo tipado', () => {
     const state = replayDeliberation(await guion('listo_para_decidir'));
     expect(state.contributions.length).toBeGreaterThan(0);
     expect(isAcyclic(state)).toBe(true);
+  });
+
+  it('una corrección sólo alcanza a un aporte de QUIEN LA ESCRIBE', async () => {
+    // La escalada horizontal, en su forma exacta: la alternativa cid(6) la escribió Daniela y
+    // Julián la enmienda. El original no se borraría —eso no pasa nunca— pero saldría de
+    // `currentContributions`, que es lo único que la pantalla enseña. Silenciar sin borrar.
+    const log = await guion('enmiendas');
+    await expect(
+      aportar(
+        log,
+        julian,
+        cid(30),
+        { kind: 'alternativa', problemId: PROBLEM, sourcePositionIds: [cid(4)], text: TEXT },
+        { supersedes: cid(6) },
+      ),
+    ).rejects.toMatchObject({ code: 'SUPERSEDES_ANOTHER_AUTHOR' });
+
+    // Y no se escribió nada: lo de Daniela sigue siendo lo vigente.
+    const state = replayDeliberation(log);
+    expect(currentContributions(state).map((c) => c.contributionId)).toContain(cid(6));
+
+    // La misma enmienda, escrita por su autora, sí entra: lo que se cierra es corregir lo ajeno,
+    // no corregir. Sin esta mitad, la prueba de arriba la pasaría un motor que rechaza todo.
+    const propia = await aportar(
+      log,
+      daniela,
+      cid(31),
+      { kind: 'alternativa', problemId: PROBLEM, sourcePositionIds: [cid(4)], text: TEXT },
+      { supersedes: cid(6) },
+    );
+    expect(
+      currentContributions(replayDeliberation(propia)).map((c) => c.contributionId),
+    ).not.toContain(cid(6));
+  });
+
+  it('EL PLIEGUE rechaza la corrección ajena, no sólo la orden', async () => {
+    // La orden es una puerta; el pliegue es POR DONDE PASA TODO log, venga de esta API, de una
+    // restauración o de un fichero que alguien trajo. Aquí se forja a mano el evento que la orden
+    // no dejó escribir —sobre y aporte firmados los dos por Julián, así que `NOT_THE_AUTHOR` no lo
+    // salva— y se aplica directamente. Si esto pasara, bastaría con inyectar el evento saltándose
+    // `submitContribution` para retirar de la vista el aporte de cualquiera.
+    const log = await guion('enmiendas');
+    const state = replayDeliberation(log);
+    const daniela6 = state.contributions.find((c) => c.contributionId === cid(6));
+    expect(daniela6?.authorId).toBe(mid(3));
+
+    const forjado: DeliberationEvent = {
+      eventId: ev(92),
+      aggregateId: DELIB,
+      seq: state.lastSeq + 1,
+      occurredAt: midOf(indexOfStage('enmiendas')),
+      actor: mid(4),
+      payload: {
+        type: 'ContributionSubmitted',
+        contributionId: cid(52),
+        stage: 'enmiendas',
+        body: { kind: 'alternativa', problemId: PROBLEM, sourcePositionIds: [cid(4)], text: TEXT },
+        authorId: mid(4),
+        supersedesContributionId: cid(6),
+      },
+      prevHash: hash('0'.repeat(64)),
+      hash: hash('1'.repeat(64)),
+    };
+    expect(() => applyDeliberation(state, forjado)).toThrow(
+      expect.objectContaining({ code: 'SUPERSEDES_ANOTHER_AUTHOR' }),
+    );
+
+    // Y el historial entero con ese evento dentro tampoco se pliega: no hay ningún camino de
+    // lectura que lo acepte, ni siquiera el que no llama a `applyDeliberation` evento a evento.
+    expect(() => replayDeliberation([...log, forjado])).toThrow(
+      expect.objectContaining({ code: 'SUPERSEDES_ANOTHER_AUTHOR' }),
+    );
+    expect(currentContributions(state).map((c) => c.contributionId)).toContain(cid(6));
   });
 
   it('un historial con `seq` manipulado hacia atrás se rechaza por referencia hacia adelante', async () => {

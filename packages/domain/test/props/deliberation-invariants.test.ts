@@ -3,7 +3,7 @@
  *
  * Aquí no se comprueba que el camino feliz funcione: se generan deliberaciones enteras al azar
  * —cuántos aportes, de qué tipo, de quién, en qué instante de la ventana, con avance manual o por
- * plazo— y se exige que **todo** historial resultante cumpla las ocho invariantes del diseño. La
+ * plazo— y se exige que **todo** historial resultante cumpla las nueve invariantes del diseño. La
  * semilla es fija (`30_000_821`, como el resto del repo) para que un contraejemplo se pueda volver a
  * mirar mañana.
  *
@@ -22,6 +22,14 @@
  *
  * Las otras seis invariantes —ventanas, tabla de etapas, aristas, aciclicidad, orden de presentación
  * y transiciones— siguen aquí sin recortes, con los números renumerados a la cadena de seis etapas.
+ *
+ * ═══ INV-D9, añadida después ═══
+ *
+ * La novena cierra una escalada horizontal que estas ocho no miraban: `supersedes` no comprobaba la
+ * autoría del original, así que cualquiera podía sacar de `currentContributions` el aporte de
+ * cualquiera. Es adversarial a propósito —intenta el acto y exige el rechazo— porque una invariante
+ * que sólo recorre historiales bien formados no habría encontrado nunca este hueco: el generador
+ * tampoco lo intentaba.
  */
 
 import fc from 'fast-check';
@@ -38,6 +46,7 @@ import {
   contributionId,
   type ContributionKind,
   contributionsOfAuthorInStage,
+  currentContributions,
   DELIBERATION_STAGES,
   type DeliberationCommandMeta,
   type DeliberationLog,
@@ -47,10 +56,12 @@ import {
   isAcyclic,
   nextStage,
   openDeliberation,
+  type PositionMode,
   type PresentationSeed,
   presentationSeed,
   presentationOrder,
   readContributionAuthor,
+  type ReasonRelation,
   referencesOf,
   replayDeliberation,
   stageAdmits,
@@ -146,6 +157,30 @@ function refDe(estado: DeliberationState): ResourceRef {
   return { kind: 'deliberation', stage: estado.stage, circleId: estado.circleId };
 }
 
+/** Un aporte ya escrito, con lo que hace falta para poder elegirlo como destino de una arista. */
+interface Escrito {
+  readonly id: ContributionId;
+  readonly autor: Actor;
+  /** Sólo en una `posicion`: si preguntó o si afirmó. */
+  readonly mode: PositionMode | undefined;
+}
+
+/**
+ * Qué modo de posición exige una razón con esa relación.
+ *
+ * **Se le pregunta al dominio** en vez de repetir la tabla acá. Un generador que se sabe las reglas
+ * de memoria deja de servir el día en que las reglas cambian: seguiría fabricando historiales que
+ * el dominio ya no acepta, y el fallo aparecería como un contraejemplo ilegible en vez de como lo
+ * que es.
+ */
+function modoQueExige(relation: ReasonRelation): PositionMode | undefined {
+  const [referencia] = referencesOf(
+    { kind: 'razon', relation, positionId: cid(0), text: TEXT },
+    undefined,
+  );
+  return referencia?.expectedMode;
+}
+
 /**
  * Construye una deliberación completa siguiendo el plan, hasta la etapa `hasta`.
  *
@@ -155,7 +190,7 @@ function refDe(estado: DeliberationState): ResourceRef {
  */
 async function construir(plan: Plan, hasta: DeliberationStage): Promise<DeliberationLog> {
   const objetivo = indexOfStage(hasta);
-  const porTipo = new Map<ContributionKind, ContributionId[]>();
+  const porTipo = new Map<ContributionKind, Escrito[]>();
   let contador = 0;
   let cursor = 0;
 
@@ -171,14 +206,23 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
     },
   );
 
-  const ultimo = (kind: ContributionKind): ContributionId | undefined => {
+  const ultimo = (kind: ContributionKind): Escrito | undefined => {
     const lista = porTipo.get(kind);
     return lista === undefined || lista.length === 0 ? undefined : lista[lista.length - 1];
   };
-  const alguno = (): ContributionId | undefined => {
+  /** La última posición **de ese modo**. Preguntar y afirmar no son destinos intercambiables. */
+  const ultimaPosicion = (mode: PositionMode): Escrito | undefined => {
+    const lista = porTipo.get('posicion') ?? [];
+    for (let i = lista.length - 1; i >= 0; i--) {
+      const escrito = lista[i];
+      if (escrito !== undefined && escrito.mode === mode) return escrito;
+    }
+    return undefined;
+  };
+  const alguno = (): Escrito | undefined => {
     for (const kind of CONTRIBUTION_KINDS) {
-      const id = ultimo(kind);
-      if (id !== undefined) return id;
+      const escrito = ultimo(kind);
+      if (escrito !== undefined) return escrito;
     }
     return undefined;
   };
@@ -186,7 +230,7 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
   const cuerpo = (
     stage: DeliberationStage,
     kind: ContributionKind,
-  ): { body: ContributionBody; supersedes?: ContributionId } | undefined => {
+  ): { body: ContributionBody; supersedes?: ContributionId; autorObligado?: Actor } | undefined => {
     const regla = stageRule(stage);
     if (!regla.kinds.includes(kind)) return undefined;
     switch (kind) {
@@ -197,27 +241,35 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
       }
       case 'razon': {
         const relation = regla.reasonRelations[0];
-        const positionId = ultimo('posicion');
-        if (relation === undefined || positionId === undefined) return undefined;
-        return { body: { kind: 'razon', relation, positionId, text: TEXT } };
+        if (relation === undefined) return undefined;
+        const modo = modoQueExige(relation);
+        const destino = modo === undefined ? ultimo('posicion') : ultimaPosicion(modo);
+        if (destino === undefined) return undefined;
+        return { body: { kind: 'razon', relation, positionId: destino.id, text: TEXT } };
       }
       case 'evidencia': {
-        const supportsReasonId = ultimo('razon');
-        if (supportsReasonId === undefined) return undefined;
-        return { body: { kind: 'evidencia', supportsReasonId, text: TEXT } };
+        const destino = ultimo('razon');
+        if (destino === undefined) return undefined;
+        return { body: { kind: 'evidencia', supportsReasonId: destino.id, text: TEXT } };
       }
       case 'supuesto': {
         const destino = alguno();
         if (destino === undefined) return undefined;
         return {
-          body: { kind: 'supuesto', appliesToContributionIds: [destino], text: TEXT },
+          body: { kind: 'supuesto', appliesToContributionIds: [destino.id], text: TEXT },
         };
       }
       case 'riesgo': {
-        const alternativeId = ultimo('alternativa');
-        if (alternativeId === undefined) return undefined;
+        const destino = ultimo('alternativa');
+        if (destino === undefined) return undefined;
         return {
-          body: { kind: 'riesgo', alternativeId, severity: 3, impact: TEXT, mitigation: TEXT },
+          body: {
+            kind: 'riesgo',
+            alternativeId: destino.id,
+            severity: 3,
+            impact: TEXT,
+            mitigation: TEXT,
+          },
         };
       }
       case 'alternativa': {
@@ -226,13 +278,15 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
         const body: ContributionBody = {
           kind: 'alternativa',
           problemId: PROBLEM,
-          sourcePositionIds: [origen],
+          sourcePositionIds: [origen.id],
           text: TEXT,
         };
         if (!regla.alternativeMustSupersede) return { body };
         const previa = ultimo('alternativa');
         if (previa === undefined) return undefined;
-        return { body, supersedes: previa };
+        // La enmienda la escribe quien escribió la salida que enmienda. No es una comodidad del
+        // generador: corregir el aporte de otra persona dejó de ser un acto que exista.
+        return { body, supersedes: previa.id, autorObligado: previa.autor };
       }
     }
   };
@@ -242,8 +296,9 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
     if (armado === undefined) return;
     const i = indexOfStage(stage);
     const frac = plan.fracciones[cursor % plan.fracciones.length] ?? 0;
-    const autor = MIEMBROS[(plan.autores[cursor % plan.autores.length] ?? 0) % MIEMBROS.length];
+    const propuesto = MIEMBROS[(plan.autores[cursor % plan.autores.length] ?? 0) % MIEMBROS.length];
     cursor += 1;
+    const autor = armado.autorObligado ?? propuesto;
     if (autor === undefined) return;
     contador += 1;
     const id = cid(contador);
@@ -253,9 +308,14 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Delibera
       body: armado.body,
       ...(armado.supersedes === undefined ? {} : { supersedesContributionId: armado.supersedes }),
     });
+    const escrito: Escrito = {
+      id,
+      autor,
+      mode: armado.body.kind === 'posicion' ? armado.body.mode : undefined,
+    };
     const lista = porTipo.get(kind);
-    if (lista === undefined) porTipo.set(kind, [id]);
-    else lista.push(id);
+    if (lista === undefined) porTipo.set(kind, [escrito]);
+    else lista.push(escrito);
   };
 
   for (let i = 0; i <= 5; i++) {
@@ -316,7 +376,7 @@ function cuerpoLibre(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// Las ocho propiedades
+// Las nueve propiedades
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 describe('INV-D1 · ninguna escritura en la etapa que no admite escritura', () => {
@@ -597,6 +657,79 @@ describe('INV-D7 · el orden de presentación es una permutación determinista',
           contributionIds: ids,
         });
         expect([...orden].sort()).toEqual([...ids].sort());
+      }),
+      runs(25),
+    );
+  });
+});
+
+describe('INV-D9 · la arista exige el modo del destino y la corrección exige su autoría', () => {
+  it('toda razón de un historial generado apunta al modo que su relación exige', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbPlan, async (plan) => {
+        const estado = replayDeliberation(await construir(plan, 'listo_para_decidir'));
+        const porId = new Map(estado.contributions.map((c) => [c.contributionId, c]));
+        for (const aporte of estado.contributions) {
+          for (const ref of referencesOf(aporte.body, aporte.supersedesContributionId)) {
+            if (ref.expectedMode === undefined) continue;
+            const destino = porId.get(ref.targetId);
+            expect(destino).toBeDefined();
+            expect(destino!.body.kind).toBe('posicion');
+            expect(destino!.body.kind === 'posicion' ? destino!.body.mode : undefined).toBe(
+              ref.expectedMode,
+            );
+          }
+        }
+      }),
+      runs(50),
+    );
+  });
+
+  it('toda corrección de un historial generado es de quien escribió el original', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbPlan, async (plan) => {
+        const estado = replayDeliberation(await construir(plan, 'listo_para_decidir'));
+        const porId = new Map(estado.contributions.map((c) => [c.contributionId, c]));
+        for (const aporte of estado.contributions) {
+          if (aporte.supersedesContributionId === undefined) continue;
+          const original = porId.get(aporte.supersedesContributionId);
+          expect(original).toBeDefined();
+          expect(original!.authorId).toBe(aporte.authorId);
+        }
+      }),
+      runs(50),
+    );
+  });
+
+  it('NADIE puede retirar de lo vigente el aporte de otra persona', async () => {
+    // La propiedad adversarial, y la razón de ser de las otras dos. Se toma un historial cualquiera
+    // y se intenta, con cada miembro, superseder cada posición ajena: es el acto que sacaría el
+    // aporte de `currentContributions` sin borrar nada del historial. Ninguno entra, y el conjunto
+    // de aportes vigentes es idéntico antes y después de los intentos.
+    await fc.assert(
+      fc.asyncProperty(arbPlan, fc.integer({ min: 0, max: 3 }), async (plan, quien) => {
+        const log = await construir(plan, 'construccion_alternativas');
+        const estado = replayDeliberation(log);
+        const atacante = MIEMBROS[quien]!;
+        const antes = currentContributions(estado).map((c) => c.contributionId);
+
+        let intentos = 0;
+        for (const victima of estado.contributions) {
+          if (victima.body.kind !== 'posicion') continue;
+          if (victima.authorId === atacante.memberId) continue;
+          intentos += 1;
+          await expect(
+            submitContribution(log, meta(log, opensAtOf(2), atacante), {
+              contributionId: cid(900 + intentos),
+              body: { kind: 'posicion', mode: victima.body.mode, text: TEXT },
+              supersedesContributionId: victima.contributionId,
+            }),
+          ).rejects.toMatchObject({ code: 'SUPERSEDES_ANOTHER_AUTHOR' });
+        }
+
+        expect(currentContributions(replayDeliberation(log)).map((c) => c.contributionId)).toEqual(
+          antes,
+        );
       }),
       runs(25),
     );

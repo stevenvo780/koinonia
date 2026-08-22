@@ -25,6 +25,12 @@
  * aporte a otra persona no se pliega. El esquema sellado que ADR-0049 retira **no podía hacer esto**:
  * escribía `actor: 'system'` y el replay se quedaba sin `Actor` que reautorizar.
  *
+ * De ahí que la comprobación horizontal de `supersedes` —una corrección sólo alcanza a un aporte de
+ * quien la escribe— viva en `assertReferences`, a la que llama **el pliegue**, y no en la orden. La
+ * orden es una de las puertas; el pliegue es por donde pasa todo log, venga de esta API, de una
+ * restauración o de un fichero que alguien trajo. Una regla que sólo estuviera en la orden se
+ * saltaría escribiendo el evento por otro camino, y el historial resultante se plegaría tan tranquilo.
+ *
  * ═══ El tope por persona y etapa ═══
  *
  * Se cuenta sobre el `authorId`, en el dominio y en toda etapa. Es la detección de inundación que el
@@ -197,17 +203,29 @@ export function applyDeliberation(
       // La ventana se comprueba ANTES que la forma: un aporte fuera de plazo se rechaza por estar
       // fuera de plazo, no por un detalle de su cuerpo que ya no viene al caso.
       assertWriteWindow(state, event.occurredAt);
-      assertContributionBody(payload.body);
-      assertBodyAllowedInStage(state.stage, payload.body, payload.supersedesContributionId);
-      assertReferences(state, event.seq, payload.body, payload.supersedesContributionId);
 
       // Reautorización en el replay: el sobre y el aporte tienen que nombrar a la misma persona.
+      //
+      // Va ANTES de mirar las aristas porque `assertReferences` usa el `authorId` como dato de
+      // autorización —una corrección sólo alcanza a lo propio— y un dato que autoriza se ata a la
+      // identidad del sobre antes de usarse. Comprobarlo después dejaría, durante tres líneas, una
+      // decisión de permiso tomada sobre un nombre que todavía no se sabe de quién es.
       if (event.actor !== payload.authorId) {
         throw new PreconditionError(
           'NOT_THE_AUTHOR',
           'el aporte se atribuye a alguien que no es quien lo escribió',
         );
       }
+
+      assertContributionBody(payload.body);
+      assertBodyAllowedInStage(state.stage, payload.body, payload.supersedesContributionId);
+      assertReferences(
+        state,
+        event.seq,
+        payload.body,
+        payload.supersedesContributionId,
+        payload.authorId,
+      );
 
       const limit = state.maxContributionsPerAuthorPerStage;
       if (limit === undefined) {

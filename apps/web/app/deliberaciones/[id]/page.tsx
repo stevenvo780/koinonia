@@ -535,14 +535,21 @@ export default function DetalleDeliberacion(): ReactNode {
                       : '¿Estás corrigiendo un aporte anterior? (opcional)'}
                   </label>
                   {/*
-                    Dice «un aporte anterior» y no «algo tuyo» porque el motor **no comprueba la
-                    autoría al corregir**: cualquiera puede marcar como corregido el aporte de otra
-                    persona. Prometer acá que sólo se corrige lo propio sería mentir sobre lo que el
-                    sistema hace. Queda anotado como hueco del motor, no se disimula con una etiqueta.
+                    Antes esta ayuda decía «puede ser de otra persona», porque el motor no
+                    comprobaba la autoría al corregir y prometer lo contrario habría sido mentir.
+                    Ya la comprueba, así que la frase cambia con la regla.
+
+                    El filtro es `esMio !== false` y no `esMio === true` a propósito: mientras la
+                    etapa oculta la autoría el campo **no viaja** —lo retiene el presentador, porque
+                    comparando dos respuestas se atribuiría cada aporte por diferencia— y filtrar
+                    por `=== true` dejaría la lista vacía justo cuando alguien quiere corregir lo
+                    suyo. Ahí se ofrecen todos y quien escribió reconoce el suyo; si se equivoca, el
+                    motor lo rechaza con estas mismas palabras y no ha revelado nada de nadie.
                   */}
                   <span className="ayuda" id="ayuda-corrige">
-                    Lo que corregís no se borra: queda con su fecha y se marca que hay algo más
-                    nuevo. Puede ser de otra persona, así que decilo en tu texto.
+                    Sólo podés corregir lo que escribiste vos: lo de otra persona no se corrige, se
+                    le responde. Lo que corregís no se borra: queda con su fecha y se marca que hay
+                    algo más nuevo.
                   </span>
                   <select
                     id="corrige"
@@ -556,11 +563,13 @@ export default function DetalleDeliberacion(): ReactNode {
                     }}
                   >
                     <option value="">No corrijo nada</option>
-                    {candidatos(opcion.tipo).map((candidato) => (
-                      <option key={candidato.id} value={candidato.id}>
-                        {resumen(candidato)}
-                      </option>
-                    ))}
+                    {candidatos(opcion.tipo)
+                      .filter((candidato) => candidato.esMio !== false)
+                      .map((candidato) => (
+                        <option key={candidato.id} value={candidato.id}>
+                          {resumen(candidato)}
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}
