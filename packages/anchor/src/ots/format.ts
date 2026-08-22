@@ -396,32 +396,35 @@ async function readTimestamp(
 
 function writeTimestamp(writer: Writer, timestamp: OtsTimestamp): void {
   const { attestations, ops } = timestamp;
-  if (attestations.length === 0 && ops.length === 0) {
+  const total = attestations.length + ops.length;
+  if (total === 0) {
     throw new OtsFormatError('un sello sin operaciones ni atestaciones no es serializable');
   }
 
-  // Todas las atestaciones menos la última van precedidas de `\xff\x00`; la última va tras un
-  // `\x00` suelto. Es la convención exacta de `python-opentimestamps`, y respetarla es lo que
-  // permite que el cliente oficial lea nuestros ficheros.
-  for (const attestation of attestations.slice(0, -1)) {
-    writer.writeBytes(Uint8Array.from([0xff, 0x00]));
+  // `\xff` significa «detrás de esto viene otra cosa **en este mismo nodo**»: lo lleva todo menos el
+  // último elemento, sea atestación o rama. La convención es la de `python-opentimestamps`, y
+  // respetarla es lo que permite que el cliente oficial lea nuestros ficheros.
+  //
+  // ERRATA (hallada por una prueba, 2026-08-22): la versión anterior contaba las atestaciones y las
+  // ramas por separado y escribía la **última atestación** sin `\xff`, aunque después vinieran ramas.
+  // Un nodo con atestación Y ramas —que es exactamente lo que produce fusionar un sello pendiente
+  // con su versión madurada— se serializaba en un fichero que ya no se podía volver a leer: el
+  // lector daba el nodo por terminado y los bytes de las ramas sobraban al final. El error no se
+  // notaba porque hasta ahora ningún nodo tenía las dos cosas.
+  let escritos = 0;
+
+  for (const attestation of attestations) {
+    escritos++;
+    if (escritos < total) writer.writeByte(0xff);
+    writer.writeByte(0x00);
     writeAttestation(writer, attestation);
   }
-  const last = attestations.at(-1);
-  if (last !== undefined) {
-    writer.writeByte(0x00);
-    writeAttestation(writer, last);
-  }
 
-  for (const branch of ops.slice(0, -1)) {
-    writer.writeByte(0xff);
+  for (const branch of ops) {
+    escritos++;
+    if (escritos < total) writer.writeByte(0xff);
     writeOp(writer, branch.op);
     writeTimestamp(writer, branch.timestamp);
-  }
-  const lastBranch = ops.at(-1);
-  if (lastBranch !== undefined) {
-    writeOp(writer, lastBranch.op);
-    writeTimestamp(writer, lastBranch.timestamp);
   }
 }
 

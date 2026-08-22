@@ -38,6 +38,21 @@ export {
 export { canonicalReceipt, parseReceipt, receiptHash, receiptToJson } from './receipt.js';
 
 export {
+  backoffDelayMs,
+  BackoffPolicyError,
+  DEFAULT_BACKOFF,
+  describeError,
+  immediateClock,
+  RetriesExhaustedError,
+  withBackoff,
+  type AttemptFailure,
+  type BackoffPolicy,
+  type BackoffResult,
+  type RetryClock,
+  type WithBackoffOptions,
+} from './retry.js';
+
+export {
   ALERT_HOURS,
   CRITICAL_HOURS,
   evaluateQuorum,
@@ -84,10 +99,16 @@ export {
 
 export {
   checkpointBindingLine,
+  crossCheckForges,
+  ForgeDivergenceError,
   GIT_SIGNATURE_NAMESPACE,
   SIGNED_GIT_ID,
   SignedGitProvider,
   type AllowedSigner,
+  type ForgeCrossCheck,
+  type ForgeDivergenceReason,
+  type ForgeSighting,
+  type ForgeVariant,
   type GitForgeClient,
   type SignedGitOptions,
 } from './providers/signed-git.js';
@@ -100,10 +121,13 @@ export {
   WITNESS_EMAIL_ID,
   WITNESS_SIGNATURE_NAMESPACE,
   WitnessEmailProvider,
+  type AckCollection,
   type AckCollector,
+  type EmailDeliveryReport,
   type EmailTransport,
   type Witness,
   type WitnessAck,
+  type WitnessBounce,
   type WitnessEmailOptions,
 } from './providers/witness-email.js';
 
@@ -123,11 +147,25 @@ export {
   FakeOtsCalendar,
   headerFromHex,
   httpCalendar,
+  pendingCommitments,
   wrapCalendarTimestamp,
   type FakeCalendarOptions,
   type FetchLike,
   type OtsCalendarClient,
 } from './ots/calendar.js';
+
+export {
+  calendarPool,
+  CalendarPoolError,
+  mergeOtsFiles,
+  mergeTimestampAt,
+  mergeTimestamps,
+  retryingCalendar,
+  sameAttestation,
+  sameOp,
+  type CalendarPoolOptions,
+  type RetryingCalendarOptions,
+} from './ots/pool.js';
 
 export {
   applyOp,

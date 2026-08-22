@@ -12,11 +12,14 @@ import { fromHex, sha256, toHex } from '@koinonia/crypto';
 import {
   type DetachedTimestamp,
   OTS_MAJOR_VERSION,
+  type OtsTimestamp,
   parseBareTimestamp,
   parseDetachedTimestamp,
   serializeDetachedTimestamp,
+  walk,
 } from './format.js';
 import { BITCOIN_HEADER_BYTES, type BitcoinHeaderSource } from './bitcoin.js';
+import { mergeTimestampAt } from './pool.js';
 
 export interface OtsCalendarClient {
   /** URI del calendario. Va dentro de la atestación `pending` del sello. */
@@ -44,13 +47,20 @@ export type FetchLike = (
  * fichero detached: sin cabecera mágica y sin digest, porque el calendario ya sabe cuál es). Se
  * envuelve aquí para producir el `.ots` que se publica.
  *
- * VERIFICAR: este cliente no se ejercita contra un calendario real en la suite —los tests no salen
- * a la red a propósito—, así que lo que está probado es el envoltorio y el parseo, no el diálogo
- * HTTP. Antes de la puesta en marcha hay que correrlo una vez contra
- * `https://a.pool.opentimestamps.org` y contrastar el `.ots` resultante con el cliente oficial
- * (`ots verify`). Faltan además: reintentos con backoff (§8.4.1), envío a varios calendarios en
- * paralelo —un solo calendario es un punto único de fallo, y el propio §8.1 lo señala como la falla
- * típica de este anclaje— y el `upgrade` periódico hasta que el sello madura.
+ * `GET {uri}/timestamp/{compromiso}` madura. El **compromiso no es el digest del fichero**: es el
+ * mensaje del nodo donde cuelga cada atestación pendiente, después de aplicar el nonce y el resumen
+ * que el propio calendario añadió. Pedir el digest del fichero —que es lo que hacía este cliente
+ * antes— devuelve `404` contra un calendario real y deja el sello pendiente para siempre sin decir
+ * por qué. Aquí se recorre el árbol, se pide **cada** compromiso pendiente y la respuesta se injerta
+ * en el nodo que le corresponde, que es lo que permite que un `.ots` con ramas de varios calendarios
+ * madure rama a rama.
+ *
+ * Los reintentos y el envío a varios calendarios **no** están aquí a propósito: son política, no
+ * protocolo, y viven en `retryingCalendar()` y `calendarPool()` (`ots/pool.ts`) para que se puedan
+ * probar sin red y componer con cualquier cliente.
+ *
+ * VERIFICAR: el diálogo HTTP no se ejercita en la suite —los tests no salen a la red a propósito—.
+ * Lo que hay que correr a mano una vez está en `services/api/src/anchor/verificacion-manual.ts`.
  */
 export function httpCalendar(uri: string, fetchImpl: FetchLike): OtsCalendarClient {
   const headers = {
@@ -73,17 +83,38 @@ export function httpCalendar(uri: string, fetchImpl: FetchLike): OtsCalendarClie
     },
     async upgrade(otsBytes: Uint8Array): Promise<Uint8Array | undefined> {
       const detached = await parseDetachedTimestamp(otsBytes);
-      // VERIFICAR: el `upgrade` real pide `GET {uri}/timestamp/{commitment}` por CADA atestación
-      // pendiente del árbol y hay que injertar la respuesta en el nodo correspondiente. Aquí sólo
-      // se resuelve el caso de un único compromiso pendiente colgando del digest del fichero.
-      const response = await fetchImpl(`${uri}/timestamp/${toHex(detached.fileDigest)}`, {
-        headers,
-      });
-      if (!response.ok) return undefined;
-      const body = new Uint8Array(await response.arrayBuffer());
-      return wrapCalendarTimestamp(detached.fileDigest, body);
+      let timestamp: OtsTimestamp = detached.timestamp;
+      let injertado = false;
+
+      for (const commitment of pendingCommitments(detached.timestamp)) {
+        const response = await fetchImpl(`${uri}/timestamp/${toHex(commitment)}`, { headers });
+        // Un `404` es la respuesta normal: o este calendario no conoce ese compromiso —porque lo
+        // agregó otro—, o todavía no entró en ningún bloque. No es un fallo del envío.
+        if (!response.ok) continue;
+        const body = new Uint8Array(await response.arrayBuffer());
+        const injerto = await parseBareTimestamp(commitment, body);
+        timestamp = mergeTimestampAt(timestamp, commitment, injerto);
+        injertado = true;
+      }
+
+      if (!injertado) return undefined;
+      return serializeDetachedTimestamp({ ...detached, timestamp });
     },
   };
+}
+
+/** Compromisos con atestación pendiente, sin repetir. Son los que hay que pedir para madurar. */
+export function pendingCommitments(timestamp: OtsTimestamp): readonly Uint8Array[] {
+  const vistos = new Set<string>();
+  const out: Uint8Array[] = [];
+  for (const leaf of walk(timestamp)) {
+    if (leaf.attestation.kind !== 'pending') continue;
+    const hex = toHex(leaf.digest);
+    if (vistos.has(hex)) continue;
+    vistos.add(hex);
+    out.push(leaf.digest);
+  }
+  return out;
 }
 
 /**
@@ -114,6 +145,15 @@ export interface FakeCalendarOptions {
   readonly firstHeight?: number;
   /** Instante del primer bloque, en segundos desde epoch. */
   readonly firstBlockTime?: number;
+  /**
+   * Etiqueta con la que se deriva el nonce.
+   *
+   * Existe para poder simular **calendarios que agregan distinto**: dos calendarios reales nunca
+   * producen la misma rama, y con la etiqueta por defecto dos `FakeOtsCalendar` sí la producirían,
+   * de modo que una prueba del conjunto no distinguiría «se fusionaron dos ramas» de «se envió a
+   * uno». Cambiarla da árboles distintos, que es el caso que hay que probar.
+   */
+  readonly nonceLabel?: string;
 }
 
 /**
@@ -128,6 +168,7 @@ export interface FakeCalendarOptions {
 export class FakeOtsCalendar implements OtsCalendarClient {
   readonly uri: string;
   readonly #headers = new Map<number, Uint8Array>();
+  readonly #nonceLabel: string;
   #nextHeight: number;
   #nextBlockTime: number;
 
@@ -135,11 +176,12 @@ export class FakeOtsCalendar implements OtsCalendarClient {
     this.uri = options.uri ?? 'https://calendario.ejemplo.invalid';
     this.#nextHeight = options.firstHeight ?? 921_447;
     this.#nextBlockTime = options.firstBlockTime ?? 1_787_000_000;
+    this.#nonceLabel = options.nonceLabel ?? 'nonce';
   }
 
   /** Sello pendiente: nonce + sha256 + atestación `pending`, como hace un calendario real. */
   async stamp(fileDigest: Uint8Array): Promise<Uint8Array> {
-    const nonce = await derive(fileDigest, 'nonce');
+    const nonce = await derive(fileDigest, this.#nonceLabel);
     const appended = concat(fileDigest, nonce.slice(0, 16));
     const digest = await sha256(appended);
     return serializeDetachedTimestamp({
@@ -178,7 +220,7 @@ export class FakeOtsCalendar implements OtsCalendarClient {
    */
   async upgrade(otsBytes: Uint8Array): Promise<Uint8Array | undefined> {
     const detached = await parseDetachedTimestamp(otsBytes);
-    const nonce = await derive(detached.fileDigest, 'nonce');
+    const nonce = await derive(detached.fileDigest, this.#nonceLabel);
     const appended = concat(detached.fileDigest, nonce.slice(0, 16));
     const pendingDigest = await sha256(appended);
 

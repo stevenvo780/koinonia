@@ -77,6 +77,167 @@ export interface GitForgeClient {
   head(): Promise<string | undefined>;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// EL CORAZÓN DE LA CLASE `vcs`: comprobar que las dos forjas dicen LO MISMO
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Lo que una forja entregó. **No trae OID**: el identificador se recalcula aquí sobre los bytes.
+ *
+ * Aceptar el OID que declara la forja sería preguntarle al sospechoso si dice la verdad. Un `oid` en
+ * esta estructura permitiría que dos forjas «coincidieran» declarando el mismo identificador para
+ * objetos distintos, que es exactamente lo que esta comprobación existe para detectar.
+ */
+export interface ForgeSighting {
+  readonly forge: string;
+  readonly bytes: Uint8Array;
+}
+
+/** Un objeto distinto, y qué forjas lo sirvieron. */
+export interface ForgeVariant {
+  readonly oid: string;
+  readonly forges: readonly string[];
+}
+
+export type ForgeDivergenceReason = 'objetos-distintos' | 'colision-de-identificador';
+
+export type ForgeCrossCheck =
+  | {
+      readonly kind: 'acuerdo';
+      readonly oid: string;
+      readonly bytes: Uint8Array;
+      readonly forges: readonly string[];
+    }
+  | {
+      readonly kind: 'discrepancia';
+      readonly reason: ForgeDivergenceReason;
+      readonly variants: readonly ForgeVariant[];
+      readonly detail: string;
+    }
+  | { readonly kind: 'sin_respuesta' };
+
+/**
+ * Compara lo que devolvió cada forja. **Es la razón de ser de la clase `vcs`.**
+ *
+ * Empujar a dos forjas no protege de nada si después se le pregunta a una sola, o si se pregunta a
+ * las dos y no se comparan las respuestas: un `push --force` en una de ellas pasaría inadvertido y el
+ * anclaje daría verde. Un anclaje que aprueba porque no miró es peor que no tener anclaje, porque
+ * produce un verde que nadie se ganó.
+ *
+ * Se detectan dos cosas distintas, y la segunda es peor que la primera:
+ *
+ *  - **`objetos-distintos`** — las forjas sirven commits con identificadores distintos para el mismo
+ *    checkpoint. Es la firma de un `push --force` en una sola forja, o de dos firmas del mismo
+ *    compromiso. Sea cual sea la causa, la historia publicada ya no es una.
+ *  - **`colision-de-identificador`** — dos objetos con **bytes distintos** y el **mismo** OID. Git
+ *    identifica objetos con SHA-1, y SHA-1 tiene colisiones de prefijo elegido desde 2019. Que esto
+ *    aparezca en la vida real significa que alguien pagó por fabricarlas, y no lo hizo por deporte.
+ */
+export async function crossCheckForges(
+  sightings: readonly ForgeSighting[],
+  /**
+   * Cómo se calcula el identificador. **En producción no se toca**: el valor por defecto es
+   * `commitOid`, que es SHA-1 del objeto, que es lo que hace git.
+   *
+   * Es un parámetro por una razón concreta: la rama `colision-de-identificador` de abajo es
+   * imposible de probar de otro modo. Fabricar dos objetos git con el mismo SHA-1 costó 6 500 años
+   * de CPU en 2017 y sigue costando decenas de miles de dólares; meter en el repositorio los 800 kB
+   * de una colisión conocida para ejercitar seis líneas sería peor remedio. Con esto, la prueba
+   * inyecta un resumen que colisiona a propósito y comprueba que el código **detecta bytes distintos
+   * bajo el mismo identificador**, que es lo único que hay que comprobar.
+   */
+  oidOf: (bytes: Uint8Array) => Promise<string> = commitOid,
+): Promise<ForgeCrossCheck> {
+  if (sightings.length === 0) return { kind: 'sin_respuesta' };
+
+  const porOid = new Map<string, { readonly bytes: Uint8Array; readonly forges: string[] }>();
+  let colision: ForgeVariant | undefined;
+
+  for (const sighting of sightings) {
+    const oid = await oidOf(sighting.bytes);
+    const grupo = porOid.get(oid);
+    if (grupo === undefined) {
+      porOid.set(oid, { bytes: sighting.bytes, forges: [sighting.forge] });
+      continue;
+    }
+    if (!bytesEqual(grupo.bytes, sighting.bytes)) {
+      colision = { oid, forges: [...grupo.forges, sighting.forge] };
+    }
+    grupo.forges.push(sighting.forge);
+  }
+
+  if (colision !== undefined) {
+    return {
+      kind: 'discrepancia',
+      reason: 'colision-de-identificador',
+      variants: [colision],
+      detail:
+        `las forjas ${colision.forges.join(' y ')} sirvieron objetos con bytes DISTINTOS y el ` +
+        `mismo identificador ${colision.oid}. Git identifica objetos con SHA-1: esto es una ` +
+        'colisión, no un error de red, y fabricar una cuesta dinero. Trátese como un ataque en curso',
+    };
+  }
+
+  const variants: ForgeVariant[] = [...porOid].map(([oid, grupo]) => ({
+    oid,
+    forges: grupo.forges,
+  }));
+  const primero = variants[0];
+  if (primero === undefined) return { kind: 'sin_respuesta' };
+
+  if (variants.length > 1) {
+    return {
+      kind: 'discrepancia',
+      reason: 'objetos-distintos',
+      variants,
+      detail:
+        'las forjas NO coinciden en qué commit ancla este checkpoint: ' +
+        variants
+          .map((variant) => `${variant.forges.join(' y ')} → ${variant.oid.slice(0, 12)}…`)
+          .join(' · ') +
+        '. Así es como se ve un `push --force` en una sola forja, y es justo lo que esta clase de ' +
+        'independencia existe para detectar',
+    };
+  }
+
+  const grupo = porOid.get(primero.oid);
+  if (grupo === undefined) return { kind: 'sin_respuesta' };
+  return { kind: 'acuerdo', oid: primero.oid, bytes: grupo.bytes, forges: grupo.forges };
+}
+
+/**
+ * Las forjas discrepan.
+ *
+ * Se lanza en vez de devolverse porque el ciclo de anclaje convierte toda excepción de `poll()` en un
+ * evento `AnclajeFallido` **dentro del ledger**, con este mensaje como motivo. Devolver un recibo
+ * «casi bueno» dejaría la discrepancia en un campo que nadie mira; lanzarla la escribe en la
+ * estructura que el propio anclaje protege, y taparla exige entonces alterar el ledger.
+ */
+export class ForgeDivergenceError extends Error {
+  readonly checkpointHash: string;
+  readonly reason: ForgeDivergenceReason;
+  readonly variants: readonly ForgeVariant[];
+
+  constructor(
+    checkpointHash: string,
+    crossCheck: Extract<ForgeCrossCheck, { readonly kind: 'discrepancia' }>,
+  ) {
+    super(
+      `las forjas discrepan sobre el anclaje de ${checkpointHash.slice(0, 16)}…: ${crossCheck.detail}`,
+    );
+    this.name = 'ForgeDivergenceError';
+    this.checkpointHash = checkpointHash;
+    this.reason = crossCheck.reason;
+    this.variants = crossCheck.variants;
+  }
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export interface SignedGitOptions {
   /** Padrón de firmantes. **Se fija fuera del export**: si lo pusiera el export, no probaría nada. */
   readonly allowedSigners: readonly AllowedSigner[];
@@ -157,40 +318,77 @@ export class SignedGitProvider implements AnchorProvider {
   }
 
   /**
-   * Busca el commit firmado en las forjas.
+   * Busca el commit firmado en las forjas y **compara lo que devuelve cada una**.
    *
-   * VERIFICAR: `GitForgeClient` no tiene implementación real en este paquete. Faltan el cliente HTTP
-   * de Codeberg y el de GitHub (API de contenidos de objetos crudos), el descubrimiento del commit
-   * por la línea de compromiso cuando el OID todavía no se conoce, y la comprobación de que **las
-   * dos** forjas devuelven el MISMO objeto —que es donde se detecta un `push --force` en una sola—.
+   * Tres decisiones, y las tres corrigen un fallo de la versión anterior de este método:
+   *
+   *  1. Se pregunta a **todas** las forjas y se cruzan las respuestas (`crossCheckForges`). Antes se
+   *     tomaban los bytes de la primera que respondiera y se apuntaba el nombre de todas las demás,
+   *     de modo que `forgesSeen: ['codeberg','github']` podía significar «las dos sirvieron commits
+   *     distintos y nadie miró».
+   *  2. Sólo cuenta el commit que **menciona este checkpoint**. Buscando por `head()`, una forja que
+   *     va con retraso sirve el ancla del checkpoint anterior; sin este filtro, el retraso normal se
+   *     convertiría en una alarma de discrepancia, y una alarma que salta sola deja de leerse.
+   *  3. Si las forjas discrepan, **se lanza**. Lo que produce un `AnclajeFallido` en el ledger y
+   *     deja el recibo sin confirmar. Es la falla ruidosa que esta clase de independencia compra.
    */
   async poll(receipt: AnchorReceipt): Promise<AnchorReceipt> {
-    const oid = receipt.externalRef.startsWith('solicitud:') ? undefined : receipt.externalRef;
-    const seen: string[] = [];
-    let bytes: Uint8Array | undefined;
+    const conocido = receipt.externalRef.startsWith('solicitud:') ? undefined : receipt.externalRef;
+    const binding = checkpointBindingLine(receipt.checkpointHash);
+
+    const sightings: ForgeSighting[] = [];
+    const sinAncla: string[] = [];
+    const errores: string[] = [];
 
     for (const forge of this.#forgeClients) {
-      const target = oid ?? (await forge.head());
-      if (target === undefined) continue;
-      const fetched = await forge.fetchCommit(target);
-      if (fetched === undefined) continue;
-      bytes ??= fetched;
-      seen.push(forge.name);
+      try {
+        const target = conocido ?? (await forge.head());
+        if (target === undefined) {
+          sinAncla.push(forge.name);
+          continue;
+        }
+        const fetched = await forge.fetchCommit(target);
+        if (fetched === undefined) {
+          sinAncla.push(forge.name);
+          continue;
+        }
+        if (!anclaEste(fetched, binding)) {
+          sinAncla.push(forge.name);
+          continue;
+        }
+        sightings.push({ forge: forge.name, bytes: fetched });
+      } catch (error) {
+        // Una forja caída no invalida el anclaje, pero tampoco se calla: si al final no hay
+        // acuerdo, este texto es lo que explica por qué.
+        errores.push(`${forge.name}: ${error instanceof Error ? error.message : 'ilegible'}`);
+      }
     }
-    if (bytes === undefined) return receipt;
+
+    const cruce = await crossCheckForges(sightings);
+    if (cruce.kind === 'discrepancia') {
+      throw new ForgeDivergenceError(receipt.checkpointHash, cruce);
+    }
+    if (cruce.kind === 'sin_respuesta') {
+      if (errores.length > 0 && errores.length === this.#forgeClients.length) {
+        throw new Error(`ninguna forja respondió: ${errores.join(' · ')}`);
+      }
+      return receipt;
+    }
 
     return {
       provider: this.meta.id,
       independenceClass: 'vcs',
       checkpointHash: receipt.checkpointHash,
-      externalRef: await commitOid(bytes),
+      externalRef: cruce.oid,
       submittedAt: receipt.submittedAt,
       confirmedAt: this.#clock(),
-      proof: toBase64Url(bytes),
+      proof: toBase64Url(cruce.bytes),
       raw: {
         requestKind: 'commit_firmado',
-        forgesSeen: seen,
+        forgesSeen: [...cruce.forges],
         forgesExpected: [...this.#forges],
+        ...(sinAncla.length === 0 ? {} : { forgesSinAncla: sinAncla }),
+        ...(errores.length === 0 ? {} : { forgesConError: errores }),
       },
     };
   }
@@ -344,12 +542,30 @@ export class SignedGitProvider implements AnchorProvider {
       );
     }
 
+    // `forgesSeen` viene del recibo, que viaja en un export público servido por el mismo servidor
+    // que se audita: es un dato hostil. Se recorta al padrón de forjas declarado FUERA del export,
+    // porque si no, inflar la cuenta sería tan barato como escribir dos nombres inventados.
+    const declaradas = new Set(this.#forges);
     const forgesSeen = readStringArray(receipt.raw['forgesSeen']);
-    if (forgesSeen.length < this.#minForges) {
+    const reconocidas = [...new Set(forgesSeen.filter((forge) => declaradas.has(forge)))];
+    const impostoras = forgesSeen.filter((forge) => !declaradas.has(forge));
+
+    if (impostoras.length > 0) {
+      checks.push(
+        check(
+          'forjas_declaradas',
+          false,
+          `el recibo dice haber visto el commit en ${impostoras.join(', ')}, que no está(n) en el ` +
+            'padrón de forjas: no cuenta(n)',
+        ),
+      );
+    }
+
+    if (reconocidas.length < this.#minForges) {
       residualClaims.push({
         claim:
-          `el recibo dice haber visto el commit en ${String(forgesSeen.length)} forja(s) y hacen ` +
-          `falta ${String(this.#minForges)}`,
+          `el recibo dice haber visto el commit en ${String(reconocidas.length)} forja(s) del ` +
+          `padrón y hacen falta ${String(this.#minForges)}`,
         verifyBy: `buscá el commit ${oid} en: ${this.#forges.join(', ')}`,
       });
     }
@@ -380,6 +596,21 @@ export class SignedGitProvider implements AnchorProvider {
  */
 function base64OfKeyBlob(blob: Uint8Array): string {
   return toBase64(blob);
+}
+
+/**
+ * ¿Estos bytes son el ancla de ESTE checkpoint?
+ *
+ * Un objeto ilegible se descarta en silencio a propósito: la forja pudo servir basura, y eso es un
+ * problema de esa forja, no una discrepancia entre forjas. Lo que no se descarta nunca es una
+ * discrepancia entre dos objetos legibles: eso se lanza.
+ */
+function anclaEste(bytes: Uint8Array, binding: string): boolean {
+  try {
+    return parseCommit(bytes).message.includes(binding);
+  } catch {
+    return false;
+  }
 }
 
 function readStringArray(value: unknown): readonly string[] {

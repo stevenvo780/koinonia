@@ -64,6 +64,39 @@ export interface WitnessAck {
   readonly signature?: string;
 }
 
+/**
+ * Un destinatario al que el correo **no llegó**.
+ *
+ * ═══ Por qué un rebote es una falla de anclaje y no una anécdota de operación ═══
+ *
+ * El umbral se mide en dominios distintos porque la garantía es «hacen falta N personas ajenas para
+ * desmentir esto». Una dirección que ya no existe —alguien que se fue del instituto, un dominio que
+ * caducó— no es un testigo que todavía no contestó: es un testigo que **ya no está**, y el anclaje
+ * pasó de cinco destinatarios a cuatro sin que nadie lo decidiera. Si eso no se registra, el padrón
+ * se erosiona en silencio hasta el día en que no queda margen y nadie sabe desde cuándo.
+ */
+export interface WitnessBounce {
+  /** `id` del testigo, si la dirección que rebotó está en el padrón. */
+  readonly witness: string | undefined;
+  readonly address: string;
+  /**
+   * `permanente` (5.x.x — la dirección no existe: hay que sustituir al testigo) o `transitorio`
+   * (4.x.x — buzón lleno o servidor caído: se reintenta).
+   */
+  readonly kind: 'permanente' | 'transitorio';
+  /** Código ampliado RFC 3463 tal como lo dio el informe: `5.1.1`. Ausente si no lo trajo. */
+  readonly status?: string;
+  readonly detail: string;
+}
+
+/** Qué pasó con el envío, destinatario a destinatario. */
+export interface EmailDeliveryReport {
+  /** Direcciones que el servidor aceptó. Aceptar no es entregar: el rebote puede llegar después. */
+  readonly accepted: readonly string[];
+  /** Rechazos **en el acto** (`RCPT TO` con 5xx). Los diferidos llegan por `AckCollector`. */
+  readonly bounced: readonly WitnessBounce[];
+}
+
 /** Puerto de envío. Lo único de este anclaje que sale a la red. */
 export interface EmailTransport {
   send(message: {
@@ -71,12 +104,24 @@ export interface EmailTransport {
     readonly subject: string;
     readonly body: string;
     readonly recipients: readonly string[];
-  }): Promise<void>;
+  }): Promise<EmailDeliveryReport>;
 }
 
-/** Puerto de recogida de acuses. */
+/**
+ * Puerto de recogida.
+ *
+ * Recoge las **dos** cosas que vuelven al buzón: los acuses de los testigos y los informes de no
+ * entrega. Separarlos en dos puertos obligaría a abrir el buzón dos veces y, sobre todo, dejaría el
+ * rebote como una función opcional que un despliegue puede no enganchar; aquí no se puede recoger
+ * acuses sin enterarse de los rebotes.
+ */
+export interface AckCollection {
+  readonly acks: readonly WitnessAck[];
+  readonly bounces: readonly WitnessBounce[];
+}
+
 export interface AckCollector {
-  collect(messageId: string): Promise<readonly WitnessAck[]>;
+  collect(messageId: string): Promise<AckCollection>;
 }
 
 export interface WitnessEmailOptions {
@@ -168,12 +213,12 @@ export class WitnessEmailProvider implements AnchorProvider {
     ].join('\n');
     const recipients = this.#witnesses.map((witness) => witness.address);
 
-    // VERIFICAR: no hay transporte SMTP real en este paquete. Faltan el envío firmado con DKIM
-    // desde el dominio del instituto, el manejo de rebotes (un destinatario que ya no existe es una
-    // falla de anclaje y debe registrarse como tal) y la recogida automática de acuses por IMAP.
-    // Lo que sí está implementado y probado es lo que sostiene la garantía: la verificación de los
-    // acuses firmados por los testigos.
-    await this.#transport?.send({ messageId, subject, body, recipients });
+    // El transporte real —SMTP con DKIM sobre el dominio del instituto— vive en
+    // `services/api/src/anchor/`: este paquete no hace I/O. Lo que sí se hace aquí es lo que sostiene
+    // la garantía: registrar quién rechazó el correo en el acto, para que el desgaste del padrón sea
+    // un dato del recibo y no un silencio.
+    const report = await this.#transport?.send({ messageId, subject, body, recipients });
+    const bounced = report?.bounced ?? [];
 
     return {
       provider: this.meta.id,
@@ -186,15 +231,17 @@ export class WitnessEmailProvider implements AnchorProvider {
         recipients,
         acks: [],
         minDistinctDomains: this.#minDistinctDomains,
+        ...(report === undefined ? {} : { accepted: [...report.accepted] }),
+        ...(bounced.length === 0 ? {} : { bounces: bounced.map(serializeBounce) }),
       },
     };
   }
 
   async poll(receipt: AnchorReceipt): Promise<AnchorReceipt> {
     if (this.#collector === undefined) return receipt;
-    const acks = await this.#collector.collect(receipt.externalRef);
-    if (acks.length === 0) return receipt;
-    return withAcks(receipt, acks, this.#clock());
+    const { acks, bounces } = await this.#collector.collect(receipt.externalRef);
+    if (acks.length === 0 && bounces.length === 0) return receipt;
+    return withAcks(receipt, acks, this.#clock(), bounces);
   }
 
   async verify(receipt: AnchorReceipt, checkpointHash: Uint8Array): Promise<VerificationOutcome> {
@@ -224,8 +271,37 @@ export class WitnessEmailProvider implements AnchorProvider {
       return invalidOutcome(this.meta, 'la lista de acuses del recibo está mal formada', checks);
     }
 
+    const bounces = parseBounces(receipt.raw['bounces']);
+    if (bounces === undefined) {
+      return invalidOutcome(this.meta, 'la lista de rebotes del recibo está mal formada', checks);
+    }
+
     const validDomains = new Set<string>();
     let informativos = 0;
+
+    // Los rebotes se procesan ANTES que los acuses: si una dirección rebotó, lo que hay que explicar
+    // no es que falte su acuse —eso ya se ve— sino que ese testigo dejó de existir para el anclaje.
+    const caidos = new Set<string>();
+    for (const bounce of bounces) {
+      const witness = this.#witnesses.find(
+        (candidate) =>
+          candidate.id === bounce.witness ||
+          candidate.address.toLowerCase() === bounce.address.toLowerCase(),
+      );
+      const quien = witness?.id ?? bounce.address;
+      const codigo = bounce.status === undefined ? '' : ` [${bounce.status}]`;
+      if (bounce.kind === 'permanente' && witness !== undefined) caidos.add(witness.id);
+      checks.push(
+        check(
+          'rebote',
+          false,
+          `el correo NO llegó a ${quien}${codigo}: ${bounce.detail}` +
+            (bounce.kind === 'permanente'
+              ? '. Es un rebote permanente: ese testigo ya no cuenta hasta que se reponga el padrón'
+              : '. Es transitorio: puede llegar en el reintento'),
+        ),
+      );
+    }
 
     for (const ack of acks) {
       const witness = this.#witnesses.find((candidate) => candidate.id === ack.witness);
@@ -326,6 +402,33 @@ export class WitnessEmailProvider implements AnchorProvider {
     }
 
     const total = validDomains.size;
+
+    if (caidos.size > 0) {
+      // Cuántos dominios distintos quedan **alcanzables**: los del padrón que no son de casa y a los
+      // que el correo sigue llegando. Si ese número ya es menor que el umbral, el anclaje no está
+      // «tardando»: no puede confirmarse nunca con este padrón, y decir «pendiente» a secas sería
+      // dejar en ámbar permanente algo que sólo se arregla reponiendo testigos.
+      const alcanzables = new Set(
+        this.#witnesses
+          .filter((witness) => !caidos.has(witness.id))
+          .map((witness) => domainOf(witness.address))
+          .filter((domain) => domain !== '' && !this.#selfDomains.has(domain)),
+      );
+      residualClaims.push({
+        claim:
+          `${String(caidos.size)} testigo(s) del padrón ya no reciben el correo: ` +
+          [...caidos].join(', '),
+        verifyBy:
+          alcanzables.size < this.#minDistinctDomains
+            ? `quedan ${String(alcanzables.size)} dominios alcanzables y hacen falta ` +
+              `${String(this.#minDistinctDomains)}: con este padrón el anclaje por testigos NO ` +
+              'puede confirmarse. Hay que reponer testigos antes del próximo checkpoint'
+            : 'confirmá con la veeduría si esas personas siguen en el instituto y actualizá el ' +
+              'padrón. Un padrón que se erosiona sin que nadie lo note acaba en un umbral que ya ' +
+              'no se alcanza',
+      });
+    }
+
     if (informativos > 0) {
       residualClaims.push({
         claim: `${String(informativos)} testigo(s) acusaron recibo sin firmar`,
@@ -375,11 +478,19 @@ export class WitnessEmailProvider implements AnchorProvider {
   }
 }
 
-/** Añade acuses a un recibo, conservando el resto. Se usa en `poll` y en los tests. */
+/**
+ * Añade acuses —y, si los hay, rebotes— a un recibo, conservando el resto.
+ *
+ * Los rebotes se **acumulan** con los que ya trajera el recibo, mientras que los acuses se
+ * sustituyen. No es asimetría gratuita: un acuse es el estado actual de un testigo y el último gana;
+ * un rebote es un hecho que ocurrió una vez, y borrarlo porque la siguiente recogida no lo repitió
+ * sería exactamente cómo se pierde el rastro del desgaste del padrón.
+ */
 export function withAcks(
   receipt: AnchorReceipt,
   acks: readonly WitnessAck[],
   confirmedAt: string,
+  bounces: readonly WitnessBounce[] = [],
 ): AnchorReceipt {
   const serialized: JsonValue[] = acks.map((ack) => ({
     witness: ack.witness,
@@ -387,11 +498,65 @@ export function withAcks(
     seenAt: ack.seenAt,
     ...(ack.signature === undefined ? {} : { signature: ack.signature }),
   }));
+
+  const previos = parseBounces(receipt.raw['bounces']) ?? [];
+  const todos = [...previos];
+  for (const bounce of bounces) {
+    const yaEsta = todos.some(
+      (previo) =>
+        previo.address.toLowerCase() === bounce.address.toLowerCase() &&
+        previo.kind === bounce.kind,
+    );
+    if (!yaEsta) todos.push(bounce);
+  }
+
   return {
     ...receipt,
     confirmedAt,
-    raw: { ...receipt.raw, acks: serialized },
+    raw: {
+      ...receipt.raw,
+      acks: serialized,
+      ...(todos.length === 0 ? {} : { bounces: todos.map(serializeBounce) }),
+    },
   };
+}
+
+function serializeBounce(bounce: WitnessBounce): JsonValue {
+  return {
+    ...(bounce.witness === undefined ? {} : { witness: bounce.witness }),
+    address: bounce.address,
+    kind: bounce.kind,
+    ...(bounce.status === undefined ? {} : { status: bounce.status }),
+    detail: bounce.detail,
+  };
+}
+
+/** `undefined` ⇒ la lista está mal formada, que no es lo mismo que estar vacía. */
+function parseBounces(value: JsonValue | undefined): readonly WitnessBounce[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return undefined;
+  const out: WitnessBounce[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return undefined;
+    const record = item as Record<string, JsonValue | undefined>;
+    const address = record['address'];
+    const kind = record['kind'];
+    const detail = record['detail'];
+    const witness = record['witness'];
+    const status = record['status'];
+    if (typeof address !== 'string' || typeof detail !== 'string') return undefined;
+    if (kind !== 'permanente' && kind !== 'transitorio') return undefined;
+    if (witness !== undefined && typeof witness !== 'string') return undefined;
+    if (status !== undefined && typeof status !== 'string') return undefined;
+    out.push({
+      witness,
+      address,
+      kind,
+      ...(status === undefined ? {} : { status }),
+      detail,
+    });
+  }
+  return out;
 }
 
 function parseAcks(value: JsonValue | undefined): readonly WitnessAck[] | undefined {
