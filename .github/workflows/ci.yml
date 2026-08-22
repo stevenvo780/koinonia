@@ -52,6 +52,13 @@ jobs:
   # el primer navegador. En `main` corre la matriz entera —Chromium, Firefox, WebKit, Chrome móvil y
   # Safari móvil—, porque esto se usa en un teléfono y Safari móvil es donde fallan las cosas que en
   # el escritorio funcionan.
+  #
+  # ⚠ CI es el ÚNICO sitio donde la matriz corre entera, y no por comodidad. WebKit no arranca en
+  # las máquinas de desarrollo del equipo (Arch/CachyOS: `playwright install --with-deps` usa
+  # `apt-get`, y las librerías que WebKit pide son versiones que Arch ya no distribuye — HANDOFF §2.4).
+  # Por eso NADA de esta matriz lleva `continue-on-error`: si el único sitio donde WebKit se prueba
+  # además perdona sus fallos, WebKit deja de estar probado y nadie se entera. Un rojo aquí es
+  # información; un verde comprado no vale nada.
   # ═══════════════════════════════════════════════════════════════════════════════════════════
 
   e2e-pr:
@@ -79,11 +86,17 @@ jobs:
         env:
           CI: 'true'
 
+      # Se sube TAMBIÉN `test-results/`: ahí es donde Playwright deja las trazas
+      # (`trace: retain-on-failure`) y las capturas. El informe HTML dice *qué* falló; la traza es lo
+      # único que permite averiguar *por qué* sin poder reproducirlo en la máquina de nadie —que es
+      # exactamente la situación de WebKit, que en este repositorio no arranca fuera de CI—.
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
           name: playwright-report-pr
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
 
   e2e-main:
@@ -124,5 +137,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: playwright-report-${{ matrix.proyecto }}
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
