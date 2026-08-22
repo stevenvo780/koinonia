@@ -14,6 +14,8 @@
  * `@koinonia/api`. Una librería no tiene efectos al importarse; si los tiene, no es una librería.
  */
 
+import { configuracionDeAnclajeDesdeEntorno } from './anchor/configuracion.js';
+import { crearTareaDeAnclaje } from './anchor/tarea.js';
 import { createPool } from './db/client.js';
 import { migrate } from './db/migrate.js';
 import { ensureSpine } from './ledger/event-store.js';
@@ -107,6 +109,35 @@ export async function main(): Promise<void> {
     modoDesarrollo,
   });
 
+  // ── Anclaje externo ──────────────────────────────────────────────────────────────────────────
+  //
+  // Se arranca DESPUÉS del `listen` a propósito. El primer ciclo sale a la red —calendarios de
+  // OpenTimestamps, forjas, SMTP— y puede tardar decenas de segundos; ponerlo antes retrasaría el
+  // arranque del servicio por algo que no lo bloquea. Si la configuración lo deja apagado, la tarea
+  // dice por qué y no hace nada.
+  const anclaje = crearTareaDeAnclaje({
+    pool,
+    config: configuracionDeAnclajeDesdeEntorno(process.env, { produccion: !modoDesarrollo }),
+    ahora: () => new Date(systemClock.now()).toISOString(),
+  });
+
   await app.listen({ port: puerto, host: '0.0.0.0' });
+  anclaje.arrancar();
+
+  // El cierre ordenado importa aquí más que en otros sitios: un ciclo a medias deja recibos
+  // guardados sin su evento en el ledger, y el ledger es lo autoritativo.
+  for (const senal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(senal, () => {
+      anclaje.detener();
+      void anclaje
+        .reposo()
+        .then(() => app.close())
+        .then(() => pool.end())
+        .then(() => {
+          process.exit(0);
+        });
+    });
+  }
+
   process.stdout.write(`Koinonía escuchando en http://localhost:${String(puerto)}\n`);
 }

@@ -61,16 +61,69 @@ KOINONIA_FACILITADORES=lucia@udea.edu.co pnpm run dev
 
 ### Variables de entorno
 
-| Variable                 | Para qué                                                    | Por defecto                                               |
-| ------------------------ | ----------------------------------------------------------- | --------------------------------------------------------- |
-| `DATABASE_URL`           | PostgreSQL                                                  | `postgresql://postgres:koinonia@localhost:55432/koinonia` |
-| `PORT`                   | Puerto del servicio                                         | `3001`                                                    |
-| `PUERTO_WEB`             | Puerto de la interfaz                                       | `3000`                                                    |
-| `KOINONIA_FACILITADORES` | Correos con el encargo de facilitación                      | vacío                                                     |
-| `KOINONIA_GARANTIAS`     | Correos del Círculo de Garantías                            | vacío                                                     |
-| `KOINONIA_RATE_PEPPER`   | Secreto del control de abuso. **Obligatorio en producción** | uno de desarrollo                                         |
-| `KOINONIA_WEB_URL`       | Base pública, para armar el enlace del correo               | `http://localhost:3000`                                   |
-| `KOINONIA_API_URL`       | A dónde apunta el proxy de la interfaz                      | `http://127.0.0.1:3001`                                   |
+| Variable                    | Para qué                                                                          | Por defecto                                               |
+| --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `DATABASE_URL`              | PostgreSQL                                                                        | `postgresql://postgres:koinonia@localhost:55432/koinonia` |
+| `PORT`                      | Puerto del servicio                                                               | `3001`                                                    |
+| `PUERTO_WEB`                | Puerto de la interfaz                                                             | `3000`                                                    |
+| `KOINONIA_FACILITADORES`    | Correos con el encargo de facilitación                                            | vacío                                                     |
+| `KOINONIA_GARANTIAS`        | Correos del Círculo de Garantías                                                  | vacío                                                     |
+| `KOINONIA_RATE_PEPPER`      | Secreto del control de abuso. **Obligatorio en producción**                       | uno de desarrollo                                         |
+| `KOINONIA_WEB_URL`          | Base pública, para armar el enlace del correo                                     | `http://localhost:3000`                                   |
+| `KOINONIA_API_URL`          | A dónde apunta el proxy de la interfaz                                            | `http://127.0.0.1:3001`                                   |
+| `KOINONIA_VAULT_MASTER_KEY` | Clave maestra del material privado, base64 de 32 B. **Obligatoria en producción** | sin bóveda (el material privado no se puede abrir)        |
+
+#### Anclaje externo (§8.4)
+
+El anclaje corta un checkpoint, lo sella contra Bitcoin, contra dos forjas y contra un padrón de
+testigos, y guarda las cabeceras de bloque que el verificador independiente necesita. **Por defecto
+está encendido en producción y apagado fuera**: encenderlo en cada portátil pondría al equipo a
+sellar contra los calendarios públicos, y apagarlo por defecto en producción sería peor —un
+despliegue sin anclaje y sin que nadie se entere—.
+
+Lo que no se configure **no se arranca a medias**: el proveedor se queda fuera y la tarea escribe por
+qué al arrancar. Con sólo OpenTimestamps el veredicto no será firme, porque §8.2 pide dos clases de
+independencia distintas, y eso se publica como evento en vez de disimularse.
+
+| Variable                                             | Para qué                                                                                                                                    | Por defecto                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `KOINONIA_ANCLAJE`                                   | Enciende o apaga la tarea entera                                                                                                            | encendido si `NODE_ENV=production`                    |
+| `KOINONIA_ANCLAJE_CHECKPOINT_MINUTOS`                | Cada cuánto se corta un checkpoint. `0` ⇒ no se emiten desde aquí                                                                           | `60`                                                  |
+| `KOINONIA_ANCLAJE_POLL_MINUTOS`                      | Cada cuánto se repasan los anclajes pendientes con `poll`                                                                                   | `60`                                                  |
+| `KOINONIA_ANCLAJE_PENDIENTES`                        | Cuántos checkpoints hacia atrás se siguen madurando                                                                                         | `24`                                                  |
+| `KOINONIA_ANCLAJE_CALENDARIOS`                       | Calendarios OpenTimestamps, separados por comas                                                                                             | los cuatro públicos                                   |
+| `KOINONIA_ANCLAJE_CALENDARIOS_MINIMO`                | Cuántos tienen que sellar para dar el envío por bueno                                                                                       | `1`                                                   |
+| `KOINONIA_ANCLAJE_BLOQUES_URL`                       | API de bloques de Bitcoin, estilo Esplora. Con nodo propio, apuntá aquí                                                                     | `https://blockstream.info/api`                        |
+| `KOINONIA_ANCLAJE_FIRMANTES`                         | Padrón de la veeduría: `identidad\|clave-base64`, entradas separadas por `;`. También acepta una línea de `allowed_signers` pegada tal cual | vacío ⇒ **sin anclaje de git**                        |
+| `KOINONIA_ANCLAJE_CLAVE_FUERA_DEL_SERVIDOR`          | Declara que la clave de la veeduría **no** vive en esta máquina                                                                             | `no` ⇒ el anclaje de git **no cuenta para el quórum** |
+| `KOINONIA_ANCLAJE_FORJAS`                            | Forjas donde debe estar el commit, separadas por comas                                                                                      | `codeberg,github`                                     |
+| `KOINONIA_ANCLAJE_FORJAS_MINIMO`                     | Cuántas forjas bastan                                                                                                                       | todas las declaradas                                  |
+| `KOINONIA_ANCLAJE_CODEBERG_REPO` / `_GITHUB_REPO`    | `propietario/repositorio` donde se empuja el commit firmado                                                                                 | vacío ⇒ nadie comprueba que esté publicado            |
+| `KOINONIA_ANCLAJE_CODEBERG_RAMA` / `_GITHUB_RAMA`    | Rama de anclaje                                                                                                                             | `anclaje`                                             |
+| `KOINONIA_ANCLAJE_CODEBERG_TOKEN` / `_GITHUB_TOKEN`  | Token de **sólo lectura**, para subir el límite de peticiones                                                                               | vacío                                                 |
+| `KOINONIA_ANCLAJE_TESTIGOS`                          | Padrón de testigos: `id\|correo\|clave-base64`, entradas separadas por `;`. La clave puede ir vacía: ese testigo acusa pero no cuenta       | vacío ⇒ **sin anclaje de correo**                     |
+| `KOINONIA_ANCLAJE_DOMINIOS_MINIMOS`                  | Cuántos dominios distintos hacen falta (§8.2)                                                                                               | `3`                                                   |
+| `KOINONIA_ANCLAJE_DOMINIOS_PROPIOS`                  | Dominios de la casa: un testigo propio no es independiente                                                                                  | vacío                                                 |
+| `KOINONIA_ANCLAJE_CORREO_FROM`                       | Cabecera `From` completa: `Anclaje Koinonía <anclaje@udea.edu.co>`                                                                          | vacío ⇒ **sin anclaje de correo**                     |
+| `KOINONIA_ANCLAJE_CORREO_REMITENTE`                  | Remitente del sobre, a donde vuelven los rebotes                                                                                            | la dirección del `From`                               |
+| `KOINONIA_ANCLAJE_CORREO_DOMINIO_ID`                 | Dominio de los `Message-ID`                                                                                                                 | `anclaje.koinonia`                                    |
+| `KOINONIA_ANCLAJE_SMTP_HOST`                         | Servidor de salida                                                                                                                          | vacío ⇒ **sin anclaje de correo**                     |
+| `KOINONIA_ANCLAJE_SMTP_PUERTO`                       | Puerto SMTP                                                                                                                                 | `587`                                                 |
+| `KOINONIA_ANCLAJE_SMTP_TLS`                          | `implicita`, `starttls` o `ninguna`                                                                                                         | `starttls`                                            |
+| `KOINONIA_ANCLAJE_SMTP_HELO`                         | Nombre con el que nos presentamos; debe resolver                                                                                            | `localhost`                                           |
+| `KOINONIA_ANCLAJE_SMTP_USUARIO` / `_CLAVE`           | Credenciales SMTP. Van juntas o no van                                                                                                      | vacío                                                 |
+| `KOINONIA_ANCLAJE_IMAP_HOST` / `_USUARIO` / `_CLAVE` | Buzón donde se recogen acuses y rebotes. Sin él, los correos salen pero **nadie recoge nada** y el anclaje no pasa de pendiente             | vacío                                                 |
+| `KOINONIA_ANCLAJE_IMAP_PUERTO`                       | Puerto IMAP                                                                                                                                 | `993`                                                 |
+| `KOINONIA_ANCLAJE_IMAP_TLS`                          | TLS desde el primer byte                                                                                                                    | `sí`                                                  |
+| `KOINONIA_ANCLAJE_IMAP_BUZON`                        | Buzón a abrir                                                                                                                               | el que use `imap.ts`                                  |
+| `KOINONIA_ANCLAJE_DKIM_DOMINIO` / `_SELECTOR`        | Firma DKIM de los correos a los testigos                                                                                                    | vacío ⇒ salen sin firmar                              |
+| `KOINONIA_ANCLAJE_DKIM_CLAVE_FICHERO`                | **Ruta** al fichero de la clave privada. Nunca la clave: una clave privada en el entorno acaba en `docker inspect`                          | vacío                                                 |
+| `KOINONIA_ANCLAJE_DKIM_ALGORITMO`                    | `rsa-sha256` o `ed25519-sha256`                                                                                                             | `rsa-sha256`                                          |
+
+⚠ **El commit firmado sigue siendo manual, y no es un olvido.** `SignedGitProvider.submit()` no
+firma porque no puede: la clave de la veeduría no está en el servidor, y ése es exactamente el
+punto. Alguien de la veeduría firma en su equipo, empuja a las dos forjas, y la tarea lo recoge en
+el siguiente repaso.
 
 ---
 

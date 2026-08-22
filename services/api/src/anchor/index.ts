@@ -9,20 +9,21 @@
  *  · `forjas`      — Codeberg y GitHub, reconstruyendo el objeto commit y contrastando su OID.
  *  · `correo`      — SMTP con DKIM para enviar, IMAP para recoger acuses y rebotes.
  *
- * ═══ Lo que falta enganchar, y no se enganchó a propósito ═══
+ * ═══ Cómo está enganchado ═══
  *
- * Nada de esto está **conectado** todavía: no hay ruta HTTP que dispare un ciclo de anclaje ni
- * tarea periódica que lo repita. Falta:
+ *  · `tarea`         — la tarea periódica: corta un checkpoint, lo ancla sin `poll`, y cada hora
+ *                      repasa los pendientes con `poll: true`. La arranca `server.ts`.
+ *  · `configuracion` — calendarios, forjas, testigos y credenciales, desde variables de entorno.
+ *                      Ningún secreto vive en el código; la clave DKIM entra por ruta a fichero.
+ *  · `cabeceras`     — descarga y guarda las cabeceras de bloque de Bitcoin que cierran los sellos.
+ *                      `ledger/export.ts` ya publicaba `anchors/bitcoin-headers.json` desde la
+ *                      tabla; nadie la llenaba, y sin ese fichero el verificador independiente se
+ *                      queda en `incompleto` para siempre.
  *
- *  1. Una tarea periódica que llame a `runAnchorCycle()` tras cada checkpoint y de nuevo cada hora
- *     con `poll: true`, hasta que el sello madure y aparezca el commit de la veeduría.
- *  2. Leer la configuración —calendarios, forjas, credenciales de correo, padrón de testigos— de
- *     variables de entorno, en `server.ts`.
- *  3. Publicar `bitcoin-headers.txt` en el export a partir de `saveBitcoinHeader()`, para que el
- *     verificador independiente pueda cerrar la última afirmación del sello sin pedirle nada a
- *     nadie.
- *
- * Los tres tocan ficheros de otros; están declarados aquí para que no se pierdan.
+ * Lo que sigue necesitando una persona, y no es un olvido: **el commit firmado de la veeduría**.
+ * `SignedGitProvider.submit()` no firma porque no puede —la clave no está aquí, y ése es justo el
+ * punto—. Alguien de la veeduría firma en su equipo y empuja a las dos forjas; la tarea lo recoge
+ * en el siguiente `poll`.
  */
 
 export {
@@ -126,6 +127,42 @@ export {
   respondeA,
   type PadronDeTestigos,
 } from './rebotes.js';
+
+export {
+  alturasAncladas,
+  alturasConocidas,
+  cabecerasGuardadas,
+  cosecharCabeceras,
+  EXPLORADOR_POR_DEFECTO,
+  exploradorDeBloques,
+  type CosechaDeCabeceras,
+  type FuenteDeCabeceras,
+} from './cabeceras.js';
+
+export {
+  booleano,
+  configuracionDeAnclajeDesdeEntorno,
+  parsearFirmantes,
+  parsearTestigos,
+  type ConfiguracionDeAnclaje,
+  type ConfiguracionDeCorreo,
+  type ConfiguracionDeDkim,
+  type ConfiguracionDeForja,
+  type ConfiguracionDeGit,
+  type ConfiguracionDeImap,
+  type ConfiguracionDeSmtp,
+} from './configuracion.js';
+
+export {
+  checkpointsPendientes,
+  crearTareaDeAnclaje,
+  DIARIO_A_STDERR,
+  proveedoresDesde,
+  requestIdDeLote,
+  type DiarioDeAnclaje,
+  type TareaDeAnclaje,
+  type TareaDeAnclajeOptions,
+} from './tarea.js';
 
 export {
   extraerAcuse,

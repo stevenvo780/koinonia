@@ -143,8 +143,11 @@ export function nodeFetch(options: HttpOptions = {}): FetchLike {
   };
 }
 
-/** GET de un JSON, con plazo y cota. Lanza `HttpError` en cualquier respuesta que no sea 2xx. */
-export async function getJson(url: string, options: HttpOptions = {}): Promise<unknown> {
+async function cuerpoDeUnGet(
+  url: string,
+  accept: string,
+  options: HttpOptions,
+): Promise<Uint8Array> {
   const timeoutMs = options.timeoutMs ?? PLAZO_POR_DEFECTO_MS;
   const max = options.maxBodyBytes ?? MAX_CUERPO_BYTES;
   const impl = options.fetchImpl ?? globalThis.fetch;
@@ -155,7 +158,7 @@ export async function getJson(url: string, options: HttpOptions = {}): Promise<u
       method: 'GET',
       headers: {
         'User-Agent': options.userAgent ?? AGENTE,
-        Accept: 'application/json',
+        Accept: accept,
         ...options.headers,
       },
       signal,
@@ -165,17 +168,42 @@ export async function getJson(url: string, options: HttpOptions = {}): Promise<u
     if (!response.ok) {
       throw new HttpError(url, response.status, recorte(new TextDecoder().decode(bytes)));
     }
-    try {
-      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-    } catch (error) {
-      throw new HttpError(
-        url,
-        response.status,
-        `la respuesta no es JSON (${error instanceof Error ? error.message : 'ilegible'})`,
-      );
-    }
+    return bytes;
   } finally {
     cancel();
+  }
+}
+
+/** GET de un JSON, con plazo y cota. Lanza `HttpError` en cualquier respuesta que no sea 2xx. */
+export async function getJson(url: string, options: HttpOptions = {}): Promise<unknown> {
+  const bytes = await cuerpoDeUnGet(url, 'application/json', options);
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+  } catch (error) {
+    throw new HttpError(
+      url,
+      200,
+      `la respuesta no es JSON (${error instanceof Error ? error.message : 'ilegible'})`,
+    );
+  }
+}
+
+/**
+ * GET de un texto plano, con plazo y cota.
+ *
+ * Existe por las API de bloques de Bitcoin: devuelven `text/plain` con el hash del bloque o los 160
+ * caracteres de la cabecera, no JSON. Pasar eso por `getJson` fallaría siempre.
+ */
+export async function getTexto(url: string, options: HttpOptions = {}): Promise<string> {
+  const bytes = await cuerpoDeUnGet(url, 'text/plain', options);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim();
+  } catch (error) {
+    throw new HttpError(
+      url,
+      200,
+      `la respuesta no es texto UTF-8 (${error instanceof Error ? error.message : 'ilegible'})`,
+    );
   }
 }
 
