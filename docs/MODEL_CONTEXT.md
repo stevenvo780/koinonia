@@ -325,3 +325,73 @@ Novedad de método que conviene repetir: **la consolidación del escrutinio veri
 por mutación dirigida** —romper la implementación a propósito y comprobar que la prueba se pone en
 rojo— y así encontró un fallo en su propia prueba. Es la única técnica de la sesión que auditó al
 auditor.
+
+## 9. Registro de ruteo — sesión 2026-08-22, segunda mitad (ADR-0049, ADR-0050 y publicación)
+
+Continúa la sesión de §8, después de que ADR-0046/0047/0048 quedaran integrados. La segunda mitad
+tuvo un reparto distinto: **los subagentes `task` para lo que hay que escribir y correr, y
+`delegar_a_cloud` para revisar, especificar y auditar** — que es exactamente la regla que §8.1 dejó
+enunciada, aplicada por primera vez a propósito y no por accidente.
+
+Los contadores de tokens siguen sin exponerse por el runtime: `n/d` en vez de inventarlos.
+
+| TASK | TIPO | MODELO | TOKENS | RESULTADO | TESTS | REINTENTOS | ESCALAMIENTO |
+|---|---|---|---:|---|---|---:|---|
+| Corte vertical de deliberación: contratos, API e interfaz | implementación larga con pruebas | subagente `task` | n/d | Entregado. Encontró **ejecutando** una **escalada horizontal en `supersedes`**: cualquiera podía sustituir —y por tanto silenciar— el aporte de cualquier otro | **1 207** en el repositorio, **55** e2e | 0 | La escalada se corrigió en un commit propio (`bf01277`) |
+| Democracia líquida — PARTE C completa | implementación crítica con propiedades | subagente `task` | n/d | Entregado. **Once erratas de spec, E36–E46, tres autodestructivas** | **+104** | 0 | Las tres autodestructivas se resolvieron dentro de la misma entrega, no se elevaron |
+| Revisión adversarial de la autoría por etapa | adversarial read-only | `gemini/pro` | n/d | **Recomendó ELIMINAR el ocultamiento de autoría**, por engañoso | — | 0 | **Aceptada parcialmente:** se retiró la retención del export, se mantuvo la regla de acceso (ADR-0049) |
+| QA exploratorio estático del árbol | exploración read-only | **3 × `minimax/MiniMax-M3` en paralelo** | n/d | **31 hallazgos con cita literal, 4 bloqueantes**. ⚠ **Uno de los tres devolvió vacío al primer intento y hubo que relanzarlo** | — | **1** | Los 4 bloqueantes se repararon antes de publicar |
+| ADR-0050 — umbral de no-facción revisado | especificación | `gemini/flash` | n/d | Entregado | — | 0 | Queda **Propuesto**, no aceptado |
+| Publicación en GitHub | infraestructura + auditoría | subagente `task` | n/d | **Barrido de secretos sobre las 21 revisiones y los 596 blobs** del historial: **limpio**. Repo creado, push por **SSH**, verificado comparando SHA local y remoto | — | 0 | — |
+
+### 9.1 Las dos reglas de ruteo que deja la segunda mitad
+
+**1. El QA exploratorio estático en paralelo con MiniMax funciona, es barato — y hay que comprobar
+que respondió.**
+
+Es el trabajo que `HANDOFF.md` §9 llevaba dos sesiones señalando como «el primer trabajo que debe
+irse a MiniMax cuando el transporte se arregle», y por fin se le encargó: **tres instancias de
+`minimax/MiniMax-M3` en paralelo**, cada una con un recorte distinto del árbol, en modo lectura.
+Devolvieron **31 hallazgos con cita literal del código, cuatro de ellos bloqueantes**. Encaja con lo
+que §8.1 predijo: es **lectura y generación de texto**, no ejecutar herramientas durante minutos, así
+que no toca el techo de duración del transporte.
+
+⚠ **Pero uno de los tres devolvió respuesta vacía al primer intento**, sin error, sin timeout y sin
+aviso. Se relanzó y respondió normal. **Un reintento de cada tres es la tasa observada**, sobre una
+muestra de tres, que es poco — pero el modo de fallo importa más que la tasa: **la llamada
+«completa» con contenido vacío es indistinguible de un recorte que no tenía nada que reportar**. Si
+el orquestador no mira la respuesta, el resultado es un tercio del árbol declarado limpio sin que
+nadie lo haya mirado.
+
+> **Regla:** en un fan-out a MiniMax, **comprobar que cada respuesta trae contenido antes de darla
+> por buena**, y relanzar la que venga vacía. Es la versión barata de la regla de §5.2 —«exigir
+> salida real pegada»— aplicada a un proveedor que a veces no pega nada. Vale para todo fan-out, no
+> sólo para MiniMax: un agente que no responde y un agente que responde «todo bien» **se ven igual en
+> la tabla de resultados**, y sólo uno de los dos miró.
+
+**2. Una revisión adversarial que recomienda ELIMINAR sigue valiendo aunque se acepte a medias.**
+
+`gemini/pro` revisó el esquema de autoría por etapa y no propuso mejoras: **propuso quitarlo**, con
+el argumento de que ocultar la autoría promete una protección que el sistema no da. Se aceptó
+**parcialmente** —se retiró la retención del export, que era la parte indefendible; se mantuvo la
+regla de acceso, que sí protege frente a los pares— y **la discrepancia quedó escrita en ADR-0049 en
+vez de resuelta a favor de quien decidía**.
+
+Es el caso simétrico del de §8.1 punto 3 («un modelo caro que se niega a trabajar»): allí el valor
+estuvo en que un implementador **no implementara**; aquí, en que un revisor **no revisara dentro del
+marco dado** sino que atacara el marco. Las dos entregas son incómodas y las dos cambiaron el
+resultado. La consecuencia de ruteo es la misma en ambas: **al revisor adversarial hay que darle
+permiso explícito para recomendar que no se haga**, porque si el prompt pregunta «cómo mejorar X»,
+lo que no se va a recibir nunca es «X no debería existir».
+
+### 9.2 El reparto que ya se puede dar por validado
+
+Tres sesiones de datos bastan para dejar de tratarlo como hipótesis:
+
+| Tipo de trabajo | A quién va | Evidencia |
+|---|---|---|
+| Implementación larga con pruebas (escribir-correr-arreglar) | **subagentes `task`** | Las cuatro entregas grandes de esta sesión completaron; las dos que se intentaron por `delegar_a_cloud` en §8 cayeron por duración |
+| Especificación y diseño | `gemini/pro`, `codex/*`, `minimax` | Completan; el techo es de duración, no de palabras (§8.1 punto 2) |
+| Revisión adversarial | `gemini/pro`, `codex/*` nativo | Cambió el resultado en las tres sesiones registradas |
+| **QA exploratorio estático y masivo, en paralelo** | **`minimax/MiniMax-M3`, varias instancias** | 31 hallazgos con cita literal en esta sesión. **Comprobar que la respuesta no viene vacía** |
+| Orquestación, síntesis, decisiones sobre discrepancias | **el orquestador** | Las tres discrepancias del día —E24 retirada, la recomendación de `gemini/pro`, la errata de T-09— las cerró el orquestador, y una de las tres fue contra sí mismo |

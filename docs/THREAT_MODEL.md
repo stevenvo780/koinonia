@@ -136,7 +136,25 @@ Editar el texto o añadir una opción después de que parte del censo ya votó, 
 Ver el conteo parcial y ajustar la regla —bajar el quórum, cambiar la mayoría, mover la ventana— para que el resultado que ya se ve venir sea el deseado → **Precond.** parámetros en configuración mutable en vez de en el evento de apertura → **Impacto** máximo: el ataque de gobernanza más rentable y **el más fácil de justificar en público** («sólo corregíamos un error») → **Detectab.** total con parámetros sellados; nula con un archivo de configuración → **MVP** **todos** los parámetros —quórum, umbral, método, ventana, `minDirectParticipation`, desempate— se serializan **dentro** de `DecisionOpened` y son inmutables hasta el cierre; el resultado se computa sólo con ellos; **el conteo parcial no se muestra a nadie, incluido el administrador**, hasta el cierre —elimina el incentivo, no sólo la capacidad—; toda reforma del reglamento **no aplica retroactivamente** a decisiones abiertas → **Después** firma de los parámetros por dos roles distintos al abrir → **Prueba** `decision-lifecycle.spec.ts::parametros_provienen_del_evento_de_apertura`, `::extender_ventana_en_open_es_rechazado`; `tally.spec.ts::conteo_parcial_no_es_accesible_para_ningun_rol`.
 
 **T-09 · Colusión entre delegados** `A1`
-Concentrar delegaciones en dos o tres personas que votan en bloque: peso desproporcionado con apariencia de participación amplia; variante en cadena o circular que amplifica sin que nadie lo vea → **Precond.** delegación sin tope ni caducidad → **Impacto** alto; es la tensión C20 en forma aguda → **Detectab.** alta: la concentración es medible → **MVP** delegación con caducidad y **tope sobre el censo** (ADR-0029); rechazo de ciclos; **profundidad máxima 1**; `HHI*` publicado por proceso; **delegación prohibida en voto secreto** (ADR-0030); revocación efectiva hasta el cierre → **Después** tope dinámico según participación directa observada → **Prueba** `delegation.spec.ts::ciclo_es_rechazado`, `::peso_sobre_el_tope_es_rechazado`, `::cadena_de_profundidad_2_es_rechazada`, `::delegacion_caducada_no_computa`.
+Concentrar delegaciones en dos o tres personas que votan en bloque: peso desproporcionado con apariencia de participación amplia; variante en cadena o circular que amplifica sin que nadie lo vea → **Precond.** delegación sin tope ni caducidad → **Impacto** alto; es la tensión C20 en forma aguda → **Detectab.** alta: la concentración es medible → **MVP** delegación con caducidad y **tope sobre el censo** (ADR-0029); rechazo de ciclos; **profundidad máxima 4**; `HHI*` publicado por proceso; **delegación prohibida en voto secreto** (ADR-0030); revocación efectiva hasta el cierre → **Después** tope dinámico según participación directa observada → **Prueba** `delegation.spec.ts::ciclo_es_rechazado`, `::peso_sobre_el_tope_es_rechazado`, `::cadena_de_profundidad_5_es_rechazada`, `::delegacion_caducada_no_computa`.
+
+> **Corregido el 2026-08-22 — T-09 decía «profundidad máxima 1» y nombraba la prueba
+> `::cadena_de_profundidad_2_es_rechazada`. Las dos cosas eran falsas.** El límite es **4 aristas**:
+> lo fija `GOVERNANCE.md` §5 («cadenas de máximo cuatro pasos») y lo recoge ADR-0029 con
+> `maxDepth = 4`, que es también el valor por defecto de `DelegationConfig` en
+> `30-decision-engine-spec.md` §C.1 y lo que implementa `packages/domain`. Por la jerarquía de arriba
+> **`GOVERNANCE.md` manda sobre este documento**, así que la corrección va aquí y no allá.
+>
+> **Se corrigen las dos, y el nombre de la prueba es el que más importa.** Un umbral equivocado en
+> prosa lo desmiente cualquier lector que abra el ADR; **un nombre de prueba equivocado es una
+> instrucción**. `::cadena_de_profundidad_2_es_rechazada` le dice a quien lo lea que una cadena de dos
+> pasos debe fallar, y la forma más natural de «arreglar» esa prueba en rojo es bajar `maxDepth` a 1
+> para que cuadre con el documento. Sería el modo de fallo de **C4** y de **E24** por tercera vez: una
+> corrección con forma de corrección, anclada en un test, contra el documento normativo que tenía
+> razón. Con `maxDepth = 4`, la primera cadena que debe rechazarse es la de **cinco** aristas.
+>
+> El resto de la fila no se toca: el rechazo de ciclos, el tope sobre el censo, el `HHI*` publicado y
+> la prohibición en voto secreto son correctos y están implementados.
 
 **T-18 · Manipulación del padrón** `A2` facilitación
 Añadir votantes afines o excluir disidentes antes de abrir, o alterar estratos para sesgar un sorteo. **Quién está en el padrón decide el resultado más a menudo que cómo se cuenta** → **Precond.** control del alta o de la base → **Impacto** máximo → **Detectab.** alta si el padrón se congela y su hash se publica → **MVP** padrón congelado al abrir e inmutable (ADR-0025); **hash publicado sólo sobre los `MemberId` ordenados** (C10) y anclado con el checkpoint; **estratos publicados agregados, nunca por miembro** (C10, C11); pertenencia verificable por prueba de inclusión Merkle; toda alta o baja posterior a la apertura queda fuera del proceso, sin excepción → **Después** doble firma del padrón por secretaría y un testigo antes de abrir → **Prueba** `roster.spec.ts::hash_ignora_estratos_y_atributos`, `::estratos_solo_agregados`, `::padron_modificado_invalida_el_hash_anclado`.

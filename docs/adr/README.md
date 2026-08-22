@@ -13,7 +13,7 @@ Un archivo por decisión, numerado correlativamente y **nunca renumerado**. Una 
    afirmen sobre la ley, no sobre el diseño).
 6. Los documentos de investigación `01`, `02`, `03`, `11`.
 
-Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0045** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado. Los **0046–0048** cierran la deliberación estructurada, los métodos de escrutinio que faltaban y el análisis de consenso transversal. El **0049** sustituye parcialmente al 0046: retira el sellado criptográfico de la autoría y lo reemplaza por una regla de acceso con alcance de etapa.
+Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0045** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado. Los **0046–0048** cierran la deliberación estructurada, los métodos de escrutinio que faltaban y el análisis de consenso transversal. El **0049** sustituye parcialmente al 0046: retira el sellado criptográfico de la autoría y lo reemplaza por una regla de acceso con alcance de etapa. El **0050** es el primer ADR **Propuesto** —no aceptado— del registro: revisa el umbral de no-facción del 0048 y no manda hasta que se acepte.
 
 | ADR | Título | Estado | Resumen en una línea |
 |---|---|---|---|
@@ -66,6 +66,7 @@ Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0
 | [0047](0047-metodos-de-escrutinio-completos.md) | Métodos de escrutinio completos | Aceptado | Puntuación, IRV, valoración por menciones, Condorcet/Schulze y sorteo estratificado, con enteros exactos y tres anti-invariantes demostrados en positivo, nunca con `skip`. |
 | [0048](0048-consenso-transversal-como-agenda.md) | Consenso transversal como agenda | Aceptado | `packages/consensus` admite punto flotante porque su salida es agenda y **no puede alimentar un umbral ni un conteo**; invariancia a permutar personas demostrada, a permutar afirmaciones sólo observada. |
 | [0049](0049-autoria-por-alcance-de-etapa.md) | Autoría por alcance de etapa | Aceptado | Se retira el sellado criptográfico: el autor va en el evento y lo que se deniega es **leerlo** mientras `perspectivas` siga vigente. Protege frente a los pares —también frente a quien llama a la API—, **no** frente a quien administra, y así se declara. |
+| [0050](0050-umbral-de-no-faccion-revisado.md) | Umbral de no-facción revisado | **Propuesto** | Sustituiría el umbral de silueta fijo del 0048 por un contraste de hipótesis nula con **permutación determinista**. **No está aceptado ni implementado:** hasta que lo esté, manda el 0048. |
 
 ## Trazabilidad con los ADR propuestos en la investigación
 

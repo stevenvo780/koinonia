@@ -6,7 +6,7 @@
 >
 > **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones **R1, R2 y R3** las tomó el arquitecto y son firmes. Las contradicciones **C4 en adelante** las detectó la revisión editorial del corpus; las que R1–R3 adjudican de forma derivada se marcan como **resueltas**, y las que exigen una decisión nueva quedan **pendientes** con la recomendación del editor, que no tiene autoridad para cerrarlas.
 >
-> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E8) la produjo **implementar el código**: `packages/crypto` escrito contra `10-ledger-inmutable.md`. Las tres encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
+> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E46, en cuatro rondas) la produjo **implementar el código**: `packages/crypto` contra `10-ledger-inmutable.md` y después `packages/domain` contra `30-decision-engine-spec.md`, tres veces. Las tres partes encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
 
 ## Orden de precedencia normativa
 
@@ -339,27 +339,28 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 
 > **Qué es esta parte, y por qué está separada de la anterior.** Las contradicciones C4–C20 las
 > encontró una **revisión editorial**: alguien leyendo el corpus con atención y comparando documentos
-> entre sí. Los errores E1–E35 de abajo los encontró otra cosa: **alguien escribiendo el código**.
+> entre sí. Los errores E1–E46 de abajo los encontró otra cosa: **alguien escribiendo el código**.
 >
-> Hay tres rondas, contra dos especificaciones distintas:
+> Hay cuatro rondas, contra dos especificaciones distintas:
 >
 > | Ronda | Paquete | Spec | Errores | Pruebas en verde al terminar |
 > |---|---|---|---|---|
 > | 1ª | `packages/crypto` | `10-ledger-inmutable.md` | **E1–E9** — seis en la spec, dos incoherencias entre ADR, una divergencia elevada sin cerrar | 116 |
 > | 2ª | `packages/domain` | `30-decision-engine-spec.md` | **E10–E23** — catorce, todos dentro de la spec | 229 |
 > | 3ª | `packages/domain` (B.5–B.9) y `packages/consensus` | `30-decision-engine-spec.md` PARTE B, `01-decidim-loomio-polis.md` §3 | **E24–E35** — once en la spec, **una retirada por ser error propio**, más tres bugs del código (B1–B3) | 1 006 en todo el repositorio |
+> | 4ª | `packages/domain` (PARTE C) | `30-decision-engine-spec.md` PARTE C y §D.4 | **E36–E46** — once en la spec, **tres autodestructivas** | 1 213 en todo el repositorio |
 >
-> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera · **Autoridad:** las
-> resoluciones las tomó el arquitecto y son firmes. Cada una está aplicada en el punto exacto del
+> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera y la cuarta · **Autoridad:**
+> las resoluciones las tomó el arquitecto y son firmes. Cada una está aplicada en el punto exacto del
 > documento donde vivía el error, con una nota **«Corregido tras la implementación»** que explica qué
 > decía antes y qué rompía.
 >
 > **El dato acumulado, que es el hallazgo principal de esta parte: la implementación ha encontrado ya
-> 31 errores que ninguna revisión por lectura detectó** —seis en la spec 10 y veinticinco en la spec
-> 30—, y las dos habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es un
-> accidente de un documento flojo: es lo que se puede esperar de cualquier especificación no
+> 42 errores que ninguna revisión por lectura detectó** —seis en la spec 10 y treinta y seis en la
+> spec 30—, y las dos habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es
+> un accidente de un documento flojo: es lo que se puede esperar de cualquier especificación no
 > ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su confirmación en las rondas
-> segunda y tercera.
+> segunda, tercera y cuarta.
 
 ## El hecho metodológico, que importa más que los ocho errores
 
@@ -1340,6 +1341,414 @@ afirmación conserva SUS números».
 
 ---
 
+# Cuarta ronda — democracia líquida, PARTE C (2026-08-22)
+
+Se implementó la PARTE C entera —delegación temática con especificidad, vigencia y revocación
+inmediata, recorrido de cadenas, tope de concentración e índices— más la parte de la PARTE D que la
+delegación toca. **Once erratas, E36 a E46. Tres son autodestructivas.**
+
+**Por qué esta ronda merecía su propia cabecera.** La PARTE C se abre con una advertencia que ahora
+se lee distinto: «una delegación mal modelada no produce un error visible: produce un resultado
+**plausible y falso**, con votos que nadie emitió y poder que nadie confirió». Las tres erratas
+autodestructivas de esta ronda son exactamente eso, y ninguna es un descuido de redacción:
+
+- **E37** es un **teorema falso**, enunciado como teorema, con su demostración informal al lado y su
+  pseudocódigo debajo. La demostración es correcta; lo que falla es la hipótesis, porque la sección
+  que la usa (C.4.1) no había leído la sección que la rompe (C.2).
+- **E38** es una **precondición que ninguna papeleta legítima puede cumplir** a partir de la ronda 2.
+  No lanza: descarta. Toda decisión sociocrática que integrara una objeción habría cerrado con
+  no-quórum, y el no-quórum es un desenlace legítimo, así que nadie lo habría investigado.
+- **E42** es una **cota que no acota**. El motor firma «este resultado ya no puede cambiar» sobre uno
+  que sí puede, y cierra la urna con esa firma detrás.
+
+**El patrón nuevo, que no aparecía en las tres rondas anteriores: el error de ÁMBITO.** Cinco de las
+once (E36, E37, E38, E41, E42) tienen la misma forma: **una sección razona correctamente dentro de su
+propio marco, y el marco es más chico que el problema**. C.4.1 razona sobre un grafo por ámbito y la
+resolución vive en el grafo mezclado; C.3 razona sobre una decisión y la ronda vive fuera de la
+configuración; C.6 razona sobre `n ≥ 2` votantes y el caso que quiere vigilar es `n = 1`; D.4.1 razona
+sobre un mundo sin delegación dentro del documento que introduce la delegación; y el evento de
+delegación razona como si su alcance fuera una decisión cuando su alcance es la comunidad entera.
+
+Es un modo de fallo distinto del de la segunda ronda —«dos pasajes correctos por separado que no se
+sostienen juntos»— y **peor de detectar**, porque aquí ni siquiera hay dos pasajes que comparar: hay
+uno solo, correcto, aplicado fuera de su dominio de validez. Leerlo no lo delata. Lo delata escribir
+el segundo caso de prueba.
+
+## E36 — El evento de delegación vive en el agregado de la decisión, y una delegación no es de una decisión
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §A.7 | `DelegationGranted` y `DelegationRevoked` están en el catálogo de eventos **del agregado decisión** |
+| `30-...` §A.8.1 | fila `\| Open \| DelegationGranted/Revoked \| Open \| ver PARTE C \|` — sólo son legales dentro de una decisión abierta |
+| `30-...` §C.1 | `grantedSeq` es «`seq` del evento `DelegationGranted` (orden canónico)» |
+| `30-...` §C.1.a, §C.2 | el ámbito de una delegación es `global`, `circle` o `topic`, y su vigencia por defecto es **un semestre** |
+
+**El conflicto.** El ámbito de una delegación es **transversal y prospectivo**: «delego filosofía
+política a Ana durante este semestre» vale para las decisiones sobre ese tema que **todavía no
+existen**. Un agregado por decisión no puede alojar ese hecho, y las consecuencias no son teóricas:
+
+1. **`grantedSeq` deja de ordenar.** El `seq` de una delegación concedida en el log de la decisión
+   `D₁` y el de otra concedida en el log de `D₂` **no son comparables**: son dos numeraciones
+   independientes, cada una empezando en 1. Y C.2 desempata la especificidad por `grantedSeq`, y
+   C.5.b.2 devuelve el excedente en orden LIFO de `grantedSeq`. Dos reglas normativas que ordenan por
+   una clave que no es un orden total.
+2. **El registro no se puede reconstruir plegando un agregado.** Para saber quién delega en quién hoy
+   hay que plegar **todos** los logs de **todas** las decisiones, incluidas las cerradas y las
+   anuladas, y las delegaciones concedidas antes de que existiera la decisión donde harían falta no
+   están en ninguno.
+3. **La prevención EX ANTE de C.4.a y C.5.b.1 queda sin sujeto.** Rechazar al conceder exige conocer
+   el grafo completo en el momento de conceder; si el grafo está troceado por decisión, no hay
+   momento en que exista.
+
+**Por qué importaba.** No es un error de tipos: es que **el agregado elegido no puede sostener el
+invariante que la propia PARTE C declara**. Es la contrapartida exacta de la DECISIÓN A.1 (el padrón
+se congela por decisión y es inmutable): el padrón **sí** es un hecho de la decisión; la delegación
+**no**.
+
+**Resolución.** El motor recibe el registro de delegaciones **por cierre**, como parámetro de
+`resolveDelegation` y de las comprobaciones EX ANTE, y no lo lee del log de la decisión. Es la salida
+mínima que no miente: deja explícito que el registro **viene de fuera** en vez de fingir que se pliega
+de dentro. **Queda pendiente una decisión de arquitectura:** un agregado `DelegationRegistry` propio,
+con su propia cadena de hashes y su propia numeración —que sería la que hace de `grantedSeq` un orden
+total de verdad—. Hasta que exista, `grantedSeq` es un orden total **por convención del llamador**, y
+eso está declarado donde se usa.
+
+*Vive en:* `packages/domain/src/delegation.ts:306` y `:536`.
+
+## E37 — AUTODESTRUCTIVA · «prevención completa» es un teorema falso: el contraejemplo tiene dos aristas
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §C.4.1 | «rechazar en el momento de conceder toda arista `A → B` tal que `B` ya alcanza a `A` es una prevención **completa**: nunca puede existir un ciclo» |
+| `30-...` §C.4.1, `wouldCreateCycle` | `for (const scopeKey of effectiveScopeKeys(d.scope))` — la alcanzabilidad se comprueba **ámbito por ámbito**, con una arista por `(nodo, ámbito)` |
+| `30-...` §C.2 | «gana la de **mayor especificidad**» — la resolución **elige entre ámbitos distintos** para armar un solo grafo |
+
+**El conflicto.** El teorema operativo es correcto: en un grafo acíclico al que se añaden aristas de
+una en una, todo ciclo nuevo contiene la última arista. Lo que es falso es que comprobarlo **por
+ámbito** implique que no haya ciclos **en el grafo que de verdad se recorre**.
+
+**El contraejemplo, de dos aristas:**
+
+```
+Ana  → Beto   ámbito: global      (especificidad 0)
+Beto → Ana    ámbito: topic T     (especificidad 2)
+```
+
+Ninguno de los dos ámbitos, por separado, tiene ciclo: en `global` sólo existe `Ana → Beto`, y en
+`topic T` sólo existe `Beto → Ana`. `wouldCreateCycle` acepta las dos concesiones, y hace bien según
+su propia definición. Pero en una decisión `D` con `T ∈ D.topics`, C.2 resuelve el ámbito **por
+delegante**: para Ana gana su global (es su única activa que casa) y para Beto gana la de tema (gana
+por especificidad). El grafo efectivo de esa decisión es **`Ana → Beto → Ana`**.
+
+**Por qué importaba.** El ciclo llega **exactamente al escrutinio**, que es donde C.4.b lo trata como
+«no debería ocurrir». Y su consecuencia es silencio: Ana, Beto y **todos los que desembocan en
+ellos** quedan sin asignar, descubierto cuando la urna ya está cerrada y no se puede votar. La
+prevención EX ANTE existe precisamente para que eso no pase, y estaba desactivada para la familia de
+ciclos más natural que hay: la que aprovecha que la gente delega temas distintos a personas distintas.
+La sección que declara la prevención completa es la misma que la vuelve incompleta, en el pseudocódigo
+que tiene tres líneas más abajo. Es la firma de E1 y de E4.
+
+**Resolución.** La prevención se hace sobre el **grafo unión** —toda arista vigente, sea cual sea su
+ámbito—, que es un supergrafo de todo grafo efectivo posible. Si el delegante no es alcanzable desde
+el delegado en la unión, no lo es en ninguna decisión, hoy ni dentro de seis meses: la prevención
+vuelve a ser completa, y ahora sí en el sentido que la palabra tiene.
+
+El precio: se rechaza alguna concesión que en la práctica nunca habría ciclado. Se acepta porque **las
+dos consecuencias no son simétricas** — un rechazo al conceder es un mensaje inmediato y accionable
+(«delegá en otra persona»); un ciclo no detectado es silencio en el escrutinio para un conjunto de
+personas que no hicieron nada mal. La red de seguridad del escrutinio se conserva: un log fabricado a
+mano puede contener ciclos que ninguna orden habría aceptado.
+
+*Vive en:* `packages/domain/src/delegation-graph.ts:8-33` (el argumento completo) y `unionEdges`
+en `:250`; su prueba en `packages/domain/test/delegation-engine.test.ts:352`.
+
+## E38 — AUTODESTRUCTIVA · el PASO 1 filtra por un campo que no existe y por un hash que cambia
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §C.3, PASO 1 | `if (b.round !== cfg.currentRound) continue;` y `if (b.proposalVersionHash !== cfg.proposalVersionHash) continue;` |
+| `30-...` §A.5, `interface DecisionConfig` | los 15 campos de la configuración. **No hay `currentRound`.** |
+| `30-...` §A.5 | `proposalVersionHash` es «hash de la versión EXACTA del texto sometido a decisión», dentro de `configHash` — es decir, **congelado al abrir** |
+| `30-...` §A.7 | `RoundOpened { round, proposalVersionHash }` — la ronda y el hash vigentes viven en **el log**, y cambian con cada objeción integrada |
+
+**El conflicto, que son dos.** El primero es trivial de ver y trivial de arreglar mal: `cfg.currentRound`
+**no existe**. `DecisionConfig` no tiene ese campo y no puede tenerlo, porque la ronda cambia durante
+la ventana y la configuración es inmutable hasta el cierre (T-08 del modelo de amenaza depende de que
+lo sea). La salida barata —añadirlo a la configuración— rompería la inmutabilidad que sostiene la
+defensa contra el ataque de gobernanza más rentable del catálogo.
+
+El segundo es el peligroso. `cfg.proposalVersionHash` es el hash **congelado al abrir**. Pero el ciclo
+sociocrático de B.3 integra objeciones, y cada `ObjectionIntegrated` publica un
+`newProposalVersionHash` y abre una ronda nueva con él. Las papeletas de la ronda 2 llevan, como manda
+la DECISIÓN A.6, el hash de **la versión que votaron**, que ya no es el congelado.
+
+**Por qué importaba.** Aplicar el PASO 1 literalmente **descarta todas las papeletas de la ronda 2 en
+adelante**. No lanza, no avisa, no deja rastro: `direct` queda vacío, la participación da cero, y el
+motor devuelve `no-quorum`. Y **`no-quorum` es un desenlace legítimo y frecuente**, así que nadie lo
+investiga: se lee como «la gente no votó». El resultado es que **toda decisión sociocrática que
+integre una objeción muere de no-quórum fantasma** — es decir, precisamente las decisiones en las que
+el procedimiento funcionó como debe, porque alguien objetó y la objeción se integró. El sistema
+castiga con silencio el único caso que su segundo principio («no todo se resuelve por mayoría») existe
+para proteger.
+
+**Resolución.** Los dos filtros **salen del PASO 1**. `resolveDelegation` no puede comprobarlos:
+ninguno de los dos datos es derivable de `DecisionConfig`. La ronda vigente y el hash de propuesta
+vigente se resuelven **aguas arriba**, en el motor, que sí pliega el log y sí conoce el último
+`RoundOpened`; lo que le llega a la resolución de pesos son las papeletas **ya filtradas por el
+contexto correcto**. La frontera queda documentada en el punto exacto donde estaban los dos `continue`,
+para que nadie los reponga.
+
+*Vive en:* `packages/domain/src/delegation.ts:144-149`.
+
+## E39 — Un pliegue puro no emite eventos, y C.1.b le manda emitir uno
+
+**El conflicto.** La DECISIÓN C.1.b dice que conceder una delegación nueva para el mismo
+`(delegator, scope)` «**emite automáticamente** `DelegationRevoked` de la anterior, con
+`revokedAt = grantedAt` de la nueva».
+
+Un pliegue —`apply(estado, evento) → estado`— **no emite**. Si emitiera, dejaría de ser función del
+log: el estado ya no sería `fold(apply, ∅, eventos)` sino algo que depende de qué eventos generó el
+pliegue por su cuenta, y **el replay dejaría de ser reproducible** — dos replays del mismo log podrían
+divergir según cuántas revocaciones automáticas se fueran generando y en qué orden se intercalaran.
+Es exactamente lo que INV-01 y el principio 5 del proyecto prohíben.
+
+**Por qué importaba.** Es menos visible que las tres autodestructivas y más profundo: **es la
+diferencia entre event sourcing y un ORM con historial**. Implementarlo tal como está escrito produce
+un sistema que parece reproducible y no lo es, y el día en que dos réplicas discrepen nadie sabrá por
+qué.
+
+**Resolución.** El desplazamiento se aplica **dentro del pliegue**, sin emitir nada: al plegar un
+`DelegationGranted` cuyo `(delegator, scopeKey)` ya está ocupado, la delegación anterior queda con
+`revokedAt = grantedAt` de la nueva **en el estado**. El log con la revocación explícita y el log sin
+ella se pliegan al **mismo estado**, que es la propiedad que se quería y la que se prueba. Si además
+llega un `DelegationRevoked` explícito, es idempotente.
+
+*Vive en:* `packages/domain/src/engine.ts:392`.
+
+## E40 — INV-27 es insatisfacible con censos pequeños, y la salida barata era desactivarlo
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §C.5 | `capWeight = ⌊ cap.num × N / cap.den ⌋`, `cap` por defecto `1/10` |
+| `30-...` INV-27 | `∀ b ∈ effectiveBallots : b.weight ≤ ⌊cap.num · N / cap.den⌋` |
+| `30-...` §C.3, PASO 4 | `peso(v) = 1 (propio) + \|{ d : assignedTo(d) = v, d ≠ v }\|` |
+
+**El conflicto.** Con `N = 5` y `cap = 1/10`, `capWeight = ⌊5/10⌋ = 0`. Pero **el peso propio vale 1 y
+no es devolvible**: `return-to-delegator` devuelve delegaciones recibidas, y el voto de uno mismo no
+es una delegación recibida. Toda papeleta efectiva tiene peso `≥ 1 > 0`, luego **toda papeleta viola
+INV-27**. El invariante es insatisfacible, no por un caso raro sino por aritmética: pasa con todo
+`N < cap.den`, y con `1/10` eso es cualquier círculo de menos de diez personas — que en un instituto
+de 300 estudiantes es la mayoría de los círculos.
+
+**Por qué importaba.** Es el patrón 3 de la segunda ronda (E11, E27) con su salida barata de siempre:
+**debilitar el invariante hasta que pase**, o dejar la comprobación desactivada «para censos
+pequeños». Cualquiera de las dos apaga la única defensa contra la concentración justo donde la
+concentración es más fácil: en un círculo de seis personas, dos delegaciones ya son mayoría.
+
+**Resolución.** Se rechaza **al abrir**, que es el único momento en que todavía se puede corregir.
+`openDecision` exige `capWeight ≥ 2` cuando la delegación está habilitada: con `capWeight = 0` o `1`
+la delegación queda habilitada y a la vez imposibilitada de surtir efecto, que es la «delegación
+inerte» que ADR-0030 llama la peor opción. El mensaje de rechazo dice el número y qué hacer:
+subir el `cap`, o abrir sin delegación. **No** se toca INV-27, que es correcto: lo que estaba mal era
+permitir la configuración que lo viola.
+
+*Vive en:* `packages/domain/src/delegation.ts:60-72` y `packages/domain/src/config.ts:932-948`.
+
+## E41 — El HHI normalizado da `0/0` justo en el caso que existe para vigilar
+
+**El conflicto.** C.6 define `HHI* = (HHI − 1/n) / (1 − 1/n)`. Con `n = 1` el numerador y el
+denominador son **ambos cero**: `HHI = 1` (una sola papeleta se lleva todo), `1/n = 1`, y `1 − 1/n = 0`.
+
+**Por qué importaba.** `n` es el número de **votantes efectivos**, no el censo. `n = 1` no es una
+curiosidad matemática: es **una sola persona votando y cargando el peso de todos sus delegantes** —
+hasta 30 con el tope por defecto—, que es literalmente el escenario que C.6.a describe como «el
+peligro» y para el que dice haber elegido HHI sobre Gini. El indicador normativo del proyecto está
+indefinido exactamente en su caso de uso. Y el fallo no es ruidoso: en coma flotante `0/0` es `NaN`,
+y `NaN ≥ 0.15` es `false`, así que **la alarma de concentración no se dispara**. La aritmética exacta
+de ADR-0027 lo hace visible —una fracción con denominador 0 revienta— pero no lo resuelve.
+
+**Resolución.** Con `n ≤ 1` se devuelve `0/1`, y el motivo se argumenta donde está el código: `HHI*`
+mide **desigualdad entre votantes**, y con un votante no hay desigualdad. La ambigüedad es real —una
+sola papeleta es a la vez el reparto perfectamente uniforme y la concentración máxima, y la fórmula
+no distingue— y por eso la resolución **no se apoya en `HHI*` para cubrir el riesgo**: lo cubre `CR1 =
+w₁ / N`, que con un votante que carga 30 pesos sobre un censo de 300 vale `1/10` y dispara su propio
+umbral (`CR1 ≥ 1/20`). El umbral de alarma de C.6.a es una disyunción, y esa es la rama que funciona.
+
+*Vive en:* `packages/domain/src/tally/common.ts:405-431`, `normalizedHerfindahl`.
+
+## E42 — AUTODESTRUCTIVA · la cota de irreversibilidad de D.4.1 no es una cota bajo delegación
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` §D.4.1 | «Sea `movibles` = miembros del padrón que **no** han emitido papeleta directa. **Cada uno puede mover su peso 1** a cualquier casilla» |
+| `30-...` §D.4.1, código | `// (1) el quórum sólo puede CRECER ⇒ el peor caso de quórum es el estado actual` |
+| `30-...` §D.4.1, prueba | «No hay continuaciones intermedias fuera de ese rango. ∎» |
+
+**El conflicto.** Los dos supuestos que sostienen la demostración son **falsos bajo la PARTE C**, y la
+PARTE C está en el mismo documento:
+
+1. **«La participación sólo puede crecer.»** Falso. La regla de oro 4 de C.3.1 dice que **revocar sin
+   votar no es abstenerse: el peso queda sin asignar y no suma a la participación**. Quien revoca
+   durante la ventana **resta** participación. Y una delegación que **caduca** durante la ventana
+   (C.1.a: `expiresAt` es obligatorio) rompe una cadena y resta tantos como la cadena llevara, sin que
+   nadie haga nada.
+2. **«Cada movible mueve su peso 1.»** Falso. Por la regla de oro 2, quien vota directo **se lleva su
+   peso a su papeleta y a la vez se lo quita a la de su delegado**: es un movimiento de **2** en el
+   marcador `A`/`R`, no de 1. Con cadenas, un solo voto directo en un nodo intermedio **absorbe la
+   cadena entera** —el nodo terminal es siempre absorbente, C.3.1-1— y puede mover mucho más que 2.
+
+**Por qué importaba.** El cálculo se llama `irreversibility` y su salida es `'approved'` o
+`'rejected'`, que **cierra la urna** (`DecisionClosed` con `cause: 'early-irreversible'`). Una cota
+que subestima cuánto se puede mover declara irreversible un resultado que **todavía puede darse
+vuelta**, y el motor cierra con esa firma detrás. Es el peor de los tres modos autodestructivos de
+esta ronda, porque el daño es **irreparable por diseño**: A.8.2.1 prohíbe reabrir. Y la propia D.4.2
+argumenta que cerrar antes revela información y se acepta *porque el resultado ya está decidido*: si
+no lo está, no queda ningún argumento en pie.
+
+**Resolución.** Con `delegation.enabled` el cierre anticipado por irreversibilidad **devuelve
+`'open'`**, siempre. No se intenta una cota nueva: cualquier cota correcta bajo delegación tendría que
+acotar el efecto de revocaciones, caducidades y absorciones de cadena que ocurrirán **en el futuro**,
+y las tres dependen de actos que nadie ha hecho todavía. La decisión cierra por ventana, como las
+demás. **La funcionalidad se pierde exactamente donde no se puede sostener**, y eso es preferible a
+sostenerla mal: la irreversibilidad sigue viva y probada para las decisiones sin delegación, que son
+la mayoría. Queda anotado como una restricción del motor, no como un pendiente: sin una demostración
+nueva, no vuelve.
+
+*Vive en:* `packages/domain/src/engine.ts:1532-1542`.
+
+## E43 — ADR-0030 y C.7.a disparan la misma compuerta con condiciones distintas
+
+| Documento | Condición para rechazar `DecisionOpened` |
+|---|---|
+| `30-...` DECISIÓN C.7.a | «`enabled && privacy === 'secret-ballot'` es una configuración INVÁLIDA» — mira **la bandera** |
+| ADR-0030, §Decisión | «El sistema rechaza abrir la decisión **si hay delegaciones vigentes en su ámbito**» — mira **el registro** |
+
+**El conflicto.** No son la misma comprobación y ninguna implica a la otra. El caso que las separa es
+el que importa: **`enabled: false` con delegaciones vigentes en el ámbito de la decisión**. La spec
+abre sin decir nada; el ADR rechaza.
+
+**Por qué importaba.** Ese caso concreto es **exactamente la «delegación inerte»** que ADR-0030
+enumera y descarta como «la peor opción»: «el delegante cree que participó y no participó, y sólo lo
+descubre —si acaso— al ver el conteo». La compuerta de la spec, aplicada sola, **produce el escenario
+que el ADR existe para impedir**. Y lo produce en decisiones con voto secreto, que por C6 y por el
+propio ADR son las delicadas: elegir personas, evaluar, denunciar.
+
+**Resolución.** **Manda el ADR**, por la precedencia de `docs/adr/README.md` y de `HANDOFF.md` §3.1
+(los ADR están por encima de la spec 30), y además porque su condición es la más fuerte en la
+dirección que importa. **Se implementan las dos**, porque tampoco son redundantes: la de la spec
+atrapa la configuración incoherente aunque no haya ni una delegación concedida, y la del ADR atrapa
+el registro poblado aunque la bandera esté en `false`. La spec queda enunciada como la conjunción de
+ambas. El mensaje de rechazo nombra a las personas afectadas, porque C.4.3 exige que nadie se entere
+tarde.
+
+*Vive en:* `packages/domain/src/delegation.ts:534` y su prueba en
+`packages/domain/test/delegation-engine.test.ts:501`.
+
+## E44 — INV-28 no dice si lo que se devuelve es una persona o una arista, y en una cadena no es lo mismo
+
+**El conflicto.** INV-28 dice que los devueltos «son exactamente **las delegaciones** de mayor
+`grantedSeq` **hacia ese delegado**». En una **estrella** —todos delegan directo en Marta— la frase es
+unívoca: las delegaciones hacia Marta son las aristas que entran en Marta, y devolver una arista es
+devolver a una persona. En una **cadena** `A → B → C`, con C votando, deja de serlo: hacia C hay **una
+sola** arista (`B → C`) y sin embargo C carga **dos** pesos, el de B y el de A.
+
+Las dos lecturas dan resultados distintos:
+
+- **Devolver la arista `B → C`** resta 2 de golpe (B y A), puede dejar a C muy por debajo del tope, y
+  **castiga a A, que delegó hace meses y no hizo nada**: el exceso lo produjo B al delegar tarde.
+- **Devolver la persona B** resta 1, deja a A llegando a C, y es el recorte mínimo.
+
+**Por qué importaba.** La ambigüedad no es de redacción: es la diferencia entre un tope que recorta el
+exceso y uno que arrasa la rama. Y romper la arista reintroduce **por otra puerta** el reparto de
+culpa que C.5.b.2 rechaza explícitamente al descartar FIFO —«castigaría a quien delegó hace meses y
+confió, lo cual es arbitrario y además incentiva delegar tarde»—, con el agravante de que aquí ni
+siquiera hace falta que A haya delegado antes: le pasa por estar detrás.
+
+**Resolución.** Se devuelve **la unidad de peso de una persona**, ordenada por el `grantedSeq` de la
+delegación que **esa persona** concedió. Tres razones, y las tres las argumenta la propia C.5:
+**(a)** es el recorte mínimo, y el tope pide recortar el exceso, no la rama; **(b)** no castiga a quien
+no hizo nada, que es el criterio con el que C.5.b.2 elige LIFO sobre FIFO; **(c)** no cascadea, que es
+el vicio que C.5.1 le imputa al prorrateo.
+
+Consecuencia asumida y declarada: **el peso de A puede seguir contando a través de B aunque el peso
+propio de B se haya devuelto**. Es coherente —lo devuelto es el voto de B, no el mandato que B
+recibió— y los dos reciben el aviso de C.4.3 con su motivo correcto.
+
+*Vive en:* `packages/domain/src/delegation.ts:232-254`; su prueba en
+`packages/domain/test/delegation.test.ts:603`.
+
+## E45 — INV-28 se contradice a sí mismo: es falso para su propia implementación correcta
+
+**El conflicto.** INV-28 afirma dos cosas y son incompatibles:
+
+```
+∀ π : devueltos(reseq(π(L))) === devueltos(L)
+y  devueltos son exactamente las delegaciones de mayor grantedSeq hacia ese delegado
+```
+
+`reseq` —el mismo de INV-16, definido en el arnés— **reasigna la numeración** de forma densa según el
+orden nuevo. Es decir: permutar el log y volver a numerar **cambia el `grantedSeq` de cada
+delegación**. Si los devueltos son «los de mayor `grantedSeq`», entonces por construcción son **otro
+conjunto** después de `reseq`. La primera cláusula exige invariancia bajo una operación que la segunda
+cláusula garantiza que la rompe.
+
+**Por qué importaba.** Es un invariante **falso para la implementación correcta**, que es el peor tipo:
+quien lo escriba tal cual verá la propiedad en rojo con un motor que funciona bien, y el reflejo será
+tocar el motor hasta ponerla en verde. El único modo de satisfacer INV-28 literalmente sería **dejar
+de usar `grantedSeq`** y desempatar por algo invariante a la renumeración —el `delegationId`, por
+ejemplo—, con lo que se perdería la propiedad política que C.5.b.2 argumenta durante un párrafo: que
+se devuelve la delegación **más reciente**, la marginal, la que recibió la advertencia al concederse.
+Es E24 esperando a ocurrir: una contradicción documento-test resuelta contra el documento, anclada en
+una aserción, y descubierta dos rondas después.
+
+**Resolución.** La propiedad que se prueba es la que INV-28 quiere decir y su «fallo ingenuo» delata
+—«recortar recorriendo un `Map` (orden de inserción) ⇒ a quién se le quita el voto depende del orden
+de llegada de **eventos no relacionados**»—: **se baraja el orden de llegada SIN tocar `grantedSeq`**.
+Eso es lo que debe ser invariante, y lo es. `reseq` **no aplica** a INV-28, porque `grantedSeq` no es
+un número de orden interno del escrutinio sino **parte del hecho registrado**: es el dato que dice
+cuál delegación fue la última. La cláusula `∀ π : devueltos(reseq(π(L))) === devueltos(L)` queda
+enunciada sobre el orden de llegada, no sobre la renumeración.
+
+*Vive en:* `packages/domain/test/props/delegation-invariants.test.ts:624-646` — las dos propiedades,
+la de barajar sin renumerar y la de que se devuelven los de mayor `grantedSeq`, conviven ahí porque
+sólo son compatibles cuando la primera se enuncia bien.
+
+## E46 — C.4.b manda emitir `IntegrityAlert`, un evento que no existe y que no podría existir
+
+| Documento | Qué decía |
+|---|---|
+| `30-...` DECISIÓN C.4.b | «se emite una alarma `IntegrityAlert` y el hecho se declara en la `Proof`» |
+| `30-...` §A.7 | catálogo de **19 tipos de evento**. `IntegrityAlert` no está |
+| `30-...` §A.8.1 | tabla de transiciones. No hay fila para `IntegrityAlert` |
+| `30-...` §A.8.2 / INV-34 | «lo no listado es ilegal» — «Ninguna transición ilegal se acepta» |
+
+**El conflicto.** El evento no está en el catálogo ni en la tabla. Y añadirlo al catálogo no bastaría:
+por la regla de A.8.2, **un evento sin fila en la tabla es ilegal en todo estado**, que es exactamente
+el fallo de E20 con `DecisionDrafted`. Emitirlo haría fallar INV-34.
+
+Hay un segundo problema, y es el que decide la resolución: **el escrutinio no es un lugar desde donde
+emitir**. La detección de ciclos de C.4.b ocurre dentro de `resolveWeights`, que es una **función pura
+de cálculo del resultado**; ADR-0026 declara el resultado un dato **derivado**, e INV-35 exige que
+`effectiveBallots` sea idéntico antes y después de `DecisionClosed`. Un escrutinio que escribe en el
+log deja de ser recomputable, y la recomputación es lo que permite a `DecisionAnnulled` detectar un
+`resultHash` que no cuadra.
+
+**Por qué importaba.** Es el mismo error de E39 en otra sección —confundir un cálculo puro con un
+emisor de eventos— y comparte con E19 y E17 el patrón de la segunda ronda: **una regla que exige un
+artefacto que el modelo no tiene**. La salida barata es inventar el evento, y el coste de esa salida
+es un agujero en la máquina de estados por el que después entra cualquier cosa.
+
+**Resolución.** El hecho **se declara en la `Proof`**, que es la mitad de C.4.b que sí es
+implementable y sí es verificable por terceros. La resolución expone `cycleMembers`: si no está
+vacío, el grafo tenía un ciclo, y la `Proof` lo dice con nombres. **No se emite ningún evento nuevo**;
+el catálogo sigue teniendo 19 tipos y la tabla sigue siendo exhaustiva. La alarma operativa —avisar a
+una persona— es responsabilidad de la capa de notificación, que es donde vive `ChainBrokenNotice` de
+C.4.3 y donde no compromete la pureza del pliegue.
+
+*Vive en:* `packages/domain/src/delegation.ts:116-117`.
+
+---
+
 ## Resumen del estado
 
 | # | Contradicción | Estado |
@@ -1426,20 +1835,44 @@ propios del código.
 | B2 | El codec de la API no conocía las 8 reglas de desempate nuevas | código, no spec | **Corregido** — habría matado toda configuración nueva al replay |
 | B3 | Índices de afirmación permutados dos veces en `consensus` | código, no spec | **Corregido** — números correctos colgando de la afirmación equivocada |
 
+**Parte 3, cuarta ronda — errores detectados al implementar la democracia líquida, PARTE C
+(2026-08-22).** Once errores. **Tres autodestructivos**, marcados como tales.
+
+| # | Error | Dónde vivía | Estado |
+|---|---|---|---|
+| E36 | El evento de delegación vive en el agregado decisión; el ámbito de una delegación es transversal | `30-...` §A.7, §A.8.1 vs §C.1–C.2 | **Resuelta a medias** — las delegaciones pasan por cierre; **pendiente** decidir un agregado `DelegationRegistry` |
+| **E37** | «Prevención completa» es un teorema falso: comprueba por ámbito y la resolución mezcla ámbitos | `30-...` §C.4.1 vs §C.2 | **Resuelta** — ciclo comprobado sobre el grafo **unión**. **AUTODESTRUCTIVA** |
+| **E38** | El PASO 1 filtra por `cfg.currentRound`, que no existe, y por el `proposalVersionHash` congelado | `30-...` §C.3 vs §A.5, §A.7 | **Resuelta** — los dos filtros salen del PASO 1 y se aplican aguas arriba. **AUTODESTRUCTIVA** |
+| E39 | C.1.b manda que el pliegue **emita** `DelegationRevoked`; un pliegue puro no emite | `30-...` §C.1.b | **Resuelta** — el desplazamiento se aplica dentro del pliegue |
+| E40 | INV-27 insatisfacible con `N < cap.den`: `capWeight = 0` y el peso propio de 1 no es devolvible | `30-...` INV-27 vs §C.5 | **Resuelta** — se rechaza la configuración al abrir (`capWeight ≥ 2`) |
+| E41 | `HHI*` da `0/0` con un solo votante, que es el caso que C.6 existe para vigilar | `30-...` §C.6 | **Resuelta** — `0/1` con `n ≤ 1`; el riesgo lo cubre `CR1` |
+| **E42** | La cota de irreversibilidad supone participación creciente y peso movible 1; ambos falsos con delegación | `30-...` §D.4.1 vs §C.3.1 | **Resuelta** — con delegación habilitada devuelve `open`. **AUTODESTRUCTIVA** |
+| E43 | ADR-0030 y C.7.a rechazan la apertura con condiciones distintas; la del ADR es más fuerte | ADR-0030 vs `30-...` §C.7.a | **Resuelta** — manda el ADR por precedencia; se implementan **las dos** |
+| E44 | INV-28 no define si se devuelve una **persona** o una **arista**; en cadena difieren | `30-...` INV-28 vs §C.5.b.2 | **Resuelta** — se devuelve la persona; romper la arista castiga a quien no hizo nada |
+| E45 | INV-28 se contradice: `reseq(π(L))` renumera `grantedSeq`, y los devueltos se definen por `grantedSeq` | `30-...` INV-28 | **Resuelta** — se baraja el orden de llegada **sin** renumerar; `reseq` no aplica |
+| E46 | `IntegrityAlert` no está en el catálogo ni en la tabla, y por A.8.2 sería ilegal en todo estado | `30-...` §C.4.b vs §A.7, §A.8.1 | **Resuelta** — el ciclo se declara en la `Proof` (`cycleMembers`); no se emite evento |
+
 ### El dato acumulado
 
-**Entre las dos especificaciones, la implementación ha encontrado ya 31 errores que ninguna revisión
+**Entre las dos especificaciones, la implementación ha encontrado ya 42 errores que ninguna revisión
 por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un eslogan:
 
-| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Total |
-|---|---:|---:|---:|---:|
-| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | **31** |
-| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | 2 |
-| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | 2 |
-| Divergencias elevadas sin cerrar | 1 (E9) | — | — | 1 |
-| Entradas **retiradas** (error propio) | — | — | 1 (E24) | 1 |
-| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | 3 |
-| **Entradas de la parte 3** | 11 | 14 | 15 | **40** |
+| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Spec 30, 4ª ronda | Total |
+|---|---:|---:|---:|---:|---:|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | 11 (E36–E46) | **42** |
+| — de ellos, **autodestructivos** | 5 | *(no clasificado)* | — | **3** (E37, E38, E42) | — |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | — | — | 1 |
+| Entradas **retiradas** (error propio) | — | — | 1 (E24) | — | 1 |
+| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | — | 3 |
+| **Entradas de la parte 3** | 11 | 14 | 15 | 11 | **51** |
+
+**Cómo se clasifican los conflictos ADR ↔ spec, porque hay dos filas que podrían competir.** E43
+(ADR-0030 contra C.7.a) se cuenta **dentro de la especificación** y no en la fila de incoherencias,
+siguiendo el precedente de **E26** (B.9 contra ADR-0027) de la tercera ronda: cuando la corrección
+se aplica **en la spec** porque el ADR manda, es una errata de la spec. La fila «incoherencias entre
+ADR y specs» queda reservada a E7 y E8, donde lo que estaba mal era **el ADR**.
 
 ⚠ **La cifra sigue corta, y hay que decirlo.** Las rondas de `services/api`, `packages/anchor` y
 `packages/verifier-cli` produjeron **al menos cuatro hallazgos más** —la `RULE ON DELETE DO INSTEAD
@@ -1447,15 +1880,31 @@ NOTHING` que volvía mudo el blindaje, el `ORDER BY tree_size` que ordenaba como
 `count(*) = max(leaf_index)+1` ciego al truncamiento de la cola y el falso positivo de
 `directorySource()`— que **siguen sin ficha `E-NN`** y viven sólo en comentarios y nombres de test.
 Están descritos en `HANDOFF.md` §5.2 y §5.3 y su volcado sigue siendo la tarea 14 del plan de
-continuación. Con ellos el total real ronda los **44 hallazgos**, de los cuales unos **35** son
+continuación. Con ellos el total real ronda los **55 hallazgos**, de los cuales unos **46** son
 errores de especificación.
 
 Las especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
-Ninguno de los 31 salió de esa revisión: **los 31 salieron de escribir el código y los tests**. Y la
+Ninguno de los 42 salió de esa revisión: **los 42 salieron de escribir el código y los tests**. Y la
 segunda ronda invierte la intuición cómoda de que un documento mejor deja menos errores: la spec 30
 —2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes, apéndice de decisiones numeradas— es
 el documento más cuidado del corpus y produjo **más del doble** que la spec 10. La tercera ronda no
-la contradice: la misma spec 30, en la parte que menos se había ejercitado, dio otros once.
+la contradice, y la cuarta menos todavía: **la misma spec 30 ha dado ya 36 errores en tres rondas**
+(14 + 11 + 11), y las tres veces en la parte que aún no se había ejercitado.
+
+**Lo que añade la cuarta ronda, y es un dato nuevo sobre el método.** Es la primera ronda en la que
+**los errores no están repartidos**: cinco de once (E36, E37, E38, E41, E42) comparten una sola forma
+—**una sección razona bien dentro de un marco más chico que el problema**— y las tres autodestructivas
+están entre ellas. Es un modo de fallo distinto del de la segunda ronda («dos pasajes correctos por
+separado que no se sostienen juntos») y **más difícil de ver leyendo**, porque no hay dos pasajes que
+comparar: hay uno solo, correcto, aplicado fuera de su dominio de validez. Un revisor que lea C.4.1
+verá un teorema con su demostración y le dará el visto bueno, y hará bien: el teorema es cierto. Lo
+que no se lee es la hipótesis que otra sección, cincuenta líneas antes, dejó de cumplir.
+
+**Y una confirmación incómoda de la tesis de C.4.1 del propio documento:** la PARTE C se abre
+advirtiendo que «una delegación mal modelada no produce un error visible: produce un resultado
+plausible y falso». La advertencia era correcta y **la escribió el mismo documento que contenía las
+tres erratas que la materializan**. Saber cuál es el modo de fallo no protege de cometerlo; sólo
+protege escribir el segundo caso de prueba.
 
 Lo que predice los errores no es el descuido sino la **densidad de correspondencias internas**: la
 spec 30 ata catálogo de eventos ↔ máquina de estados ↔ métodos ↔ invariantes, y nueve de sus catorce
