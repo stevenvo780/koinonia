@@ -16,7 +16,7 @@
 ## 0. Verificación de este documento
 
 Todo lo verificable se comprobó contra el repositorio el 2026-08-21 antes de escribir y se volvió a
-actualizar después de integrar ADR-0043. Las cifras de pruebas y rutas de esta sección sustituyen las
+actualizar después de integrar ADR-0044. Las cifras de pruebas y rutas de esta sección sustituyen las
 del corte anterior. Lo que no se pudo verificar se marca explícitamente como *no verificado*.
 
 ---
@@ -60,14 +60,16 @@ Quien reduzca el proyecto a «votar en línea» va a construir la parte fácil y
 | Dato | Valor verificado |
 |---|---|
 | Rama | `main` |
-| Último commit funcional | `5e93f44` — *Vincula decisiones aprobadas con iniciativas atómicas* |
+| Último commit funcional | `2eea322` — *Activa iniciativas y ofrece tareas con consentimiento* |
 | Árbol de trabajo | Limpio (`git status --porcelain` sin salida) |
 | Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` |
 | Licencia | AGPL-3.0-or-later |
 
-Últimos commits relevantes (nueve en total):
+Últimos commits relevantes:
 
 ```
+2eea322 Activa iniciativas y ofrece tareas con consentimiento
+872834b Actualiza el handoff tras ADR 0043
 5e93f44 Vincula decisiones aprobadas con iniciativas atomicas
 427297d Documento de traspaso de sesión y registro de ruteo del 2026-08-21
 36b37c2 Integra el anclaje externo y el verificador independiente con el corte vertical
@@ -86,12 +88,12 @@ d731607 Capa de persistencia del ledger en services/api sobre PostgreSQL
 | `pnpm build` | **verde** (código de salida 0) | `tsc --build`, sin diagnósticos |
 | `pnpm typecheck` | **verde** | `tsconfig.check.json` + `contracts`/`api` + `tests/e2e` |
 | `pnpm lint` | **verde** | ESLint + Prettier (`All matched files use Prettier code style!`) + `check-domain-purity.mjs` (`Pureza del dominio: correcta`) |
-| `pnpm test` | **verde** | `Test Files 47 passed (47)` · `Tests 646 passed (646)` · 5,30 s; integración real contra PostgreSQL disponible |
-| `pnpm e2e` (solo chromium) | **verde** | `31 passed (24.6s)` |
-| Firefox + Chrome móvil | **verde** | `62 passed (45.8s)`; 31 por proyecto |
+| `pnpm test` | **verde** | `Test Files 49 passed (49)` · `Tests 696 passed (696)` · 5,43 s; integración real contra PostgreSQL disponible |
+| `pnpm e2e` (solo chromium) | **verde** | `39 passed (31.5s)` |
+| Firefox + Chrome móvil, ADR-0044 | **verde** | `16 passed (26.0s)`; 8 por proyecto sobre el flujo nuevo completo |
 | WebKit / Safari móvil | **bloqueo de host conocido** | El navegador no arranca por librerías ausentes — ver §2.4; no se silenció |
 
-Los **122 tests de integración corrieron de verdad contra PostgreSQL 16**: con
+Los **134 tests de integración corrieron de verdad contra PostgreSQL 16**: con
 `KOINONIA_REQUIRE_DOCKER=1`, si Testcontainers no puede levantar Docker el arnés **lanza** en vez de
 saltarse la suite (`tests/integration/helpers/ledger-env.ts:81`). Un verde con esa variable puesta no
 puede ser un verde vacío. La imagen es `postgres:16-alpine`.
@@ -101,27 +103,29 @@ puede ser un verde vacío. La imagen es `postgres:16-alpine`.
 | Paquete | Tests | Qué contiene |
 |---|---:|---|
 | `packages/crypto` | **108** | Canonicalización JCS (RFC 8785), SHA-256 sobre WebCrypto, cadena de hashes por agregado, Merkle RFC 6962 con pruebas de inclusión y de consistencia. Sin dependencias de runtime. |
-| `packages/domain` | **279** | `DecisionEngine` puro y agregados de trabajo: añade plan de ejecución versionado, iniciativa enlazada e invariantes de borrador/configuración. Propiedades con fast-check y semillas fijas. |
+| `packages/domain` | **307** | `DecisionEngine` puro y agregados de trabajo: plan versionado, iniciativa enlazada, ratificación, hitos y ofertas/aceptaciones con CAS. Propiedades con fast-check y semillas fijas. |
 | `packages/anchor` | **80** | `AnchorProvider` enchufable, OpenTimestamps (clase `blockchain`), git firmado con SSH —no GPG— (clase `vcs`), correo a testigos (clase `human-witness`), política de quórum **2 de 3 clases de independencia**. |
 | `packages/verifier-cli` | **33** | Verificador independiente, en español, que **no depende de nuestro servidor**. Aquí viven los tests de ataque (§6). |
-| `packages/contracts` | **6** | Esquemas Zod compartidos, incluida la frontera de planes e iniciativas. |
-| `services/api` | **18** unitarios **+ 122** de integración | Event store append-only, replay idempotente por lote canónico, commits multiagregado, auditoría bidireccional, HTTP con Fastify + Zod y enlace mágico. |
+| `packages/contracts` | **16** | Esquemas Zod compartidos, incluida la frontera de planes, iniciativas, tareas y hora de Colombia. |
+| `services/api` | **18** unitarios **+ 134** de integración | Event store append-only, replay idempotente por lote canónico, commits multiagregado, CAS y auditoría bidireccional, HTTP con Fastify + Zod y enlace mágico. |
 | `apps/web` | vía E2E | Next.js PWA. Sin suite unitaria propia, por decisión (`TESTING.md` §1). |
-| | **646** | **en 47 ficheros** |
+| | **696** | **en 49 ficheros** |
 
 `packages/domain` declara **44** propiedades `fc.property`, repartidas sobre todo en
 `test/props/invariants.test.ts` (28) y `test/props/log-invariants.test.ts` (6).
 
 ### 2.4 Extremo a extremo
 
-**31 escenarios** en `tests/e2e/` (`01-gobernanza` 1, `02-versionado` 1, `03-permisos` 9,
-`04-accesibilidad` 15, `05-inmutabilidad` 5) × **5 proyectos** Playwright = 155 ejecuciones.
+**39 escenarios** en `tests/e2e/` (`01-gobernanza` 1, `02-versionado` 1, `03-permisos` 9,
+`04-accesibilidad` 15, `05-inmutabilidad` 5, `06-ejecucion-inicial` 8) × **5 proyectos** Playwright =
+195 ejecuciones configuradas.
 
-Resultado actual verificable: **chromium, firefox y chrome-movil pasan los 31 cada uno (93)**. La
-matriz de cinco proyectos no se volvió a presentar como una cifra verde: en **webkit** y
-**safari-movil** el proceso del navegador sigue sin arrancar. La última corrida completa anterior,
-con 30 escenarios, dejó `106 passed · 10 failed · 34 did not run`; añadir un escenario no convierte
-ese bloqueo de infraestructura en un resultado nuevo, por lo que no se inventa un total actualizado.
+Resultado actual verificable: **Chromium pasa los 39**. El flujo nuevo de ADR-0044 pasa además sus
+ocho escenarios en **Firefox** y **Chrome móvil** (16 ejecuciones); el corte anterior completo de 31
+escenarios también estaba verde en ambos. La matriz de cinco proyectos no se presenta como una cifra
+verde: en **WebKit** y **Safari móvil** el proceso del navegador sigue sin arrancar en este host. La
+última corrida completa anterior, con 30 escenarios, dejó `106 passed · 10 failed · 34 did not run`;
+el bloqueo se resuelve en CI, no inventando un total local.
 
 **Por qué no arranca WebKit.** Faltan librerías del sistema. Sonames verificados con `ldd` sobre
 `~/.cache/ms-playwright/webkit-2336/`:
@@ -143,7 +147,7 @@ tocar esto debe mantener esa decisión.
 
 ### 2.5 Migraciones
 
-`services/api/migrations/`, seis, todas aplicadas por `migrate()`:
+`services/api/migrations/`, siete, todas aplicadas por `migrate()`:
 
 | Fichero | Contenido |
 |---|---|
@@ -153,6 +157,7 @@ tocar esto debe mantener esa decisión.
 | `0004_projection.sql` | Proyecciones de lectura |
 | `0005_identidad.sql` | PII Vault e identidad |
 | `0006_anclaje.sql` | `anchor_attempt`, recibos, sellos |
+| `0007_append_request_scope.sql` | Namespace separado para claves públicas y consecuencias internas atómicas |
 
 ---
 
@@ -386,10 +391,10 @@ Los dos matices que hacen honesto el resultado:
 | **3** | **OpenTimestamps contra un calendario real** | `packages/anchor/src/ots/` | La **verificación** está completa y probada, pero **`httpCalendar()` (`ots/calendar.ts:55`) nunca se ha ejecutado contra `a.pool.opentimestamps.org`**. Hay que correrlo **una vez** y contrastar el `.ots` con el cliente oficial `ots verify`. Faltan **reintentos con backoff** y **envío a varios calendarios**. |
 | **4** | **`GitForgeClient` sin implementar** | `packages/anchor/src/providers/signed-git.ts:72` | Faltan los clientes de **Codeberg** y **GitHub**. Y, sobre todo, **comprobar que las dos forjas devuelven el MISMO objeto**: ahí es donde se detecta un `push --force` en una sola. El propio fichero lo marca (`:162` «VERIFICAR: `GitForgeClient` no tiene implementación real»). |
 | **5** | **Transporte de correo** | `packages/anchor/src/providers/witness-email.ts` | Falta **SMTP con DKIM**, gestión de **rebotes** y **recogida por IMAP**. Lo que sostiene la garantía —**verificar los acuses firmados**— **sí está**. |
-| **6** | **Ejecución y seguimiento** | `PRODUCT.md` §6 · ADR-0043 · `02-sociocracia-ostrom.md` | **Primer tramo integrado:** cada versión congela objetivo, responsabilidad aceptada, revisión y criterios; un resultado aprobado crea exactamente una iniciativa en el mismo commit y el auditor verifica los vínculos. **Siguiente:** ratificación/activación, hitos, oferta y aceptación/rechazo de tareas, bloqueos, evidencias y seguimiento gradual, sin gamificación tóxica. |
+| **6** | **Ejecución y seguimiento** | `PRODUCT.md` §6 · ADR-0043 · ADR-0044 · `02-sociocracia-ostrom.md` | **Dos tramos integrados:** el resultado aprobado crea la iniciativa provisional; ratificar la activa atómicamente; el responsable registra hitos y ofrece tareas; sólo la aceptación explícita asigna; rechazo/reasignación usan motivos cerrados sin PII, revisión CAS e idempotencia resistente a pérdida de respuesta. **Siguiente (ADR-0045):** capacidad privada, inicio, bloqueo, ayuda, evidencia, entrega y revisión, sin gamificación tóxica. |
 | **7** | **Consenso tipo Pol.is** | `01-decidim-loomio-polis.md` | Matriz participantes × afirmaciones, **PCA + k-means**, afirmaciones puente con `GIC(c) = ∏ p̂_a(g,c)` (fórmula literal en `:140`). **NO EMPEZADO.** |
 | **8** | **Asistente de acción sistémica** | `03-deliberativa-sistemas-antipatrones.md` §3.1 | Las **27 preguntas literales** del formulario de teoría del cambio **ya están redactadas** (`:85-125`), con la frase de cierre generada. Sólo dos preguntas son obligatorias (1 y 11). **NO EMPEZADO.** |
-| **9** | **Tests propios de `packages/contracts`** | — | **COMPLETADO en ADR-0043:** 6 pruebas de esquemas. Ampliarlos con cada contrato nuevo. |
+| **9** | **Tests propios de `packages/contracts`** | — | **COMPLETADO y mantenido:** 16 pruebas de esquemas y conversión temporal. Ampliarlos con cada contrato nuevo. |
 | **10** | **Decidir qué se hace con `checkpoint.firm`** | `0001_governance_ledger.sql:210` | Es **una columna que no puede ser verdad**: (a) es redundante con el quórum calculado sobre los recibos, (b) **puede contradecirlo en silencio**, y (c) el rol `koinonia_app` sólo tiene `SELECT, INSERT` sobre `governance.checkpoint` (`0003_roles_and_grants.sql:43`), así que **nunca puede ponerse a `true`**. Lo autoritativo es el evento **`AnclajeEstadoPublicado`** (`packages/anchor/src/events.ts:25`). Decisión pendiente: eliminarla o documentarla como no autoritativa. |
 | **11** | **Mutation testing con Stryker** | `TESTING.md` §10 | Umbrales **definidos**, **nunca ejecutado**. Nota de la propia spec: en `contracts` casi todo son tipos, que Stryker no muta. |
 | **12** | **WebKit / Safari móvil** | §2.4 de este documento | ⚠ **El consejo de Playwright (`apt-get install libicu74 …`) no aplica en esta máquina**: es **CachyOS/Arch**, sin `apt-get`, y `sudo` pide contraseña. Salidas reales: **(a)** correrlo en **CI**, donde `playwright install --with-deps` ya está configurado (`.github/workflows/ci.yml:111`); **(b)** un contenedor Ubuntu; **(c)** en Arch, los equivalentes son `icu`/`libxml2`/`flite`/`libmanette`, pero harían falta las versiones **antiguas** (ICU **74**, `libxml2.so.2`) que Arch ya no distribuye — probablemente vía AUR. **La opción (a) es la sensata.** |
@@ -423,6 +428,11 @@ Se pagaron en esta sesión. No son preferencias de estilo.
 |---|---|
 | `codex/gpt-5.6-sol`, `codex/gpt-5.6-terra` | **`invalid ID token format`** — es la **autenticación del CLI de Codex**, que está rota. **Hay que re-autenticar el CLI.** |
 | `gemini/pro`, `gemini/flash`, `minimax/MiniMax-M3` | **`MCP error -32001: Request timed out`** en todo lo que no sea trivial. |
+
+**Actualización durante ADR-0044:** en el runtime actual `delegar_a_cloud` y el MCP
+`cloud-offload` ni siquiera aparecen en el catálogo de herramientas. Se hicieron **cero llamadas** a
+MiniMax o Gemini; no se atribuye a esos modelos ningún resultado de esta ronda. Es un fallo de
+transporte distinto de los timeouts históricos de la tabla.
 
 **Dato empírico del umbral.** La **única** llamada que completó fue a `minimax/MiniMax-M3` con una
 salida de **~15 líneas** (crear un esqueleto de directorios). **Todo lo que pedía ≥600 palabras de
@@ -473,15 +483,15 @@ navegadores**, quedó **sin usar por transporte, no por criterio**.
    KOINONIA_REQUIRE_DOCKER=1 pnpm test
    ```
 
-   **Confirmar `Tests 646 passed (646)` en `47` ficheros.** Si no da 646 en verde, **el primer
+   **Confirmar `Tests 696 passed (696)` en `49` ficheros.** Si no da 696 en verde, **el primer
    trabajo es averiguar por qué**, no seguir adelante. La variable `KOINONIA_REQUIRE_DOCKER=1` es
    obligatoria: sin ella, la ausencia de Docker se convierte en una suite saltada y en un verde que
    no probó nada.
 
-4. **Sólo entonces**, continuar la tarea 6 de §7: `DecisionRatified → InitiativeActivated → hito →
-   tarea ofrecida → aceptación/rechazo`, con autorización horizontal en el dominio y commit atómico
-   para ratificación/activación. El análisis read-only ya confirmó que la máquina de estados de
-   decisión contiene `DecisionRatified`; falta exponer la orden y extender el agregado de iniciativa.
+4. **Sólo entonces**, continuar la tarea 6 de §7 con ADR-0045: capacidad privada y máquina
+   `aceptada → en curso → bloqueada/en apoyo → entregada → cambios/completada`. Mantener fuera del
+   ledger capacidad exacta, razones y evidencia crudas; usar commitments con nonce y CAS para cada
+   transición. No cerrar automáticamente hitos ni declarar éxito porque terminaron las tareas.
 
 Antes de delegar cualquier cosa: leer `docs/MODEL_CONTEXT.md` §1 —los **siete campos** obligatorios de
 toda delegación— y §8 de este documento.
@@ -503,10 +513,10 @@ repositorio** y aquí figuran ya corregidos. Esta tabla conserva la comparación
 | 5 | WebKit: instalar «`libicu74 libxml2 libflite1 libmanette-0.2-0`» | Son los **nombres Debian** que sugiere Playwright, **no instalables aquí**: el sistema es **CachyOS/Arch**, sin `apt-get` (`--with-deps` aborta con `spawn apt-get ENOENT`) y `sudo` pide contraseña | `/etc/os-release`; `ldd` sobre `webkit-2336` da los sonames reales (§2.4). Salida sensata: **CI**. |
 | 6 | `packages/domain`: «**40 propiedades** fast-check» | **44** `fc.property` | El 40 procede de `MODEL_CONTEXT.md` §3, escrito cuando `domain` tenía 229 pruebas (hoy 255). La semilla `30_000_821` **sí** es exacta. |
 
-**Estado vigente tras ADR-0043:** rama `main`; commit funcional `5e93f44`; **646 tests en 47
-ficheros**, incluidos **122** contra PostgreSQL 16 real; desglose
-(**108 / 279 / 80 / 33 / 6 / 18 + 122**); **43 ADR + README**; migraciones **0001–0006** sin una
-migración nueva; **31 escenarios** E2E y 93 ejecuciones verdes en los tres proyectos que arrancan;
-**50** propiedades `fc.property`/`fc.asyncProperty`; **14** páginas Next más el proxy; licencia
+**Estado vigente tras ADR-0044:** rama `main`; commit funcional `2eea322`; **696 tests en 49
+ficheros**, incluidos **134** contra PostgreSQL 16 real; desglose
+(**108 / 307 / 80 / 33 / 16 / 18 + 134**); **44 ADR + README**; migraciones **0001–0007**; **39
+escenarios** E2E verdes en Chromium y los ocho nuevos verdes también en Firefox y Chrome móvil;
+**80** llamadas `fc.property`/`fc.asyncProperty`; **14** páginas Next más el proxy; licencia
 **AGPL-3.0-or-later**. Siguen vigentes la compuerta C6, las 27 preguntas, la fórmula GIC y las cinco
 métricas definidas.

@@ -218,3 +218,28 @@ mezcla válida de borrador/configuración. Para transacciones políticas multiag
 no sustituye una tarea explícita de «ocupá la reserva, fuerza el segundo append a fallar y demuestra el
 rollback». La segunda revisión añadió otra regla: una clave de idempotencia no identifica el contenido;
 el replay sólo es seguro si el lote completo coincide con lo ya sellado.
+
+## 7. Registro de ruteo — ADR-0044, activación y consentimiento de tareas
+
+Sesión del 2026-08-21. El runtime no expuso contadores de tokens por subagente. Tampoco registró
+`delegar_a_cloud`, `cloud-offload`, MiniMax ni Gemini como herramientas invocables: se hicieron cero
+llamadas externas y no se atribuye a esos proveedores ningún resultado.
+
+| TASK | TIPO | MODELO | TOKENS | RESULTADO | TESTS | REINTENTOS | ESCALAMIENTO |
+|---|---|---|---:|---|---|---:|---|
+| Ratificación/activación, hitos y tareas en dominio | implementación crítica | Codex nativo | n/d | Entregado | unitarias + propiedades + logs adversariales | 0 | — |
+| Atomicidad multiagregado, `request_scope`, API y PostgreSQL | implementación crítica | Codex nativo | n/d | Entregado y reparado tras revisión | 134 integraciones totales; carreras, replay, ABA y corrupción | 1 | Reabierto por reloj doble y replay sin reautorizar |
+| Contratos y frontera temporal Colombia | contratos | Codex nativo | n/d | Entregado | 16 pruebas de contratos | 0 | — |
+| UX de iniciativa y consentimiento | UI | Codex nativo | n/d | Entregado y corregido tras QA | Playwright + axe + teclado | 1 | Reabierto por idempotencia cliente y aceptación predeterminada |
+| Revisión UI independiente | adversarial read-only | Codex nativo | n/d | 2 P1 + 5 P2 + 1 P3; segunda revisión sin bloqueantes | Chromium y Chrome móvil focales | 0 | Todos los P1/P2 corregidos antes del commit |
+| Revisión dominio/API independiente | adversarial read-only | Codex nativo, high | n/d | Halló 1 P2 + 1 P3; segunda revisión sin P0-P3 | 57 focales + typecheck | 0 | Instante único y autorización viva de replay |
+| Cobertura P3 de red/sesión | E2E | Codex nativo | n/d | Entregado | 8/8 Chromium; 16/16 Firefox + Chrome móvil | 1 | Primer locator no incluía los dos puntos visibles; se corrigió semánticamente |
+| Alcance de ADR-0045 | exploración read-only | Codex nativo | n/d | Entregado | — | 0 | Detectó texto libre sensible antes de cerrar ADR-0044 |
+| QA exploratorio MiniMax | exploración | MiniMax solicitado | n/d | **No ejecutado:** transporte ausente | — | 0 | Se usaron revisores nativos; no se fingió proveedor |
+
+**Aprendizajes de ruteo.** La revisión separada volvió a cambiar el resultado: 695 pruebas verdes no
+detectaban que dos lecturas del reloj podían atribuir una ratificación después del retiro ni que una
+clave idempotente conservaba de hecho un permiso revocado. Para comandos políticos, el replay debe
+revalidar no sólo contenido y actor histórico, sino también la capacidad viva si la respuesta vuelve
+a exponerse. En UI móvil, la clave de idempotencia pertenece a la intención del usuario y sobrevive a
+una respuesta perdida o a un 401 mientras la página siga abierta.
