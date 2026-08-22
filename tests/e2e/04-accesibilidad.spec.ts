@@ -207,6 +207,11 @@ test('Iniciativa: detalle y criterios de evaluación', async ({ page }) => {
   await revisar(page, `/iniciativas/${iniciativaId}`);
 });
 
+test('Mis tareas: capacidad y trabajo propio', async ({ page }) => {
+  await ponerSesionEnNavegador(page, sara);
+  await revisar(page, '/mis-tareas');
+});
+
 test('Resultado: traza y vínculo con su iniciativa', async ({ page }) => {
   await revisar(page, `/decisiones/${resultadoDecisionId}/resultado`);
 });

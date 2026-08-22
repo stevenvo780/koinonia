@@ -9,25 +9,40 @@ import { describe, expect, it } from 'vitest';
 
 import {
   acceptTaskBy,
+  acceptTaskReviewBy,
+  addTaskEvidenceBy,
+  admitTaskCapacity,
   activateInitiative,
   type Actor,
+  blockTaskBy,
   circleId,
   createInitiative,
   decisionId,
+  deliverTaskBy,
   executionPlanHash,
   hash,
   initiativeId,
+  type InitiativeByCommandMeta,
+  type InitiativeLog,
   instant,
   milestoneId,
   offerTaskBy,
   planMilestoneBy,
+  prepareTaskAcceptanceBy,
   proposalId,
   proposalVersionHash,
   rejectTaskBy,
   reofferTaskBy,
   replayInitiative,
+  requestTaskChangesBy,
+  requestTaskHelpBy,
   requestTaskReassignmentBy,
+  resumeTaskBy,
+  startTaskBy,
+  type TaskAccepted,
   taskId,
+  type TaskId,
+  toPrivateMaterialCommitment,
   type ExecutionPlan,
   validateExecutionPlan,
   verifyInitiativeLog,
@@ -44,6 +59,7 @@ import {
 } from '../arbitraries.js';
 
 const CREATED_AT = instant(T0 + 10_000);
+const commitment = (digit: string) => toPrivateMaterialCommitment(digit.repeat(64));
 
 async function offeredExecution(seed: number) {
   const circle = circleIdAt(1);
@@ -125,6 +141,100 @@ async function offeredExecution(seed: number) {
     },
   );
   return { baseEvent, log, milestone, owner, recipient, replacement, reviewAt, task };
+}
+
+function taskRevision(log: InitiativeLog, id: TaskId): number {
+  const revision = replayInitiative(log).tasks.find((task) => task.taskId === id)?.lastSeq;
+  if (revision === undefined) throw new Error('el escenario generado exige una tarea vigente');
+  return revision;
+}
+
+async function acceptGenerated(
+  log: InitiativeLog,
+  meta: InitiativeByCommandMeta,
+  input: Omit<TaskAccepted, 'type'>,
+) {
+  const candidate = prepareTaskAcceptanceBy(log, meta, input);
+  return acceptTaskBy(
+    log,
+    meta,
+    input,
+    admitTaskCapacity(candidate, {
+      currentLoadMinutes: 0,
+      weeklyCapacityMinutes: 10_080,
+    }),
+  );
+}
+
+async function startedExecution(seed: number) {
+  const scenario = await offeredExecution(seed);
+  const offerId = eventIdAt(scenario.baseEvent + 3);
+  let log = await acceptGenerated(
+    scenario.log,
+    {
+      eventId: eventIdAt(scenario.baseEvent + 4),
+      at: instant(CREATED_AT + 4),
+      by: scenario.recipient,
+    },
+    {
+      taskId: scenario.task,
+      offerId,
+      expectedTaskSeq: taskRevision(scenario.log, scenario.task),
+    },
+  );
+  log = await startTaskBy(
+    log,
+    {
+      eventId: eventIdAt(scenario.baseEvent + 5),
+      at: instant(CREATED_AT + 5),
+      by: scenario.recipient,
+    },
+    {
+      taskId: scenario.task,
+      offerId,
+      expectedTaskSeq: taskRevision(log, scenario.task),
+    },
+  );
+  return { ...scenario, log, offerId };
+}
+
+async function deliveredExecution(seed: number) {
+  const scenario = await startedExecution(seed);
+  const evidenceId = eventIdAt(scenario.baseEvent + 6);
+  let log = await addTaskEvidenceBy(
+    scenario.log,
+    {
+      eventId: evidenceId,
+      at: instant(CREATED_AT + 6),
+      by: scenario.recipient,
+    },
+    {
+      taskId: scenario.task,
+      offerId: scenario.offerId,
+      expectedTaskSeq: taskRevision(scenario.log, scenario.task),
+      objectCommitment: commitment('d'),
+      kindCode: 'documento',
+      sizeClass: 'mediana',
+      visibility: 'restricted',
+    },
+  );
+  const deliveryId = eventIdAt(scenario.baseEvent + 7);
+  log = await deliverTaskBy(
+    log,
+    {
+      eventId: deliveryId,
+      at: instant(CREATED_AT + 7),
+      by: scenario.recipient,
+    },
+    {
+      taskId: scenario.task,
+      offerId: scenario.offerId,
+      expectedTaskSeq: taskRevision(log, scenario.task),
+      evidenceIds: [evidenceId],
+      summaryCommitment: commitment('e'),
+    },
+  );
+  return { ...scenario, log, evidenceId, deliveryId };
 }
 
 function planFor(seed: number, criteria = 1): ExecutionPlan {
@@ -337,7 +447,7 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
           } as const;
           const next =
             choice === 'accept'
-              ? await acceptTaskBy(scenario.log, meta, {
+              ? await acceptGenerated(scenario.log, meta, {
                   taskId: scenario.task,
                   offerId,
                   expectedTaskSeq,
@@ -372,7 +482,7 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
         const scenario = await offeredExecution(seed);
         const offerId = eventIdAt(scenario.baseEvent + 3);
         const revision = replayInitiative(scenario.log).tasks[0]!.lastSeq;
-        const accepted = await acceptTaskBy(
+        const accepted = await acceptGenerated(
           scenario.log,
           {
             eventId: eventIdAt(scenario.baseEvent + 4),
@@ -459,7 +569,7 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
         const before = replayInitiative(log);
 
         await expect(
-          acceptTaskBy(
+          acceptGenerated(
             log,
             {
               eventId: eventIdAt(scenario.baseEvent + 6),
@@ -529,6 +639,357 @@ describe('invariantes del plan de ejecución y la iniciativa', () => {
         },
       ),
       runs(60),
+    );
+  });
+
+  it('todo recorrido activo generado conserva un solo trabajo vigente y termina verificable', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('block', 'help', 'block-help'),
+        fc.constantFrom('dependencia', 'recurso', 'respuesta-externa', 'alcance', 'razon-privada'),
+        fc.constantFrom(
+          'desbloqueo',
+          'revision',
+          'trabajo-compartido',
+          'orientacion',
+          'razon-privada',
+        ),
+        fc.constantFrom('documento', 'imagen', 'tabla', 'texto'),
+        fc.constantFrom('pequena', 'mediana', 'grande'),
+        fc.constantFrom('public', 'restricted'),
+        fc.boolean(),
+        fc.constantFrom('verificada', 'sin-verificar', 'no-aplica'),
+        async (
+          seed,
+          pausePath,
+          blockCategory,
+          helpCategory,
+          kindCode,
+          sizeClass,
+          visibility,
+          needsChanges,
+          outcomeCriterionEvidence,
+        ) => {
+          const scenario = await startedExecution(seed);
+          let log = scenario.log;
+          let nextEvent = scenario.baseEvent + 6;
+          const command = () => ({
+            taskId: scenario.task,
+            offerId: scenario.offerId,
+            expectedTaskSeq: taskRevision(log, scenario.task),
+          });
+          const meta = () => ({
+            eventId: eventIdAt(nextEvent++),
+            at: instant(CREATED_AT + nextEvent),
+            by: scenario.recipient,
+          });
+
+          if (pausePath === 'block' || pausePath === 'block-help') {
+            log = await blockTaskBy(log, meta(), {
+              ...command(),
+              category: blockCategory,
+              privateDetailCommitment: commitment('1'),
+            });
+          }
+          if (pausePath === 'help' || pausePath === 'block-help') {
+            log = await requestTaskHelpBy(log, meta(), {
+              ...command(),
+              category: helpCategory,
+              privateDetailCommitment: commitment('2'),
+            });
+          }
+
+          const paused = replayInitiative(log).tasks[0]!;
+          const pauseId = paused.currentPause?.pauseId;
+          expect(pauseId).toBeDefined();
+          expect(paused.pauses.filter((pause) => pause.endedAt === undefined)).toHaveLength(1);
+          expect(paused.currentDeliveryId).toBeUndefined();
+          log = await resumeTaskBy(log, meta(), { ...command(), pauseId: pauseId! });
+
+          const evidenceId = eventIdAt(nextEvent);
+          log = await addTaskEvidenceBy(log, meta(), {
+            ...command(),
+            objectCommitment: commitment('3'),
+            kindCode,
+            sizeClass,
+            visibility,
+          });
+          const evidencePayload = log.at(-1)!.payload;
+          expect(Object.keys(evidencePayload).sort()).toEqual(
+            [
+              'expectedTaskSeq',
+              'kindCode',
+              'objectCommitment',
+              'offerId',
+              'sizeClass',
+              'taskId',
+              'type',
+              'visibility',
+            ].sort(),
+          );
+
+          let deliveryId = eventIdAt(nextEvent);
+          log = await deliverTaskBy(log, meta(), {
+            ...command(),
+            evidenceIds: [evidenceId],
+            summaryCommitment: commitment('4'),
+          });
+          expect(replayInitiative(log).tasks[0]).toMatchObject({
+            status: 'entregada',
+            currentDeliveryId: deliveryId,
+          });
+
+          if (needsChanges) {
+            log = await requestTaskChangesBy(
+              log,
+              {
+                eventId: eventIdAt(nextEvent++),
+                at: instant(CREATED_AT + nextEvent),
+                by: scenario.owner,
+              },
+              {
+                taskId: scenario.task,
+                deliveryId,
+                expectedTaskSeq: taskRevision(log, scenario.task),
+                reason: 'evidencia-insuficiente',
+                privateDetailCommitment: commitment('5'),
+              },
+            );
+            const secondEvidenceId = eventIdAt(nextEvent);
+            log = await addTaskEvidenceBy(log, meta(), {
+              ...command(),
+              objectCommitment: commitment('6'),
+              kindCode,
+              sizeClass,
+              visibility,
+            });
+            deliveryId = eventIdAt(nextEvent);
+            log = await deliverTaskBy(log, meta(), {
+              ...command(),
+              evidenceIds: [evidenceId, secondEvidenceId],
+              summaryCommitment: commitment('7'),
+            });
+          }
+
+          log = await acceptTaskReviewBy(
+            log,
+            {
+              eventId: eventIdAt(nextEvent++),
+              at: instant(CREATED_AT + nextEvent),
+              by: scenario.owner,
+            },
+            {
+              taskId: scenario.task,
+              deliveryId,
+              expectedTaskSeq: taskRevision(log, scenario.task),
+              outcomeCriterionEvidence,
+            },
+          );
+
+          const verified = await verifyInitiativeLog(log);
+          const task = verified.tasks[0]!;
+          expect(task.status).toBe('completada');
+          expect(task.currentPause).toBeUndefined();
+          expect(task.currentDeliveryId).toBeUndefined();
+          expect(task.pauses.filter((pause) => pause.endedAt === undefined)).toHaveLength(0);
+          expect(task.deliveries.filter((delivery) => delivery.review === undefined)).toHaveLength(
+            0,
+          );
+          expect(replayInitiative([...log])).toEqual(verified);
+        },
+      ),
+      runs(50),
+    );
+  });
+
+  it('una revisión CAS obsoleta generada nunca agrega un acto de trabajo', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('block', 'help', 'evidence', 'deliver'),
+        async (seed, action) => {
+          const scenario = await startedExecution(seed);
+          const before = replayInitiative(scenario.log);
+          const staleRevision = taskRevision(scenario.log, scenario.task) - 1;
+          const meta = {
+            eventId: eventIdAt(scenario.baseEvent + 6),
+            at: instant(CREATED_AT + 6),
+            by: scenario.recipient,
+          } as const;
+          const cas = {
+            taskId: scenario.task,
+            offerId: scenario.offerId,
+            expectedTaskSeq: staleRevision,
+          } as const;
+          const attempt =
+            action === 'block'
+              ? blockTaskBy(scenario.log, meta, { ...cas, category: 'dependencia' })
+              : action === 'help'
+                ? requestTaskHelpBy(scenario.log, meta, { ...cas, category: 'orientacion' })
+                : action === 'evidence'
+                  ? addTaskEvidenceBy(scenario.log, meta, {
+                      ...cas,
+                      objectCommitment: commitment('8'),
+                      kindCode: 'documento',
+                      sizeClass: 'pequena',
+                      visibility: 'restricted',
+                    })
+                  : deliverTaskBy(scenario.log, meta, {
+                      ...cas,
+                      evidenceIds: [eventIdAt(scenario.baseEvent + 10)],
+                      summaryCommitment: commitment('9'),
+                    });
+
+          await expect(attempt).rejects.toMatchObject({ code: 'STALE_TASK_REVISION' });
+          expect(replayInitiative(scenario.log)).toEqual(before);
+        },
+      ),
+      runs(80),
+    );
+  });
+
+  it('una revisión o entrega obsoleta generada nunca completa ni reabre la tarea', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('accept', 'changes'),
+        async (seed, review) => {
+          const scenario = await deliveredExecution(seed);
+          const before = replayInitiative(scenario.log);
+          const staleRevision = taskRevision(scenario.log, scenario.task) - 1;
+          const meta = {
+            eventId: eventIdAt(scenario.baseEvent + 8),
+            at: instant(CREATED_AT + 8),
+            by: scenario.owner,
+          } as const;
+          const attempt =
+            review === 'accept'
+              ? acceptTaskReviewBy(scenario.log, meta, {
+                  taskId: scenario.task,
+                  deliveryId: scenario.deliveryId,
+                  expectedTaskSeq: staleRevision,
+                  outcomeCriterionEvidence: 'verificada',
+                })
+              : requestTaskChangesBy(scenario.log, meta, {
+                  taskId: scenario.task,
+                  deliveryId: scenario.deliveryId,
+                  expectedTaskSeq: staleRevision,
+                  reason: 'alcance-incompleto',
+                });
+
+          await expect(attempt).rejects.toMatchObject({ code: 'STALE_TASK_REVISION' });
+          await expect(
+            acceptTaskReviewBy(scenario.log, meta, {
+              taskId: scenario.task,
+              deliveryId: eventIdAt(scenario.baseEvent + 19),
+              expectedTaskSeq: taskRevision(scenario.log, scenario.task),
+              outcomeCriterionEvidence: 'verificada',
+            }),
+          ).rejects.toMatchObject({ code: 'STALE_TASK_DELIVERY' });
+          expect(replayInitiative(scenario.log)).toEqual(before);
+        },
+      ),
+      runs(60),
+    );
+  });
+
+  it('block(X) -> resume -> block(X) siempre rechaza el ABA del pauseId/eventId', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 2_000 }),
+        fc.constantFrom('dependencia', 'recurso', 'respuesta-externa', 'alcance', 'razon-privada'),
+        async (seed, category) => {
+          const scenario = await startedExecution(seed);
+          const pauseId = eventIdAt(scenario.baseEvent + 6);
+          let log = await blockTaskBy(
+            scenario.log,
+            {
+              eventId: pauseId,
+              at: instant(CREATED_AT + 6),
+              by: scenario.recipient,
+            },
+            {
+              taskId: scenario.task,
+              offerId: scenario.offerId,
+              expectedTaskSeq: taskRevision(scenario.log, scenario.task),
+              category,
+            },
+          );
+          log = await resumeTaskBy(
+            log,
+            {
+              eventId: eventIdAt(scenario.baseEvent + 7),
+              at: instant(CREATED_AT + 7),
+              by: scenario.recipient,
+            },
+            {
+              taskId: scenario.task,
+              offerId: scenario.offerId,
+              expectedTaskSeq: taskRevision(log, scenario.task),
+              pauseId,
+            },
+          );
+          const before = replayInitiative(log);
+
+          await expect(
+            blockTaskBy(
+              log,
+              {
+                eventId: pauseId,
+                at: instant(CREATED_AT + 8),
+                by: scenario.recipient,
+              },
+              {
+                taskId: scenario.task,
+                offerId: scenario.offerId,
+                expectedTaskSeq: taskRevision(log, scenario.task),
+                category,
+              },
+            ),
+          ).rejects.toMatchObject({ code: 'DUPLICATE_INITIATIVE_EVENT_ID' });
+          expect(replayInitiative(log)).toEqual(before);
+        },
+      ),
+      runs(80),
+    );
+  });
+
+  it('la admisión pura existe exactamente cuando carga más esfuerzo cabe en la capacidad', async () => {
+    const scenario = await offeredExecution(900);
+    const meta = {
+      eventId: eventIdAt(scenario.baseEvent + 4),
+      at: instant(CREATED_AT + 4),
+      by: scenario.recipient,
+    } as const;
+    const candidate = prepareTaskAcceptanceBy(scenario.log, meta, {
+      taskId: scenario.task,
+      offerId: eventIdAt(scenario.baseEvent + 3),
+      expectedTaskSeq: taskRevision(scenario.log, scenario.task),
+    });
+
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 20_000 }),
+        fc.integer({ min: 0, max: 10_080 }),
+        (currentLoadMinutes, weeklyCapacityMinutes) => {
+          const capacity = { currentLoadMinutes, weeklyCapacityMinutes } as const;
+          if (currentLoadMinutes + candidate.effortMinutes <= weeklyCapacityMinutes) {
+            expect(admitTaskCapacity(candidate, capacity)).toMatchObject({
+              memberId: candidate.memberId,
+              taskId: candidate.taskId,
+              offerId: candidate.offerId,
+              effortMinutes: candidate.effortMinutes,
+              checkedAt: candidate.checkedAt,
+            });
+          } else {
+            expect(() => admitTaskCapacity(candidate, capacity)).toThrow(
+              expect.objectContaining({ code: 'TASK_CAPACITY_EXCEEDED' }),
+            );
+          }
+        },
+      ),
+      runs(200),
     );
   });
 

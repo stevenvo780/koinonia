@@ -134,6 +134,29 @@ describe('un export legítimo', () => {
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+describe('ATAQUE 0 — identidades globales repetidas con cadenas y anclajes válidos', () => {
+  it('las detecta aunque el export sea criptográficamente coherente', async () => {
+    const duplicatedId = 'd'.repeat(32);
+    const duplicateLedger = await anclar(
+      await construirLedger({ eventIdA: duplicatedId, eventIdB: duplicatedId }),
+    );
+    const resultado = await verificarExport({
+      source: memorySource('koinonia-export-duplicado', await renderExport(duplicateLedger)),
+      confianza: duplicateLedger.confianza,
+      ahora: AHORA,
+    });
+
+    expect(codigos(resultado)).toContain('IDENTIDAD_DE_EVENTO_DUPLICADA');
+    expect(resultado.salida).toBe(SALIDA.integridadInterna);
+    expect(resultado.anclaje?.verdict.firm).toBe(true);
+    expect(resultado.pasos.find((paso) => paso.nombre === 'identidades de eventos')?.ok).toBe(
+      false,
+    );
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
 describe('ATAQUE 1 — un byte alterado en el contenido de un registro', () => {
   it('se detecta como REGISTRO_ALTERADO, con el registro exacto', async () => {
     const ledger = clonar(ledgerLimpio);

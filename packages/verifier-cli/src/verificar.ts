@@ -307,6 +307,41 @@ export async function verificarExport(
       'delata es que el sistema anota cuántos números llegó a repartir.',
   );
 
+  // `eventId` es una identidad de dominio global, no una propiedad local del expediente. No se
+  // confía en que el servidor conservara su índice SQL: el paquete permite recomprobarla. Los
+  // eventos técnicos que legítimamente no tienen la clave quedan fuera.
+  const primeraAparicion = new Map<string, ExportedEvent>();
+  let identidadesDuplicadas = 0;
+  for (const registro of eventos) {
+    const candidate = registro.event.payload['eventId'];
+    if (typeof candidate !== 'string' || !/^[0-9a-f]{32}$/u.test(candidate)) continue;
+    const first = primeraAparicion.get(candidate);
+    if (first === undefined) {
+      primeraAparicion.set(candidate, registro);
+      continue;
+    }
+    identidadesDuplicadas++;
+    anota(
+      'IDENTIDAD_DE_EVENTO_DUPLICADA',
+      `eventId ${candidate} aparece primero en el registro ${String(first.leafIndex)} y vuelve a ` +
+        `aparecer en el ${String(registro.leafIndex)}`,
+      {
+        agregado: registro.event.aggregateId,
+        leafIndex: registro.leafIndex,
+        seq: registro.event.seq,
+        esperado: `único; primera aparición ${String(first.leafIndex)}`,
+        obtenido: `repetido en ${String(registro.leafIndex)}`,
+      },
+    );
+  }
+  paso(
+    'identidades de eventos',
+    identidadesDuplicadas === 0,
+    identidadesDuplicadas === 0
+      ? `${String(primeraAparicion.size)} identidades de dominio son globalmente únicas`
+      : `${String(identidadesDuplicadas)} apariciones repiten una identidad de dominio`,
+  );
+
   const indices = eventos.map((registro) => registro.leafIndex);
   const ausentes: number[] = [];
   const ultimo = indices.length === 0 ? -1 : Math.max(...indices);

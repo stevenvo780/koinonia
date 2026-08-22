@@ -178,11 +178,36 @@ un solo instante para comprobar matrícula y fechar ambas mitades;
 exigen oferta y revisión vigentes; CAS por revisión de tarea además de transacción serializada; actor y
 destinatario se revalidan contra una fila de membresía bloqueada, no sólo contra la sesión; motivos
 cerrados sin texto libre en el ledger; clave de idempotencia estable tras perder la respuesta;
-reautorización viva incluso en replay; administrador técnico sin permisos (ADR-0044) → **Después**
-capacidad colectiva y reasignación por
-revisión del círculo → **Prueba** tests de dominio de oferta obsoleta/ABA, integración de
+reautorización viva incluso en replay; administrador técnico sin permisos (ADR-0044); capacidad
+privada y seguimiento con revisión CAS (ADR-0045) → **Después** reasignación por revisión colectiva
+del círculo → **Prueba** tests de dominio de oferta obsoleta/ABA, integración de
 aceptar-vs-rechazar-vs-reasignar concurrentes, retiro concurrente, ausencia de texto personal,
 rollback del commit compuesto y E2E de aceptación explícita con reintento tras respuesta perdida.
+
+**T-29 · Sustitución de evidencia, fuga de capacidad o seguimiento punitivo** `A2` `A3` `A4` `A7`
+Un administrador reemplaza una evidencia restringida conservando su referencia; otra persona usa un
+ID manipulable para leerla; el responsable infiere salud o empleo a partir de la capacidad o del
+tamaño/nombre del archivo; dos aceptaciones concurrentes exceden el límite; o un bloqueo temprano se
+convierte en una métrica individual de incumplimiento → **Precond.** material sin compromiso
+vinculante, endpoint por `memberId`, capacidad o metadata en respuestas compartidas, doble escritura
+sin cerrojo, o proyección individual pública → **Impacto** alto: memoria de ejecución falsa, fuga de
+datos sensibles y diseño que castiga pedir ayuda → **Detectab.** alta para sustitución si conserva la
+apertura, baja para lectura/uso punitivo → **MVP** máquina append-only con CAS de oferta, tarea, pausa y
+entrega; categorías cerradas; commitment con nonce y contexto; evidencia restringida sin texto, URL,
+MIME ni tamaño exacto; capacidad AES-256-GCM self-only y sin evento; aceptación atómica con orden
+`ledger → miembro`; ninguna métrica individual ni permiso de aplicación para `ADMIN` (ADR-0045) →
+**Después** S3 con objeto cifrado, URLs cortas, publicación por copia saneada, journal de supresión y
+réplica/custodio fuera de A2 → **Prueba** invariantes de transición, IDOR indistinguible, tamper de
+ciphertext/objeto, doble aceptación sobre el último cupo, aceptar-vs-bajar capacidad y linter de
+payloads privados. El texto cifrado ocupa siempre 131 088 bytes y `/integridad` autentica todas las
+aperturas esperadas y denuncia faltantes/huérfanas con una salida sanitizada; quitar el índice de
+`eventId` tampoco oculta duplicados al verificador semántico del servidor ni al CLI independiente.
+Una supresión normal exige primero `PIIErasureRequested` desde una sesión propia fresca; el ejecutor
+recibe sólo ese agregado, deriva al sujeto, autentica el conjunto, borra por cascada y registra
+`PIIErased` enlazando ID y hash de la autorización. La auditoría sigue roja ante `DELETE` directo,
+ante solicitud pendiente borrada y ante `DELETE` más tombstone exacto sin solicitud propia. Esto
+evita soberanía política del técnico dentro del modelo de sesión; una app/root totalmente
+comprometida aún puede fabricar ambos appends y requiere firma cliente o custodio externo posterior.
 
 ### 3.4 Privacidad (Information Disclosure)
 
@@ -384,6 +409,10 @@ Roles: **ANÓN** · **MIEM** (miembro del padrón) · **FACIL** (facilitación d
 | Alta/baja de miembro | padrón congelado | ✗ | ✗ | **✗ (T-18)** | ✗ | ✗ |
 | Cambiar rol | cualquiera | ✗ | ✗ | ✗ | ✓ **como evento del ledger** | ✗ |
 | Leer PII Vault | cualquiera | ✗ | **sólo el propio registro** | ✗ | acceso técnico, no de aplicación | ✗ |
+| Ver/cambiar capacidad | cualquiera | ✗ | **sólo la propia** | como miembro, sólo la propia | ✗ | ✗ |
+| Comenzar, pausar, pedir ayuda, reanudar o entregar tarea | compromiso vigente | ✗ | **sólo assignee** | como miembro, sólo su tarea | ✗ | ✗ |
+| Revisar entrega de tarea | entrega pendiente | ✗ | sólo responsable del plan | sólo si es responsable del plan | ✗ | ✗ |
+| Leer evidencia restringida | cualquiera | ✗ | aportante/entregante o responsable inicial, con membresía vigente | sólo si es uno de esos dos lectores | ✗ | ✗ |
 | Ejecutar supresión | cualquiera | ✗ | ✓ sobre sí mismo | ✗ | ejecuta, no decide | ✗ |
 | Verificar checkpoints | cualquiera | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Firmar acta de verificación | publicado | ✗ | ✗ | ✗ | **✗** | ✓ |

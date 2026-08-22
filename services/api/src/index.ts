@@ -206,9 +206,57 @@ export {
   cryptoRandom,
   DOMINIO_INSTITUCIONAL,
   MemoryMailer,
+  NodeAes256GcmVaultCrypto,
   systemClock,
   udeaIdentityAdapter,
+  unavailableVaultCrypto,
+  VaultCryptoError,
+  VaultUnavailableError,
 } from './http/adapters.js';
+
+export {
+  CapacityServiceUnavailableError,
+  ensureSubjectDataKeyWithin,
+  lockVaultSubjectForReadWithin,
+  lockVaultSubjectWithin,
+  readOwnCapacity,
+  readOwnCapacityWithin,
+  readSubjectDataKeyWithin,
+  StaleCapacityRevisionError,
+  updateOwnCapacity,
+  updateOwnCapacityWithin,
+} from './http/capacity.js';
+
+export {
+  createRestrictedTextMaterialWithin,
+  InvalidPrivateMaterialInputError,
+  openRestrictedTextMaterialWithin,
+  PII_ERASURE_AGGREGATE_TYPE,
+  PII_ERASURE_AUTHORIZATION_KIND,
+  PII_ERASURE_EXECUTED_EVENT,
+  PII_ERASURE_LEGAL_BASES,
+  PII_ERASURE_REQUESTED_EVENT,
+  privateMaterialsForSuppressionWithin,
+  PrivateMaterialSuppressionUnavailableError,
+  PrivateMaterialUnavailableError,
+  unavailablePrivateMaterialVerification,
+  verifyRestrictedPrivateMaterialsWithin,
+  type CreatedRestrictedTextMaterial,
+  type CreateRestrictedTextMaterialInput,
+  type OpenRestrictedTextMaterialInput,
+  type PrivateMaterialFinding,
+  type PrivateMaterialFindingCode,
+  type PrivateMaterialVerification,
+} from './http/private-material-store.js';
+
+export {
+  executeAuthorizedErasure,
+  PrivateErasureAuthorizationUnavailableError,
+  type ErasureRequestReceipt,
+  type ExecuteErasureOptions,
+  type ExecuteErasureResult,
+  type PiiErasureLegalBasis,
+} from './http/private-material-erasure.js';
 
 export {
   CIRCULOS,
@@ -221,8 +269,10 @@ export {
 export {
   allMembers,
   ENLACE_VIGENCIA_MS,
+  ERASURE_FRESH_SESSION_MS,
+  ErasureAlreadyRequestedError,
+  ErasureReauthenticationRequiredError,
   findMember,
-  forgetMember,
   huellasIguales,
   issueMagicLink,
   type MemberRecord,
@@ -249,6 +299,7 @@ export {
 
 export type {
   AuthenticatedMember,
+  CapacityCiphertext,
   ClockPort,
   IdentityClaim,
   IdentityProviderAdapter,
@@ -256,8 +307,15 @@ export type {
   MailerPort,
   OutgoingMail,
   Ports,
+  PrivateMaterialCiphertext,
+  PrivateMaterialPurpose,
   RandomPort,
+  RestrictedTextMaterialOpening,
+  SubjectDataKeyEnvelope,
+  VaultCryptoPort,
 } from './http/ports.js';
+
+export { MAX_RESTRICTED_PRIVATE_TEXT_BYTES } from './http/ports.js';
 
 export {
   ACTOR_ANONIMO,

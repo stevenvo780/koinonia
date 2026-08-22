@@ -99,6 +99,25 @@ export async function apiDirecta(cuenta: Cuenta): Promise<APIRequestContext> {
   });
 }
 
+/** Declara disponibilidad de manera visible en el escenario; entrar no presupone capacidad. */
+export async function declararCapacidad(cuenta: Cuenta, minutosPorSemana = 10_080): Promise<void> {
+  const api = await apiDirecta(cuenta);
+  try {
+    const actual = await api.get('/mi/capacidad');
+    expect(actual.status(), await actual.text()).toBe(200);
+    const body = (await actual.json()) as { declarada: boolean; revision?: number };
+    const guardada = await api.put('/mi/capacidad', {
+      data: {
+        revision: body.declarada ? body.revision : 0,
+        minutosPorSemana,
+      },
+    });
+    expect(guardada.status(), await guardada.text()).toBe(200);
+  } finally {
+    await api.dispose();
+  }
+}
+
 /** Cliente de la API sin sesión: el observador anónimo. */
 export async function apiAnonima(): Promise<APIRequestContext> {
   return request.newContext({ baseURL: entorno().apiUrl });

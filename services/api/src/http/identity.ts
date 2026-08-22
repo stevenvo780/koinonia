@@ -30,13 +30,41 @@ import {
   isRole,
 } from '@koinonia/domain';
 
-import type { PgClient, PgPool } from '../db/client.js';
+import { type PgClient, type PgPool, withTransaction } from '../db/client.js';
+import { appendWithin, lockLedgerWithin, readAppendRequestWithin } from '../ledger/event-store.js';
+import { IdempotencyConflictError } from '../ledger/types.js';
+import {
+  erasureRequestReceipt,
+  type ErasureRequestReceipt,
+  type PiiErasureLegalBasis,
+} from './private-material-erasure.js';
+import {
+  PII_ERASURE_AGGREGATE_TYPE,
+  PII_ERASURE_AUTHORIZATION_KIND,
+  PII_ERASURE_REQUESTED_EVENT,
+} from './private-material-store.js';
 import type { AuthenticatedMember, ClockPort, IdentityClaim, RandomPort } from './ports.js';
 
 /** Cuánto dura un enlace mágico. Se dice en pantalla: los plazos no se ocultan. */
 export const ENLACE_VIGENCIA_MS = 15 * 60 * 1000;
 /** Cuánto dura una sesión. Un semestre no; un día de trabajo sí. */
 export const SESION_VIGENCIA_MS = 12 * 60 * 60 * 1000;
+/** Una supresión irreversible exige que la sesión se haya abierto en los últimos diez minutos. */
+export const ERASURE_FRESH_SESSION_MS = 10 * 60 * 1000;
+
+export class ErasureReauthenticationRequiredError extends Error {
+  constructor() {
+    super('la supresión exige una sesión recién autenticada');
+    this.name = 'ErasureReauthenticationRequiredError';
+  }
+}
+
+export class ErasureAlreadyRequestedError extends Error {
+  constructor() {
+    super('ya existe una solicitud de supresión para este sujeto');
+    this.name = 'ErasureAlreadyRequestedError';
+  }
+}
 
 export function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -304,6 +332,7 @@ export async function openSession(
 }
 
 interface SessionRow extends MemberRow {
+  readonly issued_at: Date;
   readonly expires_at: Date;
 }
 
@@ -315,7 +344,7 @@ export async function resolveSession(
 ): Promise<AuthenticatedMember | undefined> {
   const { rows } = await client.query<SessionRow>(
     `SELECT m.member_id, m.alias, m.roles, m.circles, m.semestre, m.jornada,
-            m.enrolled_at, m.withdrawn_at, s.expires_at
+            m.enrolled_at, m.withdrawn_at, s.issued_at, s.expires_at
        FROM identity.session s
        JOIN identity.member m ON m.member_id = s.member_id
       WHERE s.token_hash = $1
@@ -350,20 +379,126 @@ export async function revokeSession(
   );
 }
 
+export interface RequestOwnErasureOptions {
+  readonly clock: ClockPort;
+  readonly random: RandomPort;
+  readonly requestId: string;
+  readonly legalBasis: PiiErasureLegalBasis;
+  readonly confirmationIrreversible: boolean;
+}
+
+async function resolveFreshErasureSession(
+  client: PgClient,
+  token: string,
+  now: number,
+): Promise<MemberRecord> {
+  const { rows } = await client.query<SessionRow>(
+    `SELECT m.member_id, m.alias, m.roles, m.circles, m.semestre, m.jornada,
+            m.enrolled_at, m.withdrawn_at, s.issued_at, s.expires_at
+       FROM identity.session s
+       JOIN identity.member m ON m.member_id = s.member_id
+      WHERE s.token_hash = $1
+        AND s.revoked_at IS NULL
+        AND s.expires_at > to_timestamp($2::double precision / 1000)
+        AND s.issued_at >= to_timestamp($3::double precision / 1000)
+        AND m.enrolled_at <= to_timestamp($2::double precision / 1000)
+        AND (m.withdrawn_at IS NULL OR m.withdrawn_at > to_timestamp($2::double precision / 1000))
+      FOR SHARE OF m, s`,
+    [sha256Hex(token), now, now - ERASURE_FRESH_SESSION_MS],
+  );
+  const row = rows[0];
+  if (row === undefined) throw new ErasureReauthenticationRequiredError();
+  return toRecord(row);
+}
+
+function checkedOpaqueId(random: RandomPort): string {
+  const value = random.opaqueId();
+  if (!/^[0-9a-f]{32}$/u.test(value)) throw new ErasureReauthenticationRequiredError();
+  return value;
+}
+
 /**
- * Borrado físico de una persona (ADR-0009).
+ * Solicitud autoservicio durable (ADR-0021).
  *
- * Se lleva por delante sus sesiones y sus enlaces, y **no toca ni un evento del historial**: los
- * identificadores opacos siguen ahí, las cadenas de hashes siguen cuadrando y las decisiones que
- * ayudó a tomar siguen siendo verificables. Eso es exactamente lo que la separación física de los
- * dos esquemas hace posible.
+ * No acepta `subjectId`: lo deriva otra vez del token dentro de la transacción y exige una sesión
+ * de menos de diez minutos. El técnico recibirá sólo `erasureId` y derivará el sujeto de seq 0.
  */
-export async function forgetMember(pool: PgPool, id: MemberId): Promise<boolean> {
-  const client = await pool.connect();
-  try {
-    const result = await client.query('DELETE FROM identity.member WHERE member_id = $1', [id]);
-    return (result.rowCount ?? 0) > 0;
-  } finally {
-    client.release();
-  }
+export async function requestOwnErasure(
+  pool: PgPool,
+  sessionToken: string,
+  options: RequestOwnErasureOptions,
+): Promise<ErasureRequestReceipt> {
+  return await withTransaction(pool, async (client) => {
+    await lockLedgerWithin(client);
+    const now = options.clock.now();
+    if (
+      !options.confirmationIrreversible ||
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      !Number.isFinite(new Date(now).getTime())
+    ) {
+      throw new ErasureReauthenticationRequiredError();
+    }
+    const member = await resolveFreshErasureSession(client, sessionToken, now);
+
+    const replay = await readAppendRequestWithin(client, options.requestId, 'public');
+    if (replay !== undefined) {
+      try {
+        if (replay.events.length !== 1) throw new Error('lote divergente');
+        const replayEvent = replay.events[0];
+        if (replayEvent === undefined) throw new Error('lote vacío');
+        const receipt = erasureRequestReceipt(replayEvent, true);
+        if (receipt.subjectId !== member.memberId || receipt.legalBasis !== options.legalBasis) {
+          throw new Error('solicitud divergente');
+        }
+        return receipt;
+      } catch {
+        throw new IdempotencyConflictError(
+          options.requestId,
+          'ya identifica otra acción o una solicitud de otro sujeto',
+        );
+      }
+    }
+
+    const prior = await client.query(
+      `SELECT 1 FROM governance.event
+        WHERE aggregate_type = $1 AND event_type = $2 AND actor = $3
+        LIMIT 1`,
+      [PII_ERASURE_AGGREGATE_TYPE, PII_ERASURE_REQUESTED_EVENT, member.memberId],
+    );
+    if (prior.rows[0] !== undefined) throw new ErasureAlreadyRequestedError();
+
+    const erasureId = checkedOpaqueId(options.random);
+    const requestEventId = checkedOpaqueId(options.random);
+    const claimRef = checkedOpaqueId(options.random);
+    if (new Set([erasureId, requestEventId, claimRef]).size !== 3) {
+      throw new ErasureReauthenticationRequiredError();
+    }
+    const result = await appendWithin(client, {
+      aggregateId: erasureId,
+      aggregateType: PII_ERASURE_AGGREGATE_TYPE,
+      expectedHead: { kind: 'new' },
+      requestId: options.requestId,
+      requestScope: 'public',
+      events: [
+        {
+          eventType: PII_ERASURE_REQUESTED_EVENT,
+          eventVersion: 1,
+          occurredAt: new Date(now).toISOString(),
+          actor: member.memberId,
+          payload: {
+            authorizationKind: PII_ERASURE_AUTHORIZATION_KIND,
+            claimRef,
+            eventId: requestEventId,
+            legalBasis: options.legalBasis,
+            requestedAt: now,
+            subjectId: member.memberId,
+          },
+        },
+      ],
+    });
+    const stored = result.events[0];
+    if (stored === undefined) throw new ErasureReauthenticationRequiredError();
+    return erasureRequestReceipt(stored, false);
+  });
 }

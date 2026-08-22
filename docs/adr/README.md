@@ -4,13 +4,16 @@ Un archivo por decisión, numerado correlativamente y **nunca renumerado**. Una 
 
 **Orden de precedencia normativa**, para resolver conflictos entre documentos:
 
-1. Las **resoluciones del arquitecto** (R1, R2, R3), registradas en [`../research/00-contradicciones-resueltas.md`](../research/00-contradicciones-resueltas.md).
-2. Los **ADR de este directorio**.
-3. `30-decision-engine-spec.md` (contrato de implementación del motor).
-4. `20-normativa-datos-colombia.md` y `21-normativa-udea.md` (marco legal — vinculante en lo que afirmen sobre la ley, no sobre el diseño).
-5. Los documentos de investigación `01`, `02`, `03`, `11`.
+1. [`../GOVERNANCE.md`](../GOVERNANCE.md): legitimidad, competencias y procedimiento.
+2. [`../THREAT_MODEL.md`](../THREAT_MODEL.md): adversarios y pérdidas aceptadas.
+3. Los **ADR de este directorio**. Las resoluciones R1, R2 y R3 ya están promovidas a ADR-0006,
+   ADR-0007 y ADR-0009; su investigación de origen no conserva precedencia separada.
+4. `30-decision-engine-spec.md` (contrato de implementación del motor).
+5. `20-normativa-datos-colombia.md` y `21-normativa-udea.md` (marco legal — vinculante en lo que
+   afirmen sobre la ley, no sobre el diseño).
+6. Los documentos de investigación `01`, `02`, `03`, `11`.
 
-Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0044** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado.
+Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0013–0023** consolidan los ADR propuestos en `11-privacidad-y-voto-secreto.md` (ADR-110 a ADR-125), deduplicados. Los **0024–0042** elevan decisiones arquitectónicas que estaban dispersas en el resto del corpus. Los **0043–0045** fijan los primeros incrementos de ejecución posteriores al corte vertical auditado.
 
 | ADR | Título | Estado | Resumen en una línea |
 |---|---|---|---|
@@ -58,6 +61,7 @@ Los ADR **0001–0012** son las decisiones estructurales del arquitecto. Los **0
 | [0042](0042-esal-estudiantil-como-responsable-del-tratamiento.md) | ESAL estudiantil como Responsable | Propuesto | Una asociación sin ánimo de lucro es la Responsable: es la única base sólida del art. 6 lit. c para tratar datos sensibles. |
 | [0043](0043-plan-de-ejecucion-congelado-e-iniciativa-atomica.md) | Plan congelado e iniciativa atómica | Aceptado | La versión incluye el plan; un resultado aprobado y su iniciativa única se escriben en el mismo commit. |
 | [0044](0044-ratificacion-activa-hitos-y-ofertas-de-tarea.md) | Ratificación, hitos y ofertas de tarea | Aceptado | Ratificar activa atómicamente la iniciativa; una oferta sólo se vuelve asignación al aceptarla. |
+| [0045](0045-seguimiento-capacidad-privada-y-entrega-revisable.md) | Seguimiento, capacidad privada y entrega revisable | Aceptado | Las tareas avanzan con pausas, evidencia y revisión; capacidad y supresión propia quedan privadas, autorizadas y auditables. |
 
 ## Trazabilidad con los ADR propuestos en la investigación
 

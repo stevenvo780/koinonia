@@ -51,7 +51,9 @@ export type LedgerFindingCode =
   /** La caché `aggregate_head` no coincide con la cadena recomputada. */
   | 'head-mismatch'
   /** Una cabeza declarada en `aggregate_head` sin ningún evento detrás. */
-  | 'head-without-events';
+  | 'head-without-events'
+  /** Dos hechos de dominio usan la misma identidad global, aunque se haya quitado el índice SQL. */
+  | 'duplicate-domain-event-id';
 
 export interface LedgerFinding {
   readonly code: LedgerFindingCode;
@@ -176,6 +178,36 @@ export async function verifyLedger(client: PgClient): Promise<LedgerVerification
   }
 
   // ── Capa 1: la espina y su doble vínculo ────────────────────────────────────────────────────
+  // El índice único es una barrera de escritura, no una prueba de integridad: un administrador de
+  // base puede quitarlo antes de insertar dos hechos con la misma identidad. Esta comprobación
+  // semántica se deriva de los payloads y sigue funcionando aunque el índice 0009 no exista. Los
+  // eventos técnicos históricos no llevan `eventId` y quedan deliberadamente fuera.
+  const duplicateEventIds = await client.query<{
+    event_id: string;
+    copies: string;
+    first_leaf: string;
+  }>(
+    `SELECT payload_idx ->> 'eventId' AS event_id,
+            count(*)::text AS copies,
+            min(leaf_index)::text AS first_leaf
+       FROM governance.event
+      WHERE jsonb_typeof(payload_idx -> 'eventId') = 'string'
+        AND (payload_idx ->> 'eventId') ~ '^[0-9a-f]{32}$'
+      GROUP BY payload_idx ->> 'eventId'
+     HAVING count(*) > 1
+      ORDER BY min(leaf_index)`,
+  );
+  for (const row of duplicateEventIds.rows) {
+    findings.push(
+      finding(
+        'duplicate-domain-event-id',
+        `la identidad global ${row.event_id} aparece en ${row.copies} hechos de dominio; ` +
+          'las referencias a ese hecho son ambiguas aunque cada cadena siga cuadrando',
+        { leafIndex: BigInt(row.first_leaf), expected: '1', actual: row.copies },
+      ),
+    );
+  }
+
   const spine = await readAggregateSafely(client, SPINE_AGGREGATE_ID, findings);
   if (spine.length === 0) {
     findings.push(

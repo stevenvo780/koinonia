@@ -1,7 +1,12 @@
 /** ADR-0044: hitos, ofertas y respuestas reales contra Fastify + PostgreSQL. */
 
 import {
+  appendWithin,
+  executeAuthorizedErasure,
   loadInitiativeState,
+  PII_ERASURE_AGGREGATE_TYPE,
+  PII_ERASURE_EXECUTED_EVENT,
+  PII_ERASURE_REQUESTED_EVENT,
   persistInitiativeLogWithin,
   readStream,
   withTransaction,
@@ -18,7 +23,15 @@ import {
 } from '@koinonia/domain';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { apiEnv, type ApiListo, como, entrar, listo, skipNote } from './helpers/api-env.js';
+import {
+  apiEnv,
+  type ApiListo,
+  como,
+  declararCapacidad,
+  entrar,
+  listo,
+  skipNote,
+} from './helpers/api-env.js';
 
 const env = await apiEnv();
 const CIRCLE = 'e5bac105b1e00000000000000000000b';
@@ -55,7 +68,24 @@ interface InitiativeView {
     readonly ofertaId: string;
     readonly revision: number;
     readonly titulo: string;
-    readonly estado: 'ofrecida' | 'aceptada' | 'rechazada' | 'reasignacion-solicitada';
+    readonly estado:
+      | 'ofrecida'
+      | 'aceptada'
+      | 'en-curso'
+      | 'bloqueada'
+      | 'en-apoyo'
+      | 'entregada'
+      | 'completada'
+      | 'rechazada'
+      | 'reasignacion-solicitada';
+    readonly pausaActual?: { readonly id: string; readonly tipo: 'bloqueo' | 'apoyo' };
+    readonly evidencias: readonly { readonly id: string; readonly puedeAbrirse: boolean }[];
+    readonly entregas: readonly {
+      readonly id: string;
+      readonly revision?: { readonly tipo: 'cambios-solicitados' | 'aceptada' };
+    }[];
+    readonly entregaActualId?: string;
+    readonly completadaEn?: number;
     readonly esMia: boolean;
   }[];
 }
@@ -197,6 +227,81 @@ describe.skipIf(!env.ok)(`API de tareas ADR-0044${skipNote(env)}`, () => {
     });
     expect(response.statusCode).toBe(201);
     return { response: response.json<InitiativeView>(), requestId: idempotencyKey };
+  }
+
+  async function privateEvidenceFixture(seed: string): Promise<{
+    readonly recipient: Session;
+    readonly evidenceId: string;
+    readonly content: string;
+  }> {
+    const responsible = await entrar(e, `responsable.${seed}@udea.edu.co`);
+    const recipient = await entrar(e, `destinataria.${seed}@udea.edu.co`);
+    await declararCapacidad(e, recipient.testigo, 180);
+    const id = await activeInitiative(responsible.miembroId);
+    const milestone = (await planMilestone(id, responsible)).response.hitos[0]!.id;
+    const offered = await offerTask({ initiative: id, milestone, responsible, recipient });
+    let task = offered.response.tareas[0]!;
+    const accepted = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/respuestas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        tipo: 'aceptar',
+      },
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    task = accepted.json<InitiativeView>().tareas[0]!;
+    const started = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/iniciar`,
+      headers: como(recipient.testigo),
+      payload: { requestId: requestId(), offerId: task.ofertaId, revision: task.revision },
+    });
+    expect(started.statusCode, started.body).toBe(200);
+    task = started.json<InitiativeView>().tareas[0]!;
+    const content = `Apertura privada para probar supresión verificable ${seed}.`;
+    const evidenced = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        contenido: content,
+        visibilidad: 'restricted',
+      },
+    });
+    expect(evidenced.statusCode, evidenced.body).toBe(201);
+    const evidenceId = evidenced.json<InitiativeView>().tareas[0]?.evidencias[0]?.id;
+    if (evidenceId === undefined) throw new Error('la prueba exige una evidencia privada');
+    return { recipient, evidenceId, content };
+  }
+
+  async function requestErasure(
+    session: Session,
+    idempotencyKey = requestId(),
+  ): Promise<{
+    readonly solicitudId: string;
+    readonly radicado: string;
+    readonly solicitadaEn: number;
+    readonly estado: 'pendiente';
+  }> {
+    const response = await e.app.inject({
+      method: 'POST',
+      url: '/mi/supresion',
+      headers: como(session.testigo),
+      payload: {
+        requestId: idempotencyKey,
+        baseLegal: 'revocatoria-consentimiento',
+        confirmacionIrreversible: true,
+      },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    return response.json();
   }
 
   it('rehidrata logs históricos sin activación, hitos ni tareas inventadas', async () => {
@@ -467,6 +572,7 @@ describe.skipIf(!env.ok)(`API de tareas ADR-0044${skipNote(env)}`, () => {
     const responsible = await entrar(e, 'responsable.carrera@udea.edu.co');
     const recipient = await entrar(e, 'destinataria.carrera@udea.edu.co');
     const other = await entrar(e, 'otra.carrera@udea.edu.co');
+    await declararCapacidad(e, recipient.testigo);
     const id = await activeInitiative(responsible.miembroId);
     const milestone = (await planMilestone(id, responsible)).response.hitos[0]!.id;
     const offered = await offerTask({ initiative: id, milestone, responsible, recipient });
@@ -582,6 +688,7 @@ describe.skipIf(!env.ok)(`API de tareas ADR-0044${skipNote(env)}`, () => {
   it('permite pedir relevo después de aceptar sólo con la revisión nueva', async () => {
     const responsible = await entrar(e, 'responsable.relevo@udea.edu.co');
     const recipient = await entrar(e, 'destinataria.relevo@udea.edu.co');
+    await declararCapacidad(e, recipient.testigo);
     const id = await activeInitiative(responsible.miembroId);
     const milestone = (await planMilestone(id, responsible)).response.hitos[0]!.id;
     const offered = await offerTask({ initiative: id, milestone, responsible, recipient });
@@ -780,5 +887,859 @@ describe.skipIf(!env.ok)(`API de tareas ADR-0044${skipNote(env)}`, () => {
     } finally {
       client.release();
     }
+  });
+
+  it('la solicitud no admite selector de sujeto y una autorización inexistente no borra', async () => {
+    const alice = await entrar(e, 'alice.supresion.autorizacion@udea.edu.co');
+    const bob = await entrar(e, 'bob.supresion.autorizacion@udea.edu.co');
+    const selectedOther = await e.app.inject({
+      method: 'POST',
+      url: '/mi/supresion',
+      headers: como(alice.testigo),
+      payload: {
+        requestId: requestId(),
+        baseLegal: 'ley-1581-art-8e',
+        confirmacionIrreversible: true,
+        subjectId: bob.miembroId,
+      },
+    });
+    expect(selectedOther.statusCode).toBe(400);
+    expect(selectedOther.json<{ codigo: string }>().codigo).toBe('DATOS_INVALIDOS');
+    await expect(
+      executeAuthorizedErasure(e.pool, e.azar.opaqueId(), {
+        clock: e.reloj,
+        random: e.azar,
+        vault: e.vault,
+      }),
+    ).rejects.toThrow(/solicitud propia vigente/u);
+    const survivors = await e.pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM identity.member WHERE member_id = ANY($1::char(32)[])',
+      [[alice.miembroId, bob.miembroId]],
+    );
+    expect(survivors.rows[0]?.count).toBe('2');
+  });
+
+  it('una sesión de más de diez minutos debe volver a autenticarse para solicitar', async () => {
+    const stale = await entrar(e, 'sesion.vieja.supresion@udea.edu.co');
+    e.reloj.avanzar(10 * 60 * 1000 + 1);
+    const response = await e.app.inject({
+      method: 'POST',
+      url: '/mi/supresion',
+      headers: como(stale.testigo),
+      payload: {
+        requestId: requestId(),
+        baseLegal: 'ley-1581-art-8e',
+        confirmacionIrreversible: true,
+      },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json<{ codigo: string }>().codigo).toBe('ERASURE_REAUTHENTICATION_REQUIRED');
+  });
+
+  it('sella la solicitud propia y sólo entonces suprime PII sin volver rojo /integridad', async () => {
+    const fixture = await privateEvidenceFixture('supresion.legal');
+    const before = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const beforePrivate = before
+      .json<{ comprobaciones: { id: string; bien: boolean }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(beforePrivate).toEqual(expect.objectContaining({ bien: true }));
+
+    const publicRequestId = requestId();
+    const request = await requestErasure(fixture.recipient, publicRequestId);
+    expect(await requestErasure(fixture.recipient, publicRequestId)).toStrictEqual(request);
+    const divergentReplay = await e.app.inject({
+      method: 'POST',
+      url: '/mi/supresion',
+      headers: como(fixture.recipient.testigo),
+      payload: {
+        requestId: publicRequestId,
+        baseLegal: 'ley-1581-art-8e',
+        confirmacionIrreversible: true,
+      },
+    });
+    expect(divergentReplay.statusCode).toBe(409);
+    expect(divergentReplay.json<{ codigo: string }>().codigo).toBe('IDEMPOTENCY_KEY_REUSED');
+    const pending = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const pendingPrivate = pending
+      .json<{ comprobaciones: { id: string; bien: boolean }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(pendingPrivate).toEqual(expect.objectContaining({ bien: true }));
+    const requestRow = await e.pool.query<{
+      actor: string;
+      event_type: string;
+      subject_id: string;
+    }>(
+      `SELECT actor, event_type, payload_idx ->> 'subjectId' AS subject_id
+         FROM governance.event WHERE aggregate_id = $1 AND seq = 0`,
+      [request.solicitudId],
+    );
+    expect(requestRow.rows[0]).toStrictEqual({
+      actor: fixture.recipient.miembroId,
+      event_type: PII_ERASURE_REQUESTED_EVENT,
+      subject_id: fixture.recipient.miembroId,
+    });
+
+    const execution = await executeAuthorizedErasure(e.pool, request.solicitudId, {
+      clock: e.reloj,
+      random: e.azar,
+      vault: e.vault,
+    });
+    expect(execution).toMatchObject({
+      erasureId: request.solicitudId,
+      erasedPrivateMaterialCount: 1,
+      idempotentReplay: false,
+    });
+    const residue = await e.pool.query<{ members: string; materials: string; keys: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM identity.member WHERE member_id = $1) AS members,
+         (SELECT count(*)::text FROM identity.private_material WHERE owner_id = $1) AS materials,
+         (SELECT count(*)::text FROM identity.subject_data_key WHERE member_id = $1) AS keys`,
+      [fixture.recipient.miembroId],
+    );
+    expect(residue.rows[0]).toStrictEqual({ members: '0', materials: '0', keys: '0' });
+
+    const after = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const afterPrivate = after
+      .json<{
+        comprobaciones: { id: string; bien: boolean; queSignifica: string; detalle?: string }[];
+        comoComprobarloVosMismo: { explicacion: string };
+      }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(afterPrivate).toEqual(expect.objectContaining({ bien: true }));
+    expect(afterPrivate?.queSignifica).toMatch(/1 supresiones append-only/u);
+    expect(after.body).not.toContain(fixture.content);
+    expect(after.body).not.toContain(fixture.evidenceId);
+    expect(
+      after.json<{ comoComprobarloVosMismo: { explicacion: string } }>().comoComprobarloVosMismo
+        .explicacion,
+    ).toMatch(/material privado no sale.*auditoría local/iu);
+
+    await expect(
+      executeAuthorizedErasure(e.pool, request.solicitudId, {
+        clock: e.reloj,
+        random: e.azar,
+        vault: e.vault,
+      }),
+    ).resolves.toMatchObject({ idempotentReplay: true });
+    const tombstones = await e.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM governance.event
+        WHERE aggregate_id = $1 AND event_type = $2`,
+      [request.solicitudId, PII_ERASURE_EXECUTED_EVENT],
+    );
+    expect(tombstones.rows[0]?.count).toBe('1');
+    const authorizationLink = await e.pool.query<{
+      actor: string | null;
+      event_hash: string;
+      event_id: string;
+      request_event_hash: string | null;
+      request_event_id: string | null;
+      seq: number;
+    }>(
+      `SELECT seq, actor, encode(event_hash, 'hex') AS event_hash,
+              payload_idx ->> 'eventId' AS event_id,
+              payload_idx ->> 'requestEventId' AS request_event_id,
+              payload_idx ->> 'requestEventHash' AS request_event_hash
+         FROM governance.event WHERE aggregate_id = $1 ORDER BY seq`,
+      [request.solicitudId],
+    );
+    expect(authorizationLink.rows).toHaveLength(2);
+    expect(authorizationLink.rows[0]?.actor).toBe(fixture.recipient.miembroId);
+    expect(authorizationLink.rows[1]?.actor).toBeNull();
+    expect(authorizationLink.rows[1]?.request_event_id).toBe(authorizationLink.rows[0]?.event_id);
+    expect(authorizationLink.rows[1]?.request_event_hash).toBe(
+      authorizationLink.rows[0]?.event_hash,
+    );
+    expect(JSON.stringify(authorizationLink.rows)).not.toContain(fixture.content);
+    expect(JSON.stringify(authorizationLink.rows)).not.toContain(fixture.recipient.testigo);
+  });
+
+  it('revierte también el DELETE si no puede construir el tombstone', async () => {
+    const fixture = await privateEvidenceFixture('supresion.rollback');
+    const request = await requestErasure(fixture.recipient);
+
+    await expect(
+      executeAuthorizedErasure(e.pool, request.solicitudId, {
+        clock: e.reloj,
+        random: {
+          bytes: (length) => e.azar.bytes(length),
+          opaqueId: () => 'identidad-invalida',
+          uuid: () => e.azar.uuid(),
+        },
+        vault: e.vault,
+      }),
+    ).rejects.toThrow(/supresión verificable/u);
+
+    const residue = await e.pool.query<{ members: string; materials: string; keys: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM identity.member WHERE member_id = $1) AS members,
+         (SELECT count(*)::text FROM identity.private_material WHERE owner_id = $1) AS materials,
+         (SELECT count(*)::text FROM identity.subject_data_key WHERE member_id = $1) AS keys`,
+      [fixture.recipient.miembroId],
+    );
+    expect(residue.rows[0]).toStrictEqual({ members: '1', materials: '1', keys: '1' });
+    const pending = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const privateCheck = pending
+      .json<{ comprobaciones: { id: string; bien: boolean }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(privateCheck).toEqual(expect.objectContaining({ bien: true }));
+  });
+
+  it('serializa dos supresiones concurrentes y publica exactamente un tombstone', async () => {
+    const fixture = await privateEvidenceFixture('supresion.concurrente');
+    const request = await requestErasure(fixture.recipient);
+    const erase = async () =>
+      await executeAuthorizedErasure(e.pool, request.solicitudId, {
+        clock: e.reloj,
+        random: e.azar,
+        vault: e.vault,
+      });
+
+    const results = await Promise.all([erase(), erase()]);
+    expect(results.map((result) => result.idempotentReplay).sort()).toStrictEqual([false, true]);
+    const tombstones = await e.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM governance.event
+        WHERE aggregate_id = $1 AND event_type = $2`,
+      [request.solicitudId, PII_ERASURE_EXECUTED_EVENT],
+    );
+    expect(tombstones.rows[0]?.count).toBe('1');
+  });
+
+  it('dos solicitudes propias distintas compiten y sólo una queda pendiente', async () => {
+    const member = await entrar(e, 'supresion.solicitudes.concurrentes@udea.edu.co');
+    const attempt = async (idempotencyKey: string) =>
+      await e.app.inject({
+        method: 'POST',
+        url: '/mi/supresion',
+        headers: como(member.testigo),
+        payload: {
+          requestId: idempotencyKey,
+          baseLegal: 'ley-1581-art-8e',
+          confirmacionIrreversible: true,
+        },
+      });
+    const attempts = await Promise.all([attempt(requestId()), attempt(requestId())]);
+    expect(attempts.map((response) => response.statusCode).sort()).toStrictEqual([202, 409]);
+    expect(
+      attempts.find((response) => response.statusCode === 409)?.json<{ codigo: string }>().codigo,
+    ).toBe('ERASURE_ALREADY_REQUESTED');
+    const requests = await e.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM governance.event
+        WHERE aggregate_type = $1 AND event_type = $2 AND actor = $3`,
+      [PII_ERASURE_AGGREGATE_TYPE, PII_ERASURE_REQUESTED_EVENT, member.miembroId],
+    );
+    expect(requests.rows[0]?.count).toBe('1');
+  });
+
+  it('borrar una apertura sin tombstone sigue siendo una alarma material-missing', async () => {
+    const fixture = await privateEvidenceFixture('supresion.silenciosa');
+    await e.superPool.query('DELETE FROM identity.private_material WHERE material_id = $1', [
+      fixture.evidenceId,
+    ]);
+
+    const integrity = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const privateCheck = integrity
+      .json<{ comprobaciones: { id: string; bien: boolean; detalle?: string }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(privateCheck).toEqual(expect.objectContaining({ bien: false }));
+    expect(privateCheck?.detalle).toMatch(/material-missing/u);
+    expect(integrity.body).not.toContain(fixture.content);
+    expect(integrity.body).not.toContain(fixture.evidenceId);
+  });
+
+  it('recorre seguimiento, material restringido, entrega y revisión sin perder historia', async () => {
+    const responsible = await entrar(e, 'responsable.seguimiento@udea.edu.co');
+    const recipient = await entrar(e, 'destinataria.seguimiento@udea.edu.co');
+    const outsider = await entrar(e, 'ajena.seguimiento@udea.edu.co');
+    const tech = await entrar(e, 'tech.seguimiento@udea.edu.co');
+    await e.superPool.query(
+      `UPDATE identity.member SET roles = ARRAY['tech-admin'] WHERE member_id = $1`,
+      [tech.miembroId],
+    );
+    const id = await activeInitiative(responsible.miembroId);
+    const milestone = (await planMilestone(id, responsible)).response.hitos[0]!.id;
+    const offered = await offerTask({ initiative: id, milestone, responsible, recipient });
+    let task = offered.response.tareas[0]!;
+
+    const withoutCapacity = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/respuestas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        tipo: 'aceptar',
+      },
+    });
+    expect(withoutCapacity.statusCode).toBe(422);
+    expect(withoutCapacity.json<{ codigo: string }>().codigo).toBe(
+      'TASK_CAPACITY_CONFIRMATION_BLOCKED',
+    );
+    expect(
+      (await readStream(e.pool, id)).some((row) => row.event.eventType === 'TaskAccepted'),
+    ).toBe(false);
+
+    await declararCapacidad(e, recipient.testigo, 180);
+    const accepted = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/respuestas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        tipo: 'aceptar',
+      },
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    task = accepted.json<InitiativeView>().tareas[0]!;
+
+    const outsiderStart = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/iniciar`,
+      headers: como(outsider.testigo),
+      payload: { requestId: requestId(), offerId: task.ofertaId, revision: task.revision },
+    });
+    expect(outsiderStart.statusCode).toBe(403);
+
+    const started = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/iniciar`,
+      headers: como(recipient.testigo),
+      payload: { requestId: requestId(), offerId: task.ofertaId, revision: task.revision },
+    });
+    expect(started.statusCode, started.body).toBe(200);
+    task = started.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('en-curso');
+
+    const blocked = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/bloquear`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        categoria: 'respuesta-externa',
+      },
+    });
+    expect(blocked.statusCode, blocked.body).toBe(200);
+    task = blocked.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('bloqueada');
+    const pauseId = task.pausaActual?.id;
+    expect(pauseId).toBeDefined();
+
+    const staleResume = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/reanudar`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        pauseId: e.azar.opaqueId(),
+      },
+    });
+    expect(staleResume.statusCode).toBe(409);
+    expect(staleResume.json<{ codigo: string }>().codigo).toBe('STALE_TASK_PAUSE');
+
+    const privateEvidence =
+      'La respuesta institucional recibida confirma el horario piloto sin publicar datos personales.';
+    const evidenceRequest = requestId();
+    const evidenceBody = {
+      requestId: evidenceRequest,
+      offerId: task.ofertaId,
+      revision: task.revision,
+      contenido: privateEvidence,
+      visibilidad: 'restricted',
+    } as const;
+    const evidenced = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias`,
+      headers: como(recipient.testigo),
+      payload: evidenceBody,
+    });
+    expect(evidenced.statusCode, evidenced.body).toBe(201);
+    task = evidenced.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('bloqueada');
+    const evidenceId = task.evidencias[0]?.id;
+    if (evidenceId === undefined) throw new Error('la evidencia debe quedar proyectada');
+
+    for (const reader of [recipient, responsible]) {
+      const opened = await e.app.inject({
+        method: 'GET',
+        url: `/iniciativas/${id}/tareas/${task.id}/evidencias/${evidenceId}`,
+        headers: como(reader.testigo),
+      });
+      expect(opened.statusCode, opened.body).toBe(200);
+      expect(opened.json<{ contenido: string }>()).toEqual({ contenido: privateEvidence });
+    }
+    const outsiderEvidence = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias/${evidenceId}`,
+      headers: como(outsider.testigo),
+    });
+    const outsiderUnknownEvidence = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias/${e.azar.opaqueId()}`,
+      headers: como(outsider.testigo),
+    });
+    expect(outsiderEvidence.statusCode).toBe(403);
+    expect(outsiderUnknownEvidence.statusCode).toBe(403);
+    expect(outsiderUnknownEvidence.json()).toEqual(outsiderEvidence.json());
+    const techEvidence = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias/${evidenceId}`,
+      headers: como(tech.testigo),
+    });
+    expect(techEvidence.statusCode).toBe(403);
+    expect(techEvidence.body).not.toContain(privateEvidence);
+
+    const beforeEvidenceReplay = await readStream(e.pool, id);
+    const evidenceReplay = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias`,
+      headers: como(recipient.testigo),
+      payload: evidenceBody,
+    });
+    expect(evidenceReplay.statusCode, evidenceReplay.body).toBe(201);
+    expect(await readStream(e.pool, id)).toEqual(beforeEvidenceReplay);
+    const divergentEvidence = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/evidencias`,
+      headers: como(recipient.testigo),
+      payload: { ...evidenceBody, contenido: `${privateEvidence} Cambiado.` },
+    });
+    expect(divergentEvidence.statusCode).toBe(409);
+    expect(divergentEvidence.json<{ codigo: string }>().codigo).toBe('IDEMPOTENCY_KEY_REUSED');
+
+    const help = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/ayuda`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        categoria: 'desbloqueo',
+      },
+    });
+    expect(help.statusCode, help.body).toBe(200);
+    task = help.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('en-apoyo');
+    expect(task.pausaActual?.id).toBe(pauseId);
+
+    const resumed = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/reanudar`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        pauseId,
+      },
+    });
+    expect(resumed.statusCode, resumed.body).toBe(200);
+    task = resumed.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('en-curso');
+
+    const firstSummary =
+      'Se entrega la nota verificable que documenta el resultado observable del encargo.';
+    const delivered = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        evidenciaIds: [evidenceId],
+        resumen: firstSummary,
+      },
+    });
+    expect(delivered.statusCode, delivered.body).toBe(201);
+    task = delivered.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('entregada');
+    const firstDeliveryId = task.entregaActualId;
+    if (firstDeliveryId === undefined) throw new Error('la entrega debe quedar proyectada');
+
+    for (const reader of [recipient, responsible]) {
+      const opened = await e.app.inject({
+        method: 'GET',
+        url: `/iniciativas/${id}/tareas/${task.id}/entregas/${firstDeliveryId}/resumen`,
+        headers: como(reader.testigo),
+      });
+      expect(opened.statusCode, opened.body).toBe(200);
+      expect(opened.json<{ contenido: string }>()).toEqual({ contenido: firstSummary });
+    }
+    const outsiderDelivery = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas/${firstDeliveryId}/resumen`,
+      headers: como(outsider.testigo),
+    });
+    const outsiderUnknownDelivery = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas/${e.azar.opaqueId()}/resumen`,
+      headers: como(outsider.testigo),
+    });
+    expect(outsiderDelivery.statusCode).toBe(403);
+    expect(outsiderUnknownDelivery.statusCode).toBe(403);
+    expect(outsiderUnknownDelivery.json()).toEqual(outsiderDelivery.json());
+    const techDelivery = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas/${firstDeliveryId}/resumen`,
+      headers: como(tech.testigo),
+    });
+    expect(techDelivery.statusCode).toBe(403);
+    expect(techDelivery.body).not.toContain(firstSummary);
+
+    const assigneeCannotReview = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/revisiones/cambios`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        deliveryId: firstDeliveryId,
+        revision: task.revision,
+        motivo: 'evidencia-insuficiente',
+      },
+    });
+    expect(assigneeCannotReview.statusCode).toBe(403);
+
+    const changes = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/revisiones/cambios`,
+      headers: como(responsible.testigo),
+      payload: {
+        requestId: requestId(),
+        deliveryId: firstDeliveryId,
+        revision: task.revision,
+        motivo: 'evidencia-insuficiente',
+      },
+    });
+    expect(changes.statusCode, changes.body).toBe(200);
+    task = changes.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('en-curso');
+    expect(task.entregas[0]?.revision?.tipo).toBe('cambios-solicitados');
+
+    const secondDelivery = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: task.ofertaId,
+        revision: task.revision,
+        evidenciaIds: [evidenceId],
+        resumen: 'La segunda entrega explica cómo la misma evidencia responde al criterio pedido.',
+      },
+    });
+    expect(secondDelivery.statusCode, secondDelivery.body).toBe(201);
+    task = secondDelivery.json<InitiativeView>().tareas[0]!;
+    const secondDeliveryId = task.entregaActualId;
+    if (secondDeliveryId === undefined)
+      throw new Error('la segunda entrega debe quedar proyectada');
+
+    const completed = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${id}/tareas/${task.id}/revisiones/aceptar`,
+      headers: como(responsible.testigo),
+      payload: {
+        requestId: requestId(),
+        deliveryId: secondDeliveryId,
+        revision: task.revision,
+        evidenciaCriterio: 'verificada',
+      },
+    });
+    expect(completed.statusCode, completed.body).toBe(200);
+    task = completed.json<InitiativeView>().tareas[0]!;
+    expect(task.estado).toBe('completada');
+    expect(task.completadaEn).toBe(e.reloj.now());
+
+    const rows = await readStream(e.pool, id);
+    expect(rows.map((row) => row.event.eventType)).toEqual([
+      'InitiativeCreated',
+      'InitiativeActivated',
+      'MilestonePlanned',
+      'TaskOffered',
+      'TaskAccepted',
+      'TaskStarted',
+      'TaskBlocked',
+      'TaskEvidenceAdded',
+      'TaskHelpRequested',
+      'TaskResumed',
+      'TaskDelivered',
+      'TaskChangesRequested',
+      'TaskDelivered',
+      'TaskReviewAccepted',
+    ]);
+    expect(rows.some((row) => row.payloadText.includes(privateEvidence))).toBe(false);
+    expect(rows.some((row) => row.payloadText.includes(firstSummary))).toBe(false);
+    const privateRows = await e.pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM identity.private_material WHERE owner_id = $1',
+      [recipient.miembroId],
+    );
+    expect(privateRows.rows[0]?.count).toBe('3');
+
+    await e.superPool.query(
+      `UPDATE identity.private_material
+          SET ciphertext = set_byte(ciphertext, 0, get_byte(ciphertext, 0) # 1)
+        WHERE material_id = $1`,
+      [secondDeliveryId],
+    );
+    const tampered = await e.app.inject({
+      method: 'GET',
+      url: `/iniciativas/${id}/tareas/${task.id}/entregas/${secondDeliveryId}/resumen`,
+      headers: como(responsible.testigo),
+    });
+    expect(tampered.statusCode).toBe(503);
+    expect(tampered.json<{ codigo: string }>().codigo).toBe('PRIVATE_MATERIAL_UNAVAILABLE');
+
+    const integrity = await e.app.inject({ method: 'GET', url: '/integridad' });
+    expect(integrity.statusCode, integrity.body).toBe(200);
+    const integrityReport = integrity.json<{
+      todoBien: boolean;
+      comprobaciones: { id: string; bien: boolean; detalle?: string }[];
+    }>();
+    expect(integrityReport.todoBien).toBe(false);
+    const privateCheck = integrityReport.comprobaciones.find(
+      (check) => check.id === 'material-privado',
+    );
+    expect(privateCheck).toEqual(expect.objectContaining({ bien: false }));
+    expect(privateCheck?.detalle).toMatch(/material-opening-invalid/u);
+    expect(integrity.body).not.toContain(privateEvidence);
+    expect(integrity.body).not.toContain(firstSummary);
+
+    await e.superPool.query(
+      `UPDATE identity.member SET circles = ARRAY[$2::char(32)] WHERE member_id = $1`,
+      [recipient.miembroId, OTHER_CIRCLE],
+    );
+    for (const [kind, knownId, suffix] of [
+      ['evidence', evidenceId, `evidencias/${evidenceId}`],
+      ['delivery', firstDeliveryId, `entregas/${firstDeliveryId}/resumen`],
+    ] as const) {
+      const known = await e.app.inject({
+        method: 'GET',
+        url: `/iniciativas/${id}/tareas/${task.id}/${suffix}`,
+        headers: como(recipient.testigo),
+      });
+      const unknownSuffix =
+        kind === 'evidence'
+          ? `evidencias/${e.azar.opaqueId()}`
+          : `entregas/${e.azar.opaqueId()}/resumen`;
+      const unknown = await e.app.inject({
+        method: 'GET',
+        url: `/iniciativas/${id}/tareas/${task.id}/${unknownSuffix}`,
+        headers: como(recipient.testigo),
+      });
+      expect(knownId).toBeDefined();
+      expect(known.statusCode).toBe(403);
+      expect(unknown.statusCode).toBe(403);
+      expect(unknown.json()).toEqual(known.json());
+    }
+  });
+
+  it('serializa dos aceptaciones que juntas excederían el último cupo semanal', async () => {
+    const responsible = await entrar(e, 'responsable.cupo.concurrente@udea.edu.co');
+    const recipient = await entrar(e, 'destinataria.cupo.concurrente@udea.edu.co');
+    await declararCapacidad(e, recipient.testigo, 180);
+
+    const initiatives = await Promise.all([
+      activeInitiative(responsible.miembroId),
+      activeInitiative(responsible.miembroId),
+    ]);
+    const offers = [];
+    for (const initiative of initiatives) {
+      const milestone = (await planMilestone(initiative, responsible)).response.hitos[0]!.id;
+      offers.push(
+        await offerTask({
+          initiative,
+          milestone,
+          responsible,
+          recipient,
+          title: 'Consumir el cupo',
+        }),
+      );
+    }
+
+    const attempts = await Promise.all(
+      offers.map((offer, index) => {
+        const initiative = initiatives[index];
+        const task = offer.response.tareas[0];
+        if (initiative === undefined || task === undefined) {
+          throw new Error('cada iniciativa debe conservar su oferta');
+        }
+        return e.app.inject({
+          method: 'POST',
+          url: `/iniciativas/${initiative}/tareas/${task.id}/respuestas`,
+          headers: como(recipient.testigo),
+          payload: {
+            requestId: requestId(),
+            offerId: task.ofertaId,
+            revision: task.revision,
+            tipo: 'aceptar',
+          },
+        });
+      }),
+    );
+    expect(attempts.map((response) => response.statusCode).sort()).toEqual([200, 422]);
+    expect(
+      attempts.find((response) => response.statusCode === 422)?.json<{ codigo: string }>().codigo,
+    ).toBe('TASK_CAPACITY_CONFIRMATION_BLOCKED');
+
+    const acceptedEvents = (
+      await Promise.all(initiatives.map(async (initiative) => await readStream(e.pool, initiative)))
+    )
+      .flat()
+      .filter((row) => row.event.eventType === 'TaskAccepted');
+    expect(acceptedEvents).toHaveLength(1);
+  });
+
+  it('ordena aceptar contra bajar capacidad sin deadlock ni una aceptación posterior', async () => {
+    const responsible = await entrar(e, 'responsable.cupo.descenso@udea.edu.co');
+    const recipient = await entrar(e, 'destinataria.cupo.descenso@udea.edu.co');
+    await declararCapacidad(e, recipient.testigo, 360);
+    const capacity = await e.app.inject({
+      method: 'GET',
+      url: '/mi/capacidad',
+      headers: como(recipient.testigo),
+    });
+    const capacityRevision = capacity.json<{ declarada: true; revision: number }>().revision;
+
+    const firstInitiative = await activeInitiative(responsible.miembroId);
+    const firstMilestone = (await planMilestone(firstInitiative, responsible)).response.hitos[0]!
+      .id;
+    const firstOffer = await offerTask({
+      initiative: firstInitiative,
+      milestone: firstMilestone,
+      responsible,
+      recipient,
+    });
+    const firstTask = firstOffer.response.tareas[0]!;
+
+    const [acceptance, lowering] = await Promise.all([
+      e.app.inject({
+        method: 'POST',
+        url: `/iniciativas/${firstInitiative}/tareas/${firstTask.id}/respuestas`,
+        headers: como(recipient.testigo),
+        payload: {
+          requestId: requestId(),
+          offerId: firstTask.ofertaId,
+          revision: firstTask.revision,
+          tipo: 'aceptar',
+        },
+      }),
+      e.app.inject({
+        method: 'PUT',
+        url: '/mi/capacidad',
+        headers: como(recipient.testigo),
+        payload: { revision: capacityRevision, minutosPorSemana: 0 },
+      }),
+    ]);
+    expect(lowering.statusCode, lowering.body).toBe(200);
+    expect([200, 422]).toContain(acceptance.statusCode);
+    expect(
+      (await readStream(e.pool, firstInitiative)).filter(
+        (row) => row.event.eventType === 'TaskAccepted',
+      ),
+    ).toHaveLength(acceptance.statusCode === 200 ? 1 : 0);
+
+    const currentCapacity = await e.app.inject({
+      method: 'GET',
+      url: '/mi/capacidad',
+      headers: como(recipient.testigo),
+    });
+    expect(currentCapacity.json<{ minutosPorSemana: number }>().minutosPorSemana).toBe(0);
+
+    const secondInitiative = await activeInitiative(responsible.miembroId);
+    const secondMilestone = (await planMilestone(secondInitiative, responsible)).response.hitos[0]!
+      .id;
+    const secondOffer = await offerTask({
+      initiative: secondInitiative,
+      milestone: secondMilestone,
+      responsible,
+      recipient,
+    });
+    const secondTask = secondOffer.response.tareas[0]!;
+    const blocked = await e.app.inject({
+      method: 'POST',
+      url: `/iniciativas/${secondInitiative}/tareas/${secondTask.id}/respuestas`,
+      headers: como(recipient.testigo),
+      payload: {
+        requestId: requestId(),
+        offerId: secondTask.ofertaId,
+        revision: secondTask.revision,
+        tipo: 'aceptar',
+      },
+    });
+    expect(blocked.statusCode).toBe(422);
+    expect(blocked.json<{ codigo: string }>().codigo).toBe('TASK_CAPACITY_CONFIRMATION_BLOCKED');
+    expect(
+      (await readStream(e.pool, secondInitiative)).some(
+        (row) => row.event.eventType === 'TaskAccepted',
+      ),
+    ).toBe(false);
+  });
+
+  it('una solicitud pendiente no legitima un DELETE ejecutado por fuera del flujo', async () => {
+    const fixture = await privateEvidenceFixture('supresion.pendiente.borrada.directo');
+    await requestErasure(fixture.recipient);
+    await e.superPool.query('DELETE FROM identity.member WHERE member_id = $1', [
+      fixture.recipient.miembroId,
+    ]);
+
+    const integrity = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const privateCheck = integrity
+      .json<{ comprobaciones: { id: string; bien: boolean; detalle?: string }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(privateCheck).toEqual(expect.objectContaining({ bien: false }));
+    expect(privateCheck?.detalle).toMatch(/requested-subject-missing/u);
+    expect(privateCheck?.detalle).toMatch(/material-missing/u);
+    expect(integrity.body).not.toContain(fixture.content);
+    expect(integrity.body).not.toContain(fixture.evidenceId);
+  });
+
+  it('DELETE más tombstone exacto sin solicitud propia sigue siendo una alarma', async () => {
+    const fixture = await privateEvidenceFixture('supresion.tombstone.sin.autorizacion');
+    const forgedErasureId = e.azar.opaqueId();
+    const executedAt = e.reloj.now();
+    await withTransaction(e.pool, async (client) => {
+      await appendWithin(client, {
+        aggregateId: forgedErasureId,
+        aggregateType: PII_ERASURE_AGGREGATE_TYPE,
+        expectedHead: { kind: 'new' },
+        requestId: requestId(),
+        requestScope: 'test:forged-private-erasure',
+        events: [
+          {
+            eventType: PII_ERASURE_EXECUTED_EVENT,
+            eventVersion: 1,
+            occurredAt: new Date(executedAt).toISOString(),
+            payload: {
+              eventId: e.azar.opaqueId(),
+              executedAt,
+              materialIds: [fixture.evidenceId],
+              requestEventHash: 'a'.repeat(64),
+              requestEventId: e.azar.opaqueId(),
+              subjectId: fixture.recipient.miembroId,
+            },
+          },
+        ],
+      });
+    });
+    await e.superPool.query('DELETE FROM identity.member WHERE member_id = $1', [
+      fixture.recipient.miembroId,
+    ]);
+
+    const integrity = await e.app.inject({ method: 'GET', url: '/integridad' });
+    const privateCheck = integrity
+      .json<{ comprobaciones: { id: string; bien: boolean; detalle?: string }[] }>()
+      .comprobaciones.find((check) => check.id === 'material-privado');
+    expect(privateCheck).toEqual(expect.objectContaining({ bien: false }));
+    expect(privateCheck?.detalle).toMatch(/unauthorized-suppression/u);
+    expect(privateCheck?.detalle).toMatch(/material-missing/u);
+    expect(integrity.body).not.toContain(fixture.content);
+    expect(integrity.body).not.toContain(fixture.evidenceId);
   });
 });

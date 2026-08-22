@@ -28,13 +28,28 @@ import {
   instant,
   memberId,
   milestoneId,
+  OUTCOME_CRITERION_EVIDENCE,
+  type OutcomeCriterionEvidence,
   type ProblemPayload,
   type ProblemStatus,
   type ProposalPayload,
   proposalId,
+  TASK_BLOCK_CATEGORIES,
+  type TaskBlockCategory,
+  TASK_CHANGE_REASONS,
+  type TaskChangeReason,
+  TASK_EVIDENCE_KIND_CODES,
+  type TaskEvidenceKindCode,
+  TASK_EVIDENCE_SIZE_CLASSES,
+  type TaskEvidenceSizeClass,
+  TASK_EVIDENCE_VISIBILITIES,
+  type TaskEvidenceVisibility,
+  TASK_HELP_CATEGORIES,
+  type TaskHelpCategory,
   type TaskResponseReason,
   TASK_RESPONSE_REASONS,
   taskId,
+  toPrivateMaterialCommitment,
 } from '@koinonia/domain';
 
 import { instantToIso, isoToInstant } from '../decision/codec.js';
@@ -65,6 +80,19 @@ const PROBLEM_STATUSES: readonly ProblemStatus[] = [
 
 function isObject(value: JsonValue | undefined): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertExactKeys(source: JsonObject, expected: readonly string[], path: string): void {
+  const wanted = new Set(expected);
+  const actual = Object.keys(source);
+  const unknown = actual.find((key) => !wanted.has(key));
+  if (unknown !== undefined) {
+    throw new WorkspaceCodecError(`${path}.${unknown}`, 'campo desconocido o prohibido');
+  }
+  const missing = expected.find((key) => !Object.prototype.hasOwnProperty.call(source, key));
+  if (missing !== undefined) {
+    throw new WorkspaceCodecError(`${path}.${missing}`, 'clave ausente');
+  }
 }
 
 function str(source: JsonObject, key: string, path: string): string {
@@ -128,6 +156,15 @@ function taskResponseReason(source: JsonObject, key: string, path: string): Task
   return value as TaskResponseReason;
 }
 
+function closedTaskValue<T extends string>(
+  source: JsonObject,
+  key: string,
+  path: string,
+  allowed: readonly T[],
+): T {
+  return oneOf<T>(str(source, key, path), allowed, `${path}.${key}`);
+}
+
 function encodeExecutionPlan(plan: ExecutionPlan): JsonObject {
   return {
     objective: plan.objective,
@@ -141,6 +178,7 @@ function encodeExecutionPlan(plan: ExecutionPlan): JsonObject {
 }
 
 function decodeExecutionPlan(source: JsonObject, path: string): ExecutionPlan {
+  assertExactKeys(source, ['objective', 'responsibleId', 'reviewAt', 'successCriteria'], path);
   return {
     objective: str(source, 'objective', path),
     responsibleId: memberId(str(source, 'responsibleId', path)),
@@ -150,6 +188,7 @@ function decodeExecutionPlan(source: JsonObject, path: string): ExecutionPlan {
       if (!isObject(raw)) {
         throw new WorkspaceCodecError(criterionPath, 'se esperaba un objeto');
       }
+      assertExactKeys(raw, ['description', 'evidenceSource'], criterionPath);
       return {
         description: str(raw, 'description', criterionPath),
         evidenceSource: str(raw, 'evidenceSource', criterionPath),
@@ -333,6 +372,69 @@ function decodeProposalBody(type: string, body: JsonObject): ProposalPayload {
 // Iniciativa
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+const INITIATIVE_BODY_KEYS = {
+  InitiativeCreated: [
+    'decisionId',
+    'proposalId',
+    'proposalVersionHash',
+    'decisionResultHash',
+    'circleId',
+    'executionPlan',
+  ],
+  InitiativeActivated: ['ratificationEventId', 'ratificationEventHash'],
+  MilestonePlanned: ['milestoneId', 'title', 'completionCriterion', 'dueAt'],
+  TaskOffered: [
+    'taskId',
+    'milestoneId',
+    'offeredTo',
+    'title',
+    'description',
+    'effortMinutes',
+    'dueAt',
+    'dependsOn',
+  ],
+  TaskAccepted: ['taskId', 'offerId', 'expectedTaskSeq'],
+  TaskRejected: ['taskId', 'offerId', 'expectedTaskSeq', 'reason'],
+  TaskReassignmentRequested: ['taskId', 'offerId', 'expectedTaskSeq', 'reason'],
+  TaskReoffered: ['taskId', 'previousOfferId', 'offeredTo'],
+  TaskStarted: ['taskId', 'offerId', 'expectedTaskSeq'],
+  TaskBlocked: ['taskId', 'offerId', 'expectedTaskSeq', 'category'],
+  TaskHelpRequested: ['taskId', 'offerId', 'expectedTaskSeq', 'category'],
+  TaskResumed: ['taskId', 'offerId', 'expectedTaskSeq', 'pauseId'],
+  TaskEvidenceAdded: [
+    'taskId',
+    'offerId',
+    'expectedTaskSeq',
+    'objectCommitment',
+    'kindCode',
+    'sizeClass',
+    'visibility',
+  ],
+  TaskDelivered: ['taskId', 'offerId', 'expectedTaskSeq', 'evidenceIds', 'summaryCommitment'],
+  TaskChangesRequested: ['taskId', 'deliveryId', 'expectedTaskSeq', 'reason'],
+  TaskReviewAccepted: ['taskId', 'deliveryId', 'expectedTaskSeq', 'outcomeCriterionEvidence'],
+} satisfies Readonly<Record<InitiativePayload['type'], readonly string[]>>;
+
+function assertInitiativeBodyKeys(type: string, body: JsonObject): void {
+  // La tabla sigue siendo exhaustiva por el `satisfies`; esta vista más amplia expresa que el
+  // discriminante llega de JSON hostil y puede no ser una de sus claves.
+  const base = (INITIATIVE_BODY_KEYS as Readonly<Record<string, readonly string[] | undefined>>)[
+    type
+  ];
+  if (base === undefined) {
+    throw new WorkspaceCodecError('eventType', `${type} no es un evento de iniciativa`);
+  }
+  const optionalCommitment =
+    type === 'TaskBlocked' || type === 'TaskHelpRequested' || type === 'TaskChangesRequested';
+  assertExactKeys(
+    body,
+    optionalCommitment && body['privateDetailCommitment'] !== undefined
+      ? [...base, 'privateDetailCommitment']
+      : base,
+    type,
+  );
+}
+
 function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
   switch (payload.type) {
     case 'InitiativeCreated':
@@ -368,6 +470,7 @@ function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
         dependsOn: [...payload.dependsOn],
       };
     case 'TaskAccepted':
+    case 'TaskStarted':
       return {
         taskId: payload.taskId,
         offerId: payload.offerId,
@@ -381,6 +484,68 @@ function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
         expectedTaskSeq: payload.expectedTaskSeq,
         reason: payload.reason,
       };
+    case 'TaskBlocked':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        category: payload.category,
+        ...(payload.privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: payload.privateDetailCommitment }),
+      };
+    case 'TaskHelpRequested':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        category: payload.category,
+        ...(payload.privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: payload.privateDetailCommitment }),
+      };
+    case 'TaskResumed':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        pauseId: payload.pauseId,
+      };
+    case 'TaskEvidenceAdded':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        objectCommitment: payload.objectCommitment,
+        kindCode: payload.kindCode,
+        sizeClass: payload.sizeClass,
+        visibility: payload.visibility,
+      };
+    case 'TaskDelivered':
+      return {
+        taskId: payload.taskId,
+        offerId: payload.offerId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        evidenceIds: [...payload.evidenceIds],
+        summaryCommitment: payload.summaryCommitment,
+      };
+    case 'TaskChangesRequested':
+      return {
+        taskId: payload.taskId,
+        deliveryId: payload.deliveryId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        reason: payload.reason,
+        ...(payload.privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: payload.privateDetailCommitment }),
+      };
+    case 'TaskReviewAccepted':
+      return {
+        taskId: payload.taskId,
+        deliveryId: payload.deliveryId,
+        expectedTaskSeq: payload.expectedTaskSeq,
+        outcomeCriterionEvidence: payload.outcomeCriterionEvidence,
+      };
     case 'TaskReoffered':
       return {
         taskId: payload.taskId,
@@ -391,6 +556,7 @@ function encodeInitiativeBody(payload: InitiativePayload): JsonObject {
 }
 
 function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload {
+  assertInitiativeBodyKeys(type, body);
   switch (type) {
     case 'InitiativeCreated':
       return {
@@ -432,6 +598,7 @@ function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload
         dependsOn: stringArray(body, 'dependsOn', type).map(taskId),
       };
     case 'TaskAccepted':
+    case 'TaskStarted':
       return {
         type,
         taskId: taskId(str(body, 'taskId', type)),
@@ -446,6 +613,101 @@ function decodeInitiativeBody(type: string, body: JsonObject): InitiativePayload
         offerId: eventId(str(body, 'offerId', type)),
         expectedTaskSeq: int(body, 'expectedTaskSeq', type),
         reason: taskResponseReason(body, 'reason', type),
+      };
+    case 'TaskBlocked': {
+      const privateDetailCommitment = optStr(body, 'privateDetailCommitment', type);
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        category: closedTaskValue<TaskBlockCategory>(body, 'category', type, TASK_BLOCK_CATEGORIES),
+        ...(privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: toPrivateMaterialCommitment(privateDetailCommitment) }),
+      };
+    }
+    case 'TaskHelpRequested': {
+      const privateDetailCommitment = optStr(body, 'privateDetailCommitment', type);
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        category: closedTaskValue<TaskHelpCategory>(body, 'category', type, TASK_HELP_CATEGORIES),
+        ...(privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: toPrivateMaterialCommitment(privateDetailCommitment) }),
+      };
+    }
+    case 'TaskResumed':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        pauseId: eventId(str(body, 'pauseId', type)),
+      };
+    case 'TaskEvidenceAdded':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        objectCommitment: toPrivateMaterialCommitment(str(body, 'objectCommitment', type)),
+        kindCode: closedTaskValue<TaskEvidenceKindCode>(
+          body,
+          'kindCode',
+          type,
+          TASK_EVIDENCE_KIND_CODES,
+        ),
+        sizeClass: closedTaskValue<TaskEvidenceSizeClass>(
+          body,
+          'sizeClass',
+          type,
+          TASK_EVIDENCE_SIZE_CLASSES,
+        ),
+        visibility: closedTaskValue<TaskEvidenceVisibility>(
+          body,
+          'visibility',
+          type,
+          TASK_EVIDENCE_VISIBILITIES,
+        ),
+      };
+    case 'TaskDelivered':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        offerId: eventId(str(body, 'offerId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        evidenceIds: stringArray(body, 'evidenceIds', type).map(eventId),
+        summaryCommitment: toPrivateMaterialCommitment(str(body, 'summaryCommitment', type)),
+      };
+    case 'TaskChangesRequested': {
+      const privateDetailCommitment = optStr(body, 'privateDetailCommitment', type);
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        deliveryId: eventId(str(body, 'deliveryId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        reason: closedTaskValue<TaskChangeReason>(body, 'reason', type, TASK_CHANGE_REASONS),
+        ...(privateDetailCommitment === undefined
+          ? {}
+          : { privateDetailCommitment: toPrivateMaterialCommitment(privateDetailCommitment) }),
+      };
+    }
+    case 'TaskReviewAccepted':
+      return {
+        type,
+        taskId: taskId(str(body, 'taskId', type)),
+        deliveryId: eventId(str(body, 'deliveryId', type)),
+        expectedTaskSeq: int(body, 'expectedTaskSeq', type),
+        outcomeCriterionEvidence: closedTaskValue<OutcomeCriterionEvidence>(
+          body,
+          'outcomeCriterionEvidence',
+          type,
+          OUTCOME_CRITERION_EVIDENCE,
+        ),
       };
     case 'TaskReoffered':
       return {
@@ -491,6 +753,7 @@ function decodeEnvelope(
   }
   const bodyRaw = event.payload['body'];
   if (!isObject(bodyRaw)) throw new WorkspaceCodecError('payload.body', 'se esperaba un objeto');
+  assertExactKeys(event.payload, ['eventId', 'body'], 'payload');
   return { event, body: bodyRaw, id: idRaw };
 }
 

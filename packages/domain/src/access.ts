@@ -98,6 +98,15 @@ export type Action =
   | 'task:accept'
   | 'task:reject'
   | 'task:request-reassignment'
+  | 'task:start'
+  | 'task:block'
+  | 'task:request-help'
+  | 'task:resume'
+  | 'task:add-evidence'
+  | 'task:deliver'
+  | 'task:read-private-material'
+  | 'task:request-changes'
+  | 'task:accept-review'
   | 'ledger:read'
   | 'ledger:export';
 
@@ -122,6 +131,15 @@ export const ACTIONS: readonly Action[] = [
   'task:accept',
   'task:reject',
   'task:request-reassignment',
+  'task:start',
+  'task:block',
+  'task:request-help',
+  'task:resume',
+  'task:add-evidence',
+  'task:deliver',
+  'task:read-private-material',
+  'task:request-changes',
+  'task:accept-review',
   'ledger:read',
   'ledger:export',
 ];
@@ -140,6 +158,8 @@ export interface ResourceRef {
   readonly kind: ResourceKind;
   readonly owner?: MemberId | undefined;
   readonly subject?: MemberId | undefined;
+  /** Identidades que pueden abrir un material privado; nunca se incluyen en errores. */
+  readonly authorizedReaders?: readonly MemberId[] | undefined;
   readonly circleId?: CircleId | undefined;
 }
 
@@ -152,6 +172,10 @@ export type DenialReason =
   | 'NOT_THE_OWNER'
   /** El acto se atribuiría a otra persona (autorización HORIZONTAL). */
   | 'NOT_THE_SUBJECT'
+  /** La lista de lectores autorizados falta: se falla cerrado. */
+  | 'READERS_UNKNOWN'
+  /** La identidad existe, pero no es una de las lectoras autorizadas. */
+  | 'NOT_A_READER'
   /** El actor no pertenece al círculo competente (§3, subsidiariedad). */
   | 'NOT_IN_CIRCLE'
   /** El recurso llegó sin autor declarado y la acción lo exige: se falla cerrado. */
@@ -179,6 +203,8 @@ interface Rule {
   readonly ownerOnly: boolean;
   /** ¿Exige que el acto se atribuya al propio actor? Autorización horizontal. */
   readonly subjectOnly: boolean;
+  /** ¿Exige aparecer en la lista cerrada de lectores del material privado? */
+  readonly readerOnly: boolean;
   /** ¿Exige pertenecer al círculo competente? */
   readonly circleOnly: boolean;
 }
@@ -188,6 +214,7 @@ const OPEN: Rule = {
   authenticated: false,
   ownerOnly: false,
   subjectOnly: false,
+  readerOnly: false,
   circleOnly: false,
 };
 
@@ -196,12 +223,14 @@ const MEMBER: Rule = {
   authenticated: true,
   ownerOnly: false,
   subjectOnly: false,
+  readerOnly: false,
   circleOnly: false,
 };
 
 const CIRCLE_MEMBER: Rule = { ...MEMBER, circleOnly: true };
 const OWNER_IN_CIRCLE: Rule = { ...CIRCLE_MEMBER, ownerOnly: true };
 const SUBJECT_IN_CIRCLE: Rule = { ...CIRCLE_MEMBER, subjectOnly: true };
+const PRIVATE_READER_IN_CIRCLE: Rule = { ...CIRCLE_MEMBER, readerOnly: true };
 
 /**
  * La matriz. Es la tabla del §4 de `docs/GOVERNANCE.md` en forma ejecutable.
@@ -242,6 +271,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     authenticated: true,
     ownerOnly: false,
     subjectOnly: false,
+    readerOnly: false,
     circleOnly: true,
   },
   'decision:close': {
@@ -249,6 +279,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     authenticated: true,
     ownerOnly: false,
     subjectOnly: false,
+    readerOnly: false,
     circleOnly: true,
   },
   'decision:ratify': {
@@ -256,6 +287,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     authenticated: true,
     ownerOnly: false,
     subjectOnly: false,
+    readerOnly: false,
     circleOnly: true,
   },
 
@@ -263,12 +295,22 @@ const RULES: Readonly<Record<Action, Rule>> = {
   'initiative:plan': OWNER_IN_CIRCLE,
   'task:offer': OWNER_IN_CIRCLE,
   'task:reoffer': OWNER_IN_CIRCLE,
+  // Revisar es una decisión operativa del responsable inicial, no una facultad de facilitación.
+  'task:request-changes': OWNER_IN_CIRCLE,
+  'task:accept-review': OWNER_IN_CIRCLE,
 
   // Una oferta sólo la responde su destinatario vigente. Tener el mismo rol o facilitar el círculo
   // no permite aceptar, rechazar ni pedir reasignación por otra persona.
   'task:accept': SUBJECT_IN_CIRCLE,
   'task:reject': SUBJECT_IN_CIRCLE,
   'task:request-reassignment': SUBJECT_IN_CIRCLE,
+  'task:start': SUBJECT_IN_CIRCLE,
+  'task:block': SUBJECT_IN_CIRCLE,
+  'task:request-help': SUBJECT_IN_CIRCLE,
+  'task:resume': SUBJECT_IN_CIRCLE,
+  'task:add-evidence': SUBJECT_IN_CIRCLE,
+  'task:deliver': SUBJECT_IN_CIRCLE,
+  'task:read-private-material': PRIVATE_READER_IN_CIRCLE,
 };
 
 /** La regla aplicable a una acción. Expuesta para poder explicarla en la interfaz, no para saltarla. */
@@ -279,9 +321,9 @@ export function ruleFor(action: Action): Rule {
 /**
  * ¿Puede `actor` hacer `action` sobre `resource`? Lanza `UnauthorizedError` si no.
  *
- * El orden de las comprobaciones importa para el mensaje, no para el resultado: primero identidad,
- * después rol, después las dos horizontales, y al final el círculo. Todas se evalúan siempre; no
- * hay ninguna combinación en la que una de ellas se salte porque otra pasó.
+ * El orden de las comprobaciones importa para el mensaje, no para el resultado: primero identidad
+ * y rol; ownership/sujeto; círculo vigente; y al final la lista de lectores, que puede depender de
+ * que exista el material. No hay ninguna combinación que conceda acceso por omitir un dato.
  */
 export function authorize(actor: Actor, action: Action, resource: ResourceRef): void {
   const rule = RULES[action];
@@ -351,6 +393,25 @@ export function authorize(actor: Actor, action: Action, resource: ResourceRef): 
         'NOT_IN_CIRCLE',
         action,
         'quien cuida el procedimiento de un círculo tiene que pertenecer a ese círculo (§3)',
+      );
+    }
+  }
+
+  // La membresía se comprueba antes que esta lista dependiente del material: una persona que fue
+  // autora pero salió del círculo no debe distinguir un ID real de uno inexistente por el error.
+  if (rule.readerOnly) {
+    if (resource.authorizedReaders === undefined || resource.authorizedReaders.length === 0) {
+      throw new UnauthorizedError(
+        'READERS_UNKNOWN',
+        action,
+        'el material privado no declara lectores; la ausencia de política nunca concede acceso',
+      );
+    }
+    if (actor.memberId === undefined || !resource.authorizedReaders.includes(actor.memberId)) {
+      throw new UnauthorizedError(
+        'NOT_A_READER',
+        action,
+        'la identidad no está autorizada para abrir este material privado',
       );
     }
   }

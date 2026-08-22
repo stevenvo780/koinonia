@@ -24,12 +24,17 @@ import cookie from '@fastify/cookie';
 import {
   type ApiError,
   abrirDecision as abrirDecisionSchema,
+  aceptarRevisionTarea as aceptarRevisionTareaSchema,
+  agregarEvidenciaTarea as agregarEvidenciaTareaSchema,
+  actualizarCapacidad as actualizarCapacidadSchema,
   aportarEvidencia as aportarEvidenciaSchema,
   canjeEnlace as canjeEnlaceSchema,
   crearProblema as crearProblemaSchema,
   crearPropuesta as crearPropuestaSchema,
   emitirPapeleta as emitirPapeletaSchema,
   enmendarPropuesta as enmendarPropuestaSchema,
+  entregarTarea as entregarTareaSchema,
+  bloquearTarea as bloquearTareaSchema,
   type InformeIntegridad,
   mensajeDe,
   type Portada,
@@ -37,9 +42,15 @@ import {
   ratificarDecision as ratificarDecisionSchema,
   planificarHito as planificarHitoSchema,
   ofrecerTarea as ofrecerTareaSchema,
+  iniciarTarea as iniciarTareaSchema,
+  pedirAyudaTarea as pedirAyudaTareaSchema,
+  pedirCambiosTarea as pedirCambiosTareaSchema,
+  reanudarTarea as reanudarTareaSchema,
   reofrecerTarea as reofrecerTareaSchema,
   responderOfertaTarea as responderOfertaTareaSchema,
   type Sesion,
+  solicitarSupresion as solicitarSupresionSchema,
+  type SupresionSolicitada,
   solicitudEnlace as solicitudEnlaceSchema,
 } from '@koinonia/contracts';
 import {
@@ -55,9 +66,17 @@ import { z } from 'zod';
 
 import type { PgPool } from '../db/client.js';
 import { IdempotencyConflictError } from '../ledger/types.js';
+import {
+  CapacityServiceUnavailableError,
+  readOwnCapacity,
+  StaleCapacityRevisionError,
+  updateOwnCapacity,
+} from './capacity.js';
 import { CIRCULOS_LISTA, existeCirculo } from './circles.js';
 import {
   ENLACE_VIGENCIA_MS,
+  ErasureAlreadyRequestedError,
+  ErasureReauthenticationRequiredError,
   findMember,
   issueMagicLink,
   listActiveCircleMembers,
@@ -65,9 +84,14 @@ import {
   redeemMagicLink,
   resolveSession,
   revokeSession,
+  requestOwnErasure,
   upsertMember,
 } from './identity.js';
 import type { AuthenticatedMember, Ports } from './ports.js';
+import {
+  InvalidPrivateMaterialInputError,
+  PrivateMaterialUnavailableError,
+} from './private-material-store.js';
 import {
   decisionDetalleDto,
   decisionResumenDto,
@@ -82,32 +106,42 @@ import { consume, type RateRule, REGLA_ENLACE, REGLA_ESCRITURA } from './rate-li
 import {
   ACTOR_ANONIMO,
   abrirDecision,
+  aceptarRevisionTarea,
+  agregarEvidenciaTarea,
   aportarEvidencia,
+  bloquearTarea,
   cerrarDecision,
   crearProblema,
   crearPropuesta,
   emitirPapeleta,
   enmendarPropuesta,
+  entregarTarea,
   exportarTodo,
   listarDecisiones,
   listarIniciativas,
   listarProblemas,
   listarPropuestas,
   mePasaLoMismo,
+  iniciarTarea,
   resultadoDeDecision,
   retirarEvidencia,
   ratificarDecision,
   planificarHito,
   ofrecerTarea,
+  pedirAyudaTarea,
+  pedirCambiosTarea,
+  reanudarTarea,
   reofrecerTarea,
   responderOfertaTarea,
   ServicioError,
   type ServicioDeps,
   verDecision,
+  verEvidenciaTarea,
   verIniciativa,
   verificarTodo,
   verProblema,
   verPropuesta,
+  verResumenEntregaTarea,
 } from './service.js';
 
 export const COOKIE_SESION = 'koinonia_sesion';
@@ -146,6 +180,66 @@ declare module 'fastify' {
 }
 
 function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
+  if (error instanceof ErasureReauthenticationRequiredError) {
+    return {
+      estado: 401,
+      cuerpo: {
+        codigo: 'ERASURE_REAUTHENTICATION_REQUIRED',
+        mensaje: mensajeDe('ERASURE_REAUTHENTICATION_REQUIRED'),
+        queHacer: 'Volvé a entrar y confirmá la solicitud dentro de los siguientes diez minutos.',
+      },
+    };
+  }
+  if (error instanceof ErasureAlreadyRequestedError) {
+    return {
+      estado: 409,
+      cuerpo: {
+        codigo: 'ERASURE_ALREADY_REQUESTED',
+        mensaje: mensajeDe('ERASURE_ALREADY_REQUESTED'),
+        queHacer: 'Usá el radicado de la solicitud ya registrada.',
+      },
+    };
+  }
+  if (error instanceof StaleCapacityRevisionError) {
+    return {
+      estado: 409,
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code),
+        queHacer: 'Volvé a leer tu capacidad y guardá de nuevo sobre esa revisión.',
+      },
+    };
+  }
+  if (error instanceof CapacityServiceUnavailableError) {
+    return {
+      estado: 503,
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code),
+        queHacer: 'Probá de nuevo más tarde; no se guardó ningún valor sin cifrar.',
+      },
+    };
+  }
+  if (error instanceof InvalidPrivateMaterialInputError) {
+    return {
+      estado: 400,
+      cuerpo: {
+        codigo: 'DATOS_INVALIDOS',
+        mensaje: mensajeDe('DATOS_INVALIDOS'),
+        queHacer: 'Reducí el texto y volvé a intentarlo; no se guardó contenido parcial.',
+      },
+    };
+  }
+  if (error instanceof PrivateMaterialUnavailableError) {
+    return {
+      estado: 503,
+      cuerpo: {
+        codigo: 'PRIVATE_MATERIAL_UNAVAILABLE',
+        mensaje: mensajeDe('PRIVATE_MATERIAL_UNAVAILABLE'),
+        queHacer: 'Probá de nuevo más tarde; el historial no se modificó.',
+      },
+    };
+  }
   if (error instanceof IdempotencyConflictError) {
     return {
       estado: 409,
@@ -169,7 +263,7 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
           error.reason === 'NOT_AUTHENTICATED'
             ? 'Entrá con tu correo institucional; tu borrador se conserva.'
             : error.reason === 'NOT_THE_OWNER'
-              ? 'Podés proponer una enmienda, que queda como texto tuyo y con tu nombre.'
+              ? 'Esta acción le corresponde a otra persona; podés aportar por los canales abiertos.'
               : 'Si creés que es un error, cualquier miembro puede llevarlo al Círculo de Garantías.',
       },
     };
@@ -185,6 +279,8 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
     const semanticConflict =
       error.code === 'STALE_TASK_OFFER' ||
       error.code === 'STALE_TASK_REVISION' ||
+      error.code === 'STALE_TASK_PAUSE' ||
+      error.code === 'STALE_TASK_DELIVERY' ||
       error.code === 'TASK_OFFER_ALREADY_ANSWERED';
     return {
       estado: semanticConflict ? 409 : 422,
@@ -281,6 +377,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   function idDe(request: FastifyRequest): MemberId | undefined {
     return request.quien?.memberId;
+  }
+
+  function sujetoPropioDe(request: FastifyRequest): MemberId {
+    const subjectId = idDe(request);
+    if (subjectId === undefined) {
+      throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'falta una sesión vigente');
+    }
+    return subjectId;
   }
 
   /** Cupo de escritura por persona. Sin IP: el sujeto es el `MemberId`. */
@@ -449,6 +553,56 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     void reply.clearCookie(COOKIE_SESION, { path: '/' });
     return { salio: true };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Supresión propia: la solicitud se sella; un ejecutor técnico sólo consume ese agregado
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  app.post('/mi/supresion', async (request, reply) => {
+    await cupoDeEscritura(request);
+    parse(z.object({}).strict(), request.query);
+    const cuerpo = parse(solicitarSupresionSchema, request.body);
+    const token = request.sesionToken;
+    if (token === undefined || token === '') {
+      throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'falta una sesión vigente');
+    }
+    const receipt = await requestOwnErasure(options.pool, token, {
+      clock: options.ports.clock,
+      random: options.ports.random,
+      requestId: cuerpo.requestId,
+      legalBasis: cuerpo.baseLegal,
+      confirmationIrreversible: cuerpo.confirmacionIrreversible,
+    });
+    return await reply.status(202).send({
+      solicitudId: receipt.erasureId,
+      radicado: receipt.claimRef,
+      solicitadaEn: receipt.requestedAt,
+      estado: 'pendiente',
+    } satisfies SupresionSolicitada);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Capacidad propia privada
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  app.get('/mi/capacidad', async (request) => {
+    // No hay selector de sujeto, tampoco escondido como query param.
+    parse(z.object({}).strict(), request.query);
+    return await readOwnCapacity(options.pool, options.ports.vault, sujetoPropioDe(request));
+  });
+
+  app.put('/mi/capacidad', async (request) => {
+    await cupoDeEscritura(request);
+    parse(z.object({}).strict(), request.query);
+    const cuerpo = parse(actualizarCapacidadSchema, request.body);
+    return await updateOwnCapacity(
+      options.pool,
+      options.ports.vault,
+      sujetoPropioDe(request),
+      cuerpo,
+      options.ports.clock.now(),
+    );
   });
 
   /** Selector acotado: sólo integrantes vigentes del círculo que la persona ya puede consultar. */
@@ -743,6 +897,88 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
   });
 
+  app.post('/iniciativas/:id/tareas/:taskId/iniciar', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(iniciarTareaSchema, request.body);
+    const state = await iniciarTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/bloquear', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(bloquearTareaSchema, request.body);
+    const state = await bloquearTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/ayuda', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(pedirAyudaTareaSchema, request.body);
+    const state = await pedirAyudaTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/reanudar', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(reanudarTareaSchema, request.body);
+    const state = await reanudarTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/evidencias', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(agregarEvidenciaTareaSchema, request.body);
+    const state = await agregarEvidenciaTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(201).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.get('/iniciativas/:id/tareas/:taskId/evidencias/:evidenceId', async (request) => {
+    parse(z.object({}).strict(), request.query);
+    const { id, taskId, evidenceId } = parse(
+      z.object({ id: z.string(), taskId: z.string(), evidenceId: z.string() }),
+      request.params,
+    );
+    return await verEvidenciaTarea(deps, actorDe(request), id, taskId, evidenceId);
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/entregas', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(entregarTareaSchema, request.body);
+    const state = await entregarTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(201).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.get('/iniciativas/:id/tareas/:taskId/entregas/:deliveryId/resumen', async (request) => {
+    parse(z.object({}).strict(), request.query);
+    const { id, taskId, deliveryId } = parse(
+      z.object({ id: z.string(), taskId: z.string(), deliveryId: z.string() }),
+      request.params,
+    );
+    return await verResumenEntregaTarea(deps, actorDe(request), id, taskId, deliveryId);
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/revisiones/cambios', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(pedirCambiosTareaSchema, request.body);
+    const state = await pedirCambiosTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
+  app.post('/iniciativas/:id/tareas/:taskId/revisiones/aceptar', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
+    const body = parse(aceptarRevisionTareaSchema, request.body);
+    const state = await aceptarRevisionTarea(deps, actorDe(request), id, taskId, body);
+    return await reply.status(200).send(iniciativaDto(id, state, idDe(request)));
+  });
+
   app.post('/iniciativas/:id/tareas/:taskId/reofertas', async (request, reply) => {
     await cupoDeEscritura(request);
     const { id, taskId } = parse(z.object({ id: z.string(), taskId: z.string() }), request.params);
@@ -757,6 +993,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.get('/integridad', async (): Promise<InformeIntegridad> => {
     const v = await verificarTodo(deps);
+    const fallosPrivados = new Map<string, number>();
+    for (const finding of v.materialPrivado.findings) {
+      fallosPrivados.set(finding.code, (fallosPrivados.get(finding.code) ?? 0) + 1);
+    }
+    const detallePrivado = [...fallosPrivados]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([code, count]) => `${code}: ${String(count)}`)
+      .join(' · ');
     const comprobaciones = [
       {
         id: 'cadena',
@@ -773,6 +1017,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         ...(v.ledger.ok
           ? {}
           : { detalle: v.ledger.findings.map((f) => `${f.code}: ${f.detail}`).join(' · ') }),
+      },
+      {
+        id: 'material-privado',
+        queSeComprobo:
+          'Que cada apertura privada todavía disponible corresponde a un único hecho del historial, ' +
+          'se autentica con su clave y reproduce exactamente el compromiso público, sin mostrar su contenido.',
+        bien: v.materialPrivado.ok,
+        queSignifica: v.materialPrivado.ok
+          ? `Se autenticaron ${String(v.materialPrivado.openedCount)} aperturas privadas y ` +
+            `${String(v.materialPrivado.suppressedCount)} supresiones append-only autorizadas ` +
+            'por una solicitud propia. Sus textos ' +
+            'no se publicaron ni se incluyeron en este informe. Esta comprobación es local: el export público no contiene ciphertexts.'
+          : 'Falta, sobra o no se puede autenticar material privado comprometido por el historial. ' +
+            'El ledger público sigue siendo comprobable, pero esta parte mutable no debe mostrarse en verde.',
+        ...(v.materialPrivado.ok
+          ? {}
+          : {
+              detalle:
+                `${detallePrivado || 'verification-unavailable: 1'} · ` +
+                `esperadas=${String(v.materialPrivado.expectedCount)} · ` +
+                `almacenadas=${String(v.materialPrivado.storedCount)} · ` +
+                `autenticadas=${String(v.materialPrivado.openedCount)} · ` +
+                `suprimidas=${String(v.materialPrivado.suppressedCount)}`,
+            }),
       },
       {
         id: 'textos',
@@ -833,10 +1101,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       comprobaciones,
       comoComprobarloVosMismo: {
         explicacion:
-          'Si sólo comprobamos nosotros, no probamos nada: te estaríamos pidiendo que nos creas. ' +
-          'Descargá el historial completo y pasalo por la herramienta de comprobación, que es ' +
-          'código abierto y no es este servidor. Si te da lo mismo que dice esta página, es ' +
-          'porque es verdad, no porque lo digamos.',
+          'Descargá el historial público y pasalo por la herramienta independiente para comprobar ' +
+          'cadenas, resultados, referencias y anclajes sin confiar en este servidor. El material ' +
+          'privado no sale en ese export: su fila de esta página es una auditoría local de ' +
+          'disponibilidad y commitments, no una prueba independiente de sus ciphertexts.',
         comando: 'npx @koinonia/verificador historial.json',
         urlDeDescarga: '/integridad/exportar',
       },

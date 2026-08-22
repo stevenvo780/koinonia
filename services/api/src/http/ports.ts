@@ -17,7 +17,10 @@
  * por un sitio nombrado y sustituible.
  */
 
-import type { CircleId, MemberId, Role } from '@koinonia/domain';
+import type { CircleId, MemberId, PrivateMaterialContext, Role } from '@koinonia/domain';
+
+/** Corte inicial: detalle textual restringido, acotado por bytes UTF-8. */
+export const MAX_RESTRICTED_PRIVATE_TEXT_BYTES = 16 * 1024;
 
 /** Reloj. `now()` en milisegundos desde el epoch UTC. */
 export interface ClockPort {
@@ -77,12 +80,84 @@ export interface IdentityProviderAdapter {
   verify: (email: string) => Promise<IdentityResult>;
 }
 
+/** Sobre de una clave de datos por sujeto. La DSK en claro nunca cruza este puerto. */
+export interface SubjectDataKeyEnvelope {
+  readonly keyRef: string;
+  readonly wrapNonce: Uint8Array;
+  readonly wrappedDek: Uint8Array;
+  readonly cryptoVersion: number;
+}
+
+/** Valor de capacidad autenticado. El tag GCM viaja concatenado al ciphertext. */
+export interface CapacityCiphertext {
+  readonly nonce: Uint8Array;
+  readonly ciphertext: Uint8Array;
+}
+
+export type PrivateMaterialPurpose = PrivateMaterialContext['purpose'];
+
+/** Apertura que vive canónicamente dentro del ciphertext, nunca en columnas separadas. */
+export interface RestrictedTextMaterialOpening {
+  /** Nonce del commitment como 32 hex minúsculas (128 bits). */
+  readonly nonce128: string;
+  readonly context: PrivateMaterialContext;
+  readonly content: string;
+}
+
+/** Ciphertext de una apertura privada; el tag GCM va concatenado. */
+export interface PrivateMaterialCiphertext {
+  readonly nonce: Uint8Array;
+  readonly ciphertext: Uint8Array;
+}
+
+/**
+ * Bóveda de alto nivel para capacidad privada.
+ *
+ * La capa de persistencia sólo ve sobres y ciphertexts. No recibe una operación AES genérica ni
+ * una DSK desenrollada, así que no puede omitir por accidente el AAD de sujeto/campo/revisión.
+ */
+export interface VaultCryptoPort {
+  /** Permite fallar antes de inventar una clave o un formato alternativo. */
+  readonly available: boolean;
+  createSubjectDataKey: (subjectId: MemberId) => Promise<SubjectDataKeyEnvelope>;
+  encryptCapacity: (input: {
+    readonly subjectId: MemberId;
+    readonly revision: number;
+    readonly minutosPorSemana: number;
+    readonly subjectKey: SubjectDataKeyEnvelope;
+  }) => Promise<CapacityCiphertext>;
+  decryptCapacity: (input: {
+    readonly subjectId: MemberId;
+    readonly revision: number;
+    readonly nonce: Uint8Array;
+    readonly ciphertext: Uint8Array;
+    readonly subjectKey: SubjectDataKeyEnvelope;
+  }) => Promise<number>;
+  encryptRestrictedTextMaterial: (input: {
+    readonly subjectId: MemberId;
+    readonly materialId: string;
+    readonly purpose: PrivateMaterialPurpose;
+    readonly opening: RestrictedTextMaterialOpening;
+    readonly subjectKey: SubjectDataKeyEnvelope;
+  }) => Promise<PrivateMaterialCiphertext>;
+  decryptRestrictedTextMaterial: (input: {
+    readonly subjectId: MemberId;
+    readonly materialId: string;
+    readonly purpose: PrivateMaterialPurpose;
+    readonly nonce: Uint8Array;
+    readonly ciphertext: Uint8Array;
+    readonly subjectKey: SubjectDataKeyEnvelope;
+  }) => Promise<RestrictedTextMaterialOpening>;
+}
+
 /** Todo lo que la aplicación necesita del exterior, en un solo objeto. */
 export interface Ports {
   readonly clock: ClockPort;
   readonly random: RandomPort;
   readonly mailer: MailerPort;
   readonly identity: IdentityProviderAdapter;
+  /** Desarrollo sin KEK inyecta explícitamente el adaptador indisponible; nunca se omite. */
+  readonly vault: VaultCryptoPort;
 }
 
 /** Quien ya demostró ser quien dice. Sin correo: el correo no cruza esta frontera. */

@@ -409,6 +409,7 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
     expect(informe.comprobaciones.map((c: { id: string }) => c.id).sort()).toEqual([
       'cadena',
       'ejecucion',
+      'material-privado',
       'resultados',
       'textos',
     ]);

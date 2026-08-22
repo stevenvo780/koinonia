@@ -22,6 +22,7 @@ import {
   cryptoRandom,
   ensureSpine,
   migrate,
+  NodeAes256GcmVaultCrypto,
   setAppRolePassword,
   systemClock,
   udeaIdentityAdapter,
@@ -110,6 +111,7 @@ export default async function globalSetup(): Promise<void> {
       // lo que permite que un test entre sin leer una bandeja de correo.
       mailer: { send: async () => Promise.resolve() },
       identity: udeaIdentityAdapter({ facilitadores: [CORREO_FACILITADORA] }),
+      vault: new NodeAes256GcmVaultCrypto(Uint8Array.from({ length: 32 }, (_, i) => 32 - i)),
     },
     // Los escenarios entran decenas de veces con el mismo correo de facilitación, y en la matriz
     // completa eso se multiplica por cinco navegadores. El límite real —5 enlaces por hora— ya está

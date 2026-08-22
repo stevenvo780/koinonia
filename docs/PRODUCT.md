@@ -201,7 +201,7 @@ el primer día.
 | **Normas** | Las reglas vigentes, con la decisión que creó cada una y su fecha de revisión | Acuerdos por tipo (operativo, procedimental, constitutivo) con estado `vigente`, `en revisión`, `enmendado`, `derogado` o `caducado`, y por qué existe, quién lo revisa y con qué criterios. Acción: «proponer un cambio», que abre un problema | Sólo las reglas fundacionales, con el aviso «estas reglas se aprobaron el [fecha] y **caducan** el [fecha + 1 año] si no se vuelven a ratificar» | Acuerdo vencido: marcado con los días de retraso, atribuido al círculo. Sin fecha de revisión o sin criterios: no se aprueba |
 | **Delegaciones** | Prestarle mi voto a alguien en quien confío, en los temas en que confío, mientras yo quiera | A quién le presté mi voto y para qué temas, quién me lo prestó y cuándo vence, con revocar de efecto inmediato. Acción: prestarlo en un tema, con vencimiento de máximo un semestre y renovación explícita | «No le prestaste tu voto a nadie y nadie te lo prestó a vos. Podés votar vos mismo en todo. Prestar el voto sirve para los temas que te importan pero no podés seguir» | Cadena circular: «si delegás en Beto, ninguno de los dos votaría». Tope: «Marta ya lleva 30 votos». **Aviso de cadena rota** 24 h antes del cierre |
 | **Historial** | Todo lo que pasó, en orden, sin que nada se borre | Línea de tiempo filtrable por círculo, persona y tipo de acto, que incluye **los actos de administración técnica en la misma lista que todo lo demás**. Acción: buscar; memoria que no se recupera es sedimento | «Todavía no ha pasado nada. Este es el primer día», con la fecha de inicio del registro | Lo retirado por protección de datos aparece como hueco declarado —«se retiró un contenido el [fecha] por [motivo]»—, nunca como ausencia silenciosa |
-| **Verificar integridad** | Comprobar, sin confiar en nosotros, que nada se cambió después | «El historial está completo y sin alteraciones desde el [fecha]»; «este resultado se puede volver a calcular y da lo mismo»; «tu voto está incluido en el conteo», con el comprobante de cada quien. Acción: «comprobar ahora» y «descargar todo» | «Todavía no hay decisiones que verificar. Cuando las haya vas a poder comprobar por tu cuenta que el conteo es correcto, sin confiar en nadie» | Verificación fallida: la decisión entra en cuarentena y el hecho se publica. Un fallo de conteo debe ser alarma pública, nunca fraude silencioso |
+| **Verificar integridad** | Comprobar, sin confiar en nosotros, el historial público exportable y distinguirlo de la auditoría local del material privado | «Todas las comprobaciones pasaron»; cada fila explica si comprobó historial público o disponibilidad privada local; «este resultado se puede volver a calcular y da lo mismo»; «tu voto está incluido en el conteo», con el comprobante de cada quien. Acción: «comprobar ahora» y «descargar todo» | «Todavía no hay decisiones que verificar. Cuando las haya vas a poder comprobar por tu cuenta el historial público; el material privado nunca sale en esa descarga» | Verificación fallida: la decisión entra en cuarentena y el hecho se publica. Un fallo de conteo debe ser alarma pública, nunca fraude silencioso |
 
 ---
 
@@ -319,7 +319,16 @@ general** o **pedir reasignación**. Nadie queda asignado por omisión, y todo q
 registro es lo que permite después discutir la carga de trabajo con datos y no con reproches. Los
 detalles sensibles viven cifrados y con acceso restringido, no en el ledger público. Cada persona
 declara sus horas por semana y el sistema **rechaza** nuevas aceptaciones que las superen sin revelar
-esa capacidad a quien ofrece.
+esa capacidad a quien ofrece. Aceptar no empieza el trabajo por sí solo: la persona pulsa
+**«Comenzar»**, puede declarar un bloqueo, pedir ayuda, reanudar, aportar evidencia y entregar. Quien
+asumió el plan puede pedir cambios o aceptar la revisión; ninguna de esas acciones pertenece al
+administrador técnico.
+
+La capacidad exacta sólo existe en **Mis tareas** y se cifra por persona. Una oferta nunca consulta ni
+revela ese dato. La evidencia restringida muestra al círculo apenas una categoría gruesa; texto,
+nombre de archivo, URL, tipo y tamaño exactos quedan fuera del historial público. Publicar una
+evidencia requiere una segunda confirmación y una copia saneada: no se convierte en pública por
+accidente al marcar una casilla.
 
 **Flujo de incumplimiento.** Gradual, proporcional, reversible y orientado a recuperar el trabajo. El
 supuesto de diseño es que la mayoría de los incumplimientos son sobrecarga o bloqueo, no mala fe.

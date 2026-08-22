@@ -18,7 +18,15 @@ import { createPool } from './db/client.js';
 import { migrate } from './db/migrate.js';
 import { ensureSpine } from './ledger/event-store.js';
 import { buildApp } from './http/app.js';
-import { consoleMailer, cryptoRandom, systemClock, udeaIdentityAdapter } from './http/adapters.js';
+import {
+  consoleMailer,
+  cryptoRandom,
+  NodeAes256GcmVaultCrypto,
+  systemClock,
+  udeaIdentityAdapter,
+  unavailableVaultCrypto,
+} from './http/adapters.js';
+import type { VaultCryptoPort } from './http/ports.js';
 
 function lista(nombre: string): readonly string[] {
   const valor = process.env[nombre];
@@ -29,11 +37,39 @@ function lista(nombre: string): readonly string[] {
     .filter((s) => s !== '');
 }
 
+function vaultFromEnvironment(modoDesarrollo: boolean): VaultCryptoPort {
+  const encoded = process.env['KOINONIA_VAULT_MASTER_KEY'];
+  if (encoded === undefined || encoded.trim() === '') {
+    if (!modoDesarrollo) {
+      throw new Error(
+        'KOINONIA_VAULT_MASTER_KEY es obligatoria en producción y debe ser base64 de 32 bytes',
+      );
+    }
+    return unavailableVaultCrypto;
+  }
+
+  const normalized = encoded.trim();
+  const validBase64 = /^[A-Za-z0-9+/]{43}=$/u.test(normalized);
+  const key = validBase64 ? Buffer.from(normalized, 'base64') : undefined;
+  if (key === undefined || key.length !== 32) {
+    if (!modoDesarrollo) {
+      throw new Error('KOINONIA_VAULT_MASTER_KEY no es base64 válido de 32 bytes');
+    }
+    return unavailableVaultCrypto;
+  }
+  try {
+    return new NodeAes256GcmVaultCrypto(key);
+  } finally {
+    key.fill(0);
+  }
+}
+
 export async function main(): Promise<void> {
   const url =
     process.env['DATABASE_URL'] ?? 'postgresql://postgres:koinonia@localhost:55432/koinonia';
   const puerto = Number.parseInt(process.env['PORT'] ?? '3001', 10);
   const modoDesarrollo = process.env['NODE_ENV'] !== 'production';
+  const vault = vaultFromEnvironment(modoDesarrollo);
 
   const pepper = process.env['KOINONIA_RATE_PEPPER'];
   if (pepper === undefined || pepper.length < 16) {
@@ -64,6 +100,7 @@ export async function main(): Promise<void> {
         facilitadores: lista('KOINONIA_FACILITADORES'),
         garantias: lista('KOINONIA_GARANTIAS'),
       }),
+      vault,
     },
     ratePepper: pepper ?? 'pimienta-de-desarrollo-no-usar-en-produccion',
     webBaseUrl: process.env['KOINONIA_WEB_URL'] ?? 'http://localhost:3000',

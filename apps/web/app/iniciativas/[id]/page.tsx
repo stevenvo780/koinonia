@@ -12,10 +12,18 @@ import {
 } from 'react';
 
 import {
+  CATEGORIA_AYUDA_EN_PALABRAS,
+  CATEGORIA_BLOQUEO_EN_PALABRAS,
+  EVIDENCIA_CRITERIO_EN_PALABRAS,
+  MOTIVO_CAMBIOS_EN_PALABRAS,
   MOTIVO_RESPUESTA_TAREA_EN_PALABRAS,
   instanteColombia,
+  type CategoriaAyudaTarea,
+  type CategoriaBloqueoTarea,
+  type EvidenciaCriterioResultado,
   type IniciativaDetalle,
   type MiembrosCirculo,
+  type MotivoCambiosTarea,
   type MotivoRespuestaTarea,
   type Tarea,
 } from '@koinonia/contracts';
@@ -28,6 +36,11 @@ type RespuestaElegida = 'aceptar' | 'rechazar' | 'pedir-reasignacion';
 const ESTADO_TAREA_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
   ofrecida: 'Esperando respuesta',
   aceptada: 'Aceptada',
+  'en-curso': 'En curso',
+  bloqueada: 'Bloqueada',
+  'en-apoyo': 'En apoyo',
+  entregada: 'Entregada para revisión',
+  completada: 'Completada',
   rechazada: 'No fue aceptada',
   'reasignacion-solicitada': 'Necesita otra persona',
 };
@@ -35,13 +48,19 @@ const ESTADO_TAREA_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
 export default function DetalleIniciativa(): ReactNode {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { sesion, cargando: cargandoSesion, recargar: recargarSesion } = useSesion();
+  const { sesion, cargando: cargandoSesion } = useSesion();
+  const claveSesion = cargandoSesion ? 'cargando' : (sesion?.miembroId ?? 'anonima');
+  const claveSesionRef = useRef(claveSesion);
+  claveSesionRef.current = claveSesion;
   const [iniciativa, setIniciativa] = useState<IniciativaDetalle | undefined>(undefined);
+  const [iniciativaPara, setIniciativaPara] = useState<string | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
   const [errorAccion, setErrorAccion] = useState<unknown>(undefined);
   const [mensaje, setMensaje] = useState<string | undefined>(undefined);
   const [accionEnCurso, setAccionEnCurso] = useState<string | undefined>(undefined);
   const accionEnCursoRef = useRef<string | undefined>(undefined);
+  const accionGeneracionRef = useRef(0);
+  const cargaGeneracionRef = useRef(0);
   const resultadoAccionRef = useRef<HTMLDivElement | null>(null);
   const intentos = useRef(
     new Map<string, { readonly huella: string; readonly requestId: string }>(),
@@ -69,29 +88,72 @@ export default function DetalleIniciativa(): ReactNode {
     Readonly<Record<string, MotivoRespuestaTarea>>
   >({});
   const [reofertaPorTarea, setReofertaPorTarea] = useState<Readonly<Record<string, string>>>({});
-
-  const recargar = useCallback(() => {
-    setError(undefined);
-    traer<IniciativaDetalle>(`/iniciativas/${id}`).then(setIniciativa).catch(setError);
-  }, [id]);
-
-  useEffect(recargar, [recargar]);
+  const ultimaIdentidadConfirmada = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    const alVolver = (): void => {
-      recargarSesion();
-    };
-    window.addEventListener('focus', alVolver);
-    return () => {
-      window.removeEventListener('focus', alVolver);
-    };
-  }, [recargarSesion]);
+    if (cargandoSesion) return;
+    const identidadActual = sesion?.miembroId ?? 'anonima';
+    const anterior = ultimaIdentidadConfirmada.current;
+    ultimaIdentidadConfirmada.current = identidadActual;
+    if (anterior === undefined || anterior === identidadActual) return;
+
+    // Los borradores no publicados pueden contener información de la cuenta anterior. Se
+    // preservan durante una reautenticación de la misma persona, pero nunca cruzan a otra.
+    setTituloHito('');
+    setCriterioHito('');
+    setVenceHito('');
+    setHitoTarea('');
+    setDestinatarioTarea('');
+    setTituloTarea('');
+    setDescripcionTarea('');
+    setVenceTarea('');
+    setEsfuerzoTarea('60');
+    setDependencias([]);
+    setRespuestaPorTarea({});
+    setMotivoPorTarea({});
+    setReofertaPorTarea({});
+    setErrorAccion(undefined);
+    setMensaje(undefined);
+    accionGeneracionRef.current += 1;
+    accionEnCursoRef.current = undefined;
+    setAccionEnCurso(undefined);
+    intentos.current.clear();
+  }, [cargandoSesion, sesion]);
+
+  const recargar = useCallback(
+    async (para: string): Promise<void> => {
+      const generacion = ++cargaGeneracionRef.current;
+      try {
+        const actual = await traer<IniciativaDetalle>(`/iniciativas/${id}`);
+        if (claveSesionRef.current !== para || cargaGeneracionRef.current !== generacion) return;
+        setIniciativa(actual);
+        setError(undefined);
+        setIniciativaPara(para);
+      } catch (fallo: unknown) {
+        if (claveSesionRef.current !== para || cargaGeneracionRef.current !== generacion) return;
+        setIniciativa(undefined);
+        setError(fallo);
+        setIniciativaPara(para);
+      }
+    },
+    [id],
+  );
 
   useEffect(() => {
-    if (mensaje !== undefined || errorAccion !== undefined) {
-      resultadoAccionRef.current?.focus();
+    if (claveSesion === 'cargando') {
+      // Una respuesta de la misma cuenta iniciada antes del foco tampoco puede ganar luego de que
+      // la cookie se revalidó y volvió al mismo miembro.
+      cargaGeneracionRef.current += 1;
+      accionGeneracionRef.current += 1;
+      accionEnCursoRef.current = undefined;
+      setAccionEnCurso(undefined);
+      return;
     }
-  }, [errorAccion, mensaje]);
+    setIniciativa(undefined);
+    setError(undefined);
+    setIniciativaPara(undefined);
+    void recargar(claveSesion);
+  }, [claveSesion, recargar]);
 
   useEffect(() => {
     if (iniciativa?.activa !== true || !iniciativa.esResponsableInicial) {
@@ -118,6 +180,7 @@ export default function DetalleIniciativa(): ReactNode {
     ruta: string,
     cuerpo: Readonly<Record<string, unknown>>,
     confirmacion: string,
+    destinoFoco?: string,
   ): Promise<boolean> {
     // Un segundo submit local nunca corre en paralelo con el primero. Además de evitar una vista
     // que retrocede cuando las respuestas llegan desordenadas, esto reduce dobles toques móviles.
@@ -128,6 +191,9 @@ export default function DetalleIniciativa(): ReactNode {
     intentos.current.set(clave, { huella, requestId });
     setErrorAccion(undefined);
     setMensaje(undefined);
+    const ejecutadaPara = claveSesionRef.current;
+    if (ejecutadaPara === 'cargando') return false;
+    const generacion = ++accionGeneracionRef.current;
     accionEnCursoRef.current = clave;
     setAccionEnCurso(clave);
     try {
@@ -135,16 +201,47 @@ export default function DetalleIniciativa(): ReactNode {
         ...cuerpo,
         requestId,
       });
+      if (claveSesionRef.current !== ejecutadaPara || accionGeneracionRef.current !== generacion)
+        return false;
       setIniciativa(actualizada);
+      setIniciativaPara(ejecutadaPara);
       setMensaje(confirmacion);
       intentos.current.delete(clave);
+      requestAnimationFrame(() => {
+        (destinoFoco === undefined
+          ? resultadoAccionRef.current
+          : document.getElementById(destinoFoco)
+        )?.focus();
+      });
       return true;
-    } catch (fallo) {
+    } catch (fallo: unknown) {
+      if (claveSesionRef.current !== ejecutadaPara || accionGeneracionRef.current !== generacion)
+        return false;
       setErrorAccion(fallo);
+      if (
+        fallo instanceof ErrorDeApi &&
+        [
+          'STALE_TASK_OFFER',
+          'STALE_TASK_REVISION',
+          'STALE_TASK_PAUSE',
+          'STALE_TASK_DELIVERY',
+          'TASK_OFFER_ALREADY_ANSWERED',
+        ].includes(fallo.codigo)
+      ) {
+        await recargar(ejecutadaPara);
+      }
+      requestAnimationFrame(() => {
+        (destinoFoco === undefined
+          ? resultadoAccionRef.current
+          : document.getElementById(destinoFoco)
+        )?.focus();
+      });
       return false;
     } finally {
-      accionEnCursoRef.current = undefined;
-      setAccionEnCurso(undefined);
+      if (accionGeneracionRef.current === generacion) {
+        accionEnCursoRef.current = undefined;
+        setAccionEnCurso(undefined);
+      }
     }
   }
 
@@ -224,7 +321,7 @@ export default function DetalleIniciativa(): ReactNode {
     evento.preventDefault();
     // Una tarea ya aceptada sólo admite pedir reasignación. No se reutiliza la opción «aceptar»
     // que el formulario anterior pudiera conservar en memoria después de actualizar la vista.
-    const tipo = tarea.estado === 'aceptada' ? 'pedir-reasignacion' : respuestaPorTarea[tarea.id];
+    const tipo = tarea.estado === 'ofrecida' ? respuestaPorTarea[tarea.id] : 'pedir-reasignacion';
     if (tipo === undefined) {
       setErrorAccion(new Error('Elegí una respuesta antes de registrarla.'));
       return;
@@ -247,6 +344,7 @@ export default function DetalleIniciativa(): ReactNode {
         : tipo === 'rechazar'
           ? 'Tu respuesta quedó registrada. La tarea no figura a tu cargo.'
           : 'Pediste otra persona. La tarea dejó de figurar a tu cargo inmediatamente.',
+      `tarea-${tarea.id}`,
     );
     if (registrado) {
       setMotivoPorTarea((actual) => {
@@ -266,12 +364,18 @@ export default function DetalleIniciativa(): ReactNode {
       `/iniciativas/${id}/tareas/${tarea.id}/reofertas`,
       { offerId: tarea.ofertaId, destinatarioId: reofertaPorTarea[tarea.id] ?? '' },
       'La nueva oferta reemplazó la anterior. Ahora espera respuesta.',
+      `tarea-${tarea.id}`,
     );
     if (registrada) {
       setReofertaPorTarea((actual) => ({ ...actual, [tarea.id]: '' }));
     }
   }
 
+  // Una proyección lleva permisos derivados de una identidad concreta. Nunca se muestra si la
+  // sesión está revalidándose o si fue descargada para otra cuenta.
+  if (claveSesion === 'cargando' || iniciativaPara !== claveSesion) {
+    return <Cargando que="la iniciativa y tus permisos actuales" />;
+  }
   if (error !== undefined) return <ErrorVisible error={error} />;
   if (iniciativa === undefined) return <Cargando que="la iniciativa" />;
 
@@ -408,6 +512,7 @@ export default function DetalleIniciativa(): ReactNode {
                         {tareas.map((tarea) => (
                           <TareaVisible
                             key={tarea.id}
+                            iniciativaId={id}
                             tarea={tarea}
                             todas={iniciativa.tareas}
                             esResponsableInicial={iniciativa.esResponsableInicial}
@@ -436,6 +541,7 @@ export default function DetalleIniciativa(): ReactNode {
                             }}
                             onResponder={(evento) => void responderTarea(evento, tarea)}
                             onReofrecer={(evento) => void reofrecerTarea(evento, tarea)}
+                            onEjecutar={ejecutar}
                           />
                         ))}
                       </ul>
@@ -452,8 +558,8 @@ export default function DetalleIniciativa(): ReactNode {
         <section aria-labelledby="organizar-titulo">
           <h2 id="organizar-titulo">Organizar el trabajo inicial</h2>
           <p className="suave">
-            Acá registrás plazos y ofertas. La plataforma todavía no calcula carga disponible ni
-            afirma que una tarea está en seguimiento completo.
+            Acá registrás plazos y ofertas. La capacidad exacta sólo se valida con la persona al
+            aceptar; después cada tarea conserva su seguimiento y revisión.
           </p>
 
           <form className="formulario-acotado" onSubmit={(e) => void planificarHito(e)}>
@@ -491,6 +597,7 @@ export default function DetalleIniciativa(): ReactNode {
                 <label htmlFor="vence-hito">Fecha y hora límite, en hora de Colombia</label>
                 <input
                   id="vence-hito"
+                  aria-describedby="ayuda-vence-hito"
                   type="datetime-local"
                   required
                   value={venceHito}
@@ -498,7 +605,7 @@ export default function DetalleIniciativa(): ReactNode {
                     setVenceHito(e.target.value);
                   }}
                 />
-                <span className="ayuda">
+                <span className="ayuda" id="ayuda-vence-hito">
                   No puede ser posterior a la revisión acordada: {cuando(iniciativa.revisarEn)}.
                 </span>
               </div>
@@ -547,6 +654,7 @@ export default function DetalleIniciativa(): ReactNode {
                   <label htmlFor="descripcion-tarea">¿Qué incluye esta tarea?</label>
                   <textarea
                     id="descripcion-tarea"
+                    aria-describedby="ayuda-descripcion-tarea"
                     required
                     minLength={20}
                     maxLength={4000}
@@ -555,7 +663,7 @@ export default function DetalleIniciativa(): ReactNode {
                       setDescripcionTarea(e.target.value);
                     }}
                   />
-                  <span className="ayuda">
+                  <span className="ayuda" id="ayuda-descripcion-tarea">
                     Esto queda en el historial público. Describí el trabajo, no datos personales ni
                     situaciones privadas de quien lo hará.
                   </span>
@@ -567,6 +675,7 @@ export default function DetalleIniciativa(): ReactNode {
                   ) : (
                     <select
                       id="destinatario-tarea"
+                      aria-describedby="ayuda-destinatario-tarea"
                       required
                       value={destinatarioTarea}
                       onChange={(e) => {
@@ -581,7 +690,7 @@ export default function DetalleIniciativa(): ReactNode {
                       ))}
                     </select>
                   )}
-                  <span className="ayuda">
+                  <span className="ayuda" id="ayuda-destinatario-tarea">
                     Elegís un alias del círculo; nunca tenés que copiar un identificador técnico.
                   </span>
                   <ErrorVisible error={errorMiembros} />
@@ -602,6 +711,7 @@ export default function DetalleIniciativa(): ReactNode {
                   <label htmlFor="esfuerzo-tarea">Tiempo estimado, en minutos</label>
                   <input
                     id="esfuerzo-tarea"
+                    aria-describedby="ayuda-esfuerzo-tarea"
                     type="number"
                     required
                     min={1}
@@ -613,7 +723,7 @@ export default function DetalleIniciativa(): ReactNode {
                       setEsfuerzoTarea(e.target.value);
                     }}
                   />
-                  <span className="ayuda">
+                  <span className="ayuda" id="ayuda-esfuerzo-tarea">
                     Es sólo una estimación compartida; todavía no se usa para medir ni comparar
                     personas.
                   </span>
@@ -665,6 +775,7 @@ export default function DetalleIniciativa(): ReactNode {
 }
 
 function TareaVisible({
+  iniciativaId,
   tarea,
   todas,
   esResponsableInicial,
@@ -678,7 +789,9 @@ function TareaVisible({
   onReoferta,
   onResponder,
   onReofrecer,
+  onEjecutar,
 }: {
+  readonly iniciativaId: string;
   readonly tarea: Tarea;
   readonly todas: readonly Tarea[];
   readonly esResponsableInicial: boolean;
@@ -692,22 +805,139 @@ function TareaVisible({
   readonly onReoferta: (destinatario: string) => void;
   readonly onResponder: (evento: SyntheticEvent<HTMLFormElement>) => void;
   readonly onReofrecer: (evento: SyntheticEvent<HTMLFormElement>) => void;
+  readonly onEjecutar: (
+    clave: string,
+    ruta: string,
+    cuerpo: Readonly<Record<string, unknown>>,
+    confirmacion: string,
+    destinoFoco?: string,
+  ) => Promise<boolean>;
 }): ReactNode {
-  const respuestaVigente = tarea.estado === 'aceptada' ? 'pedir-reasignacion' : respuesta;
+  const [categoriaBloqueo, setCategoriaBloqueo] = useState<CategoriaBloqueoTarea | ''>('');
+  const [categoriaAyuda, setCategoriaAyuda] = useState<CategoriaAyudaTarea | ''>('');
+  const [notaEvidencia, setNotaEvidencia] = useState('');
+  const [evidenciasEntrega, setEvidenciasEntrega] = useState<readonly string[]>([]);
+  const [resumenEntrega, setResumenEntrega] = useState('');
+  const [motivoCambios, setMotivoCambios] = useState<MotivoCambiosTarea | ''>('');
+  const [evidenciaCriterio, setEvidenciaCriterio] = useState<EvidenciaCriterioResultado | ''>('');
+  const [contenidoAbierto, setContenidoAbierto] = useState<Readonly<Record<string, string>>>({});
+  const [resumenAbierto, setResumenAbierto] = useState<Readonly<Record<string, string>>>({});
+  const [cargandoPrivado, setCargandoPrivado] = useState<string | undefined>(undefined);
+  const [errorPrivado, setErrorPrivado] = useState<unknown>(undefined);
+  const privadoRef = useRef<HTMLDivElement>(null);
+  const privadoAbortRef = useRef<AbortController | undefined>(undefined);
+
+  useEffect(() => {
+    return () => {
+      privadoAbortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (errorPrivado !== undefined) privadoRef.current?.focus();
+  }, [errorPrivado]);
+
+  const respuestaVigente = tarea.estado === 'ofrecida' ? respuesta : 'pedir-reasignacion';
   const puedeResponder =
-    tarea.esMia && (tarea.estado === 'ofrecida' || tarea.estado === 'aceptada');
+    tarea.esMia &&
+    (tarea.estado === 'ofrecida' ||
+      tarea.estado === 'aceptada' ||
+      tarea.estado === 'en-curso' ||
+      tarea.estado === 'bloqueada' ||
+      tarea.estado === 'en-apoyo');
   const puedeReofrecer =
     esResponsableInicial &&
     (tarea.estado === 'rechazada' || tarea.estado === 'reasignacion-solicitada');
-  const titulosDependencias = tarea.dependeDe.map(
-    (dependencia) =>
-      todas.find((candidata) => candidata.id === dependencia)?.titulo ?? 'Una tarea anterior',
+  const estadoDependencias = tarea.dependeDe.map((dependencia) => {
+    const encontrada = todas.find((candidata) => candidata.id === dependencia);
+    return {
+      titulo: encontrada?.titulo ?? 'Una tarea anterior',
+      completada: encontrada?.estado === 'completada',
+    };
+  });
+  const dependenciasPendientes = estadoDependencias.filter(
+    (dependencia) => !dependencia.completada,
   );
+  const ayudaPorPausa = new Map(
+    tarea.solicitudesDeAyuda.map((solicitud) => [solicitud.pausaId, solicitud] as const),
+  );
+  const baseTarea = `/iniciativas/${iniciativaId}/tareas/${tarea.id}`;
+  const cas = { offerId: tarea.ofertaId, revision: tarea.revision };
+
+  async function mutar(
+    accion: string,
+    sufijo: string,
+    cuerpo: Readonly<Record<string, unknown>>,
+    mensaje: string,
+  ): Promise<boolean> {
+    return await onEjecutar(
+      `${accion}-${tarea.id}`,
+      `${baseTarea}/${sufijo}`,
+      cuerpo,
+      mensaje,
+      `tarea-${tarea.id}`,
+    );
+  }
+
+  async function abrirPrivado(tipo: 'evidencia' | 'resumen', identificador: string): Promise<void> {
+    const clave = `${tipo}-${identificador}`;
+    if (cargandoPrivado !== undefined) return;
+    const controlador = new AbortController();
+    privadoAbortRef.current = controlador;
+    setErrorPrivado(undefined);
+    setCargandoPrivado(clave);
+    try {
+      const ruta =
+        tipo === 'evidencia'
+          ? `${baseTarea}/evidencias/${identificador}`
+          : `${baseTarea}/entregas/${identificador}/resumen`;
+      const respuesta = await traer<Readonly<Record<string, unknown>>>(ruta, controlador.signal);
+      const contenido = respuesta['contenido'];
+      if (typeof contenido !== 'string') throw new Error('El contenido privado llegó incompleto.');
+      if (tipo === 'evidencia') {
+        setContenidoAbierto((actual) => ({ ...actual, [identificador]: contenido }));
+      } else {
+        setResumenAbierto((actual) => ({ ...actual, [identificador]: contenido }));
+      }
+      requestAnimationFrame(() => {
+        document.getElementById(`privado-${tipo}-${identificador}`)?.focus();
+      });
+    } catch (fallo: unknown) {
+      if (!controlador.signal.aborted) setErrorPrivado(fallo);
+    } finally {
+      if (privadoAbortRef.current === controlador) {
+        privadoAbortRef.current = undefined;
+        setCargandoPrivado(undefined);
+      }
+    }
+  }
+
+  function ocultarPrivado(tipo: 'evidencia' | 'resumen', identificador: string): void {
+    if (tipo === 'evidencia') {
+      setContenidoAbierto((actual) => {
+        const { [identificador]: _eliminado, ...resto } = actual;
+        return resto;
+      });
+    } else {
+      setResumenAbierto((actual) => {
+        const { [identificador]: _eliminado, ...resto } = actual;
+        return resto;
+      });
+    }
+    requestAnimationFrame(() => {
+      document.getElementById(`abrir-${tipo}-${identificador}`)?.focus();
+    });
+  }
 
   return (
     <li>
-      <article className="tarea" aria-labelledby={`tarea-${tarea.id}`}>
-        <h4 id={`tarea-${tarea.id}`}>{tarea.titulo}</h4>
+      <article
+        className="tarea"
+        id={`tarea-${tarea.id}`}
+        tabIndex={-1}
+        aria-labelledby={`tarea-titulo-${tarea.id}`}
+      >
+        <h4 id={`tarea-titulo-${tarea.id}`}>{tarea.titulo}</h4>
         <p>{tarea.descripcion}</p>
         <dl className="datos-trabajo">
           <div>
@@ -723,8 +953,17 @@ function TareaVisible({
             <dd>{tarea.esfuerzoMinutos} minutos</dd>
           </div>
         </dl>
-        {titulosDependencias.length > 0 && (
-          <p className="suave">Necesita primero: {titulosDependencias.join(', ')}.</p>
+        {estadoDependencias.length > 0 && (
+          <p className="suave">
+            Necesita primero:{' '}
+            {estadoDependencias
+              .map(
+                (dependencia) =>
+                  `${dependencia.titulo} (${dependencia.completada ? 'completada' : 'pendiente'})`,
+              )
+              .join(', ')}
+            .
+          </p>
         )}
 
         {tarea.esMia && tarea.estado === 'ofrecida' && (
@@ -737,6 +976,495 @@ function TareaVisible({
             La aceptaste y ahora figura a tu cargo.
           </p>
         )}
+
+        {(tarea.iniciadaEn !== undefined ||
+          tarea.pausas.length > 0 ||
+          tarea.solicitudesDeAyuda.length > 0 ||
+          tarea.evidencias.length > 0 ||
+          tarea.entregas.length > 0 ||
+          tarea.completadaEn !== undefined) && (
+          <section className="historia-tarea" aria-labelledby={`historia-${tarea.id}`}>
+            <h5 id={`historia-${tarea.id}`}>Historia del trabajo</h5>
+            {tarea.iniciadaEn !== undefined && <p>Comenzó el {cuando(tarea.iniciadaEn)}.</p>}
+            {tarea.pausas.length > 0 && (
+              <div>
+                <h6>Pausas, bloqueos y apoyos</h6>
+                <ol className="lista-pausas">
+                  {tarea.pausas.map((pausa) => {
+                    const solicitud = ayudaPorPausa.get(pausa.id);
+                    const categoria =
+                      pausa.tipo === 'bloqueo'
+                        ? CATEGORIA_BLOQUEO_EN_PALABRAS[pausa.categoria as CategoriaBloqueoTarea]
+                        : CATEGORIA_AYUDA_EN_PALABRAS[pausa.categoria as CategoriaAyudaTarea];
+                    return (
+                      <li key={pausa.id}>
+                        {pausa.tipo === 'bloqueo' ? 'Bloqueo' : 'Pedido de ayuda'}: {categoria}.
+                        Comenzó el {cuando(solicitud?.solicitadaEn ?? pausa.iniciadaEn)}.{' '}
+                        {pausa.finalizadaEn === undefined
+                          ? 'Sigue vigente.'
+                          : `Terminó el ${cuando(pausa.finalizadaEn)} por ${
+                              pausa.causaDeFin === 'reasignacion' ? 'reasignación' : 'reanudación'
+                            }.`}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            )}
+            {tarea.evidencias.length > 0 && (
+              <div>
+                <h6>Evidencias</h6>
+                <ul className="lista-evidencias">
+                  {tarea.evidencias.map((evidencia) => (
+                    <li key={evidencia.id}>
+                      <span>
+                        {evidencia.tipo}, tamaño {evidencia.tamano},{' '}
+                        {evidencia.visibilidad === 'restricted' ? 'restringida' : 'pública'} ·{' '}
+                        {cuando(evidencia.agregadaEn)}
+                      </span>
+                      {evidencia.puedeAbrirse && contenidoAbierto[evidencia.id] === undefined && (
+                        <button
+                          className="boton texto"
+                          id={`abrir-evidencia-${evidencia.id}`}
+                          type="button"
+                          disabled={cargandoPrivado !== undefined}
+                          onClick={() => void abrirPrivado('evidencia', evidencia.id)}
+                        >
+                          {cargandoPrivado === `evidencia-${evidencia.id}`
+                            ? 'Abriendo…'
+                            : 'Abrir evidencia'}
+                        </button>
+                      )}
+                      {contenidoAbierto[evidencia.id] !== undefined && (
+                        <div
+                          className="contenido-privado"
+                          id={`privado-evidencia-${evidencia.id}`}
+                          tabIndex={-1}
+                          role="status"
+                        >
+                          <strong>Contenido restringido solicitado:</strong>
+                          <p>{contenidoAbierto[evidencia.id]}</p>
+                          <button
+                            className="boton texto"
+                            type="button"
+                            onClick={() => {
+                              ocultarPrivado('evidencia', evidencia.id);
+                            }}
+                          >
+                            Ocultar y borrar de esta vista
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {tarea.entregas.length > 0 && (
+              <div>
+                <h6>Entregas</h6>
+                <ol className="lista-entregas">
+                  {tarea.entregas.map((entrega) => (
+                    <li key={entrega.id}>
+                      Entregada el {cuando(entrega.entregadaEn)} con {entrega.evidenciaIds.length}{' '}
+                      {entrega.evidenciaIds.length === 1 ? 'evidencia' : 'evidencias'}.
+                      {entrega.revision?.tipo === 'cambios-solicitados' && (
+                        <>
+                          {' '}
+                          Se pidieron cambios: {MOTIVO_CAMBIOS_EN_PALABRAS[entrega.revision.motivo]}
+                          .
+                        </>
+                      )}
+                      {entrega.revision?.tipo === 'aceptada' && (
+                        <>
+                          {' '}
+                          Revisión aceptada:{' '}
+                          {EVIDENCIA_CRITERIO_EN_PALABRAS[entrega.revision.evidenciaCriterio]}.
+                        </>
+                      )}
+                      {entrega.puedeAbrirse && resumenAbierto[entrega.id] === undefined && (
+                        <button
+                          className="boton texto"
+                          id={`abrir-resumen-${entrega.id}`}
+                          type="button"
+                          disabled={cargandoPrivado !== undefined}
+                          onClick={() => void abrirPrivado('resumen', entrega.id)}
+                        >
+                          {cargandoPrivado === `resumen-${entrega.id}`
+                            ? 'Abriendo…'
+                            : 'Abrir resumen'}
+                        </button>
+                      )}
+                      {resumenAbierto[entrega.id] !== undefined && (
+                        <div
+                          className="contenido-privado"
+                          id={`privado-resumen-${entrega.id}`}
+                          tabIndex={-1}
+                          role="status"
+                        >
+                          <strong>Resumen restringido solicitado:</strong>
+                          <p>{resumenAbierto[entrega.id]}</p>
+                          <button
+                            className="boton texto"
+                            type="button"
+                            onClick={() => {
+                              ocultarPrivado('resumen', entrega.id);
+                            }}
+                          >
+                            Ocultar y borrar de esta vista
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {tarea.completadaEn !== undefined && (
+              <p>Quedó completada el {cuando(tarea.completadaEn)}.</p>
+            )}
+          </section>
+        )}
+
+        <div ref={privadoRef} tabIndex={-1}>
+          <ErrorVisible error={errorPrivado} />
+        </div>
+
+        {tarea.esMia && tarea.estado === 'aceptada' && (
+          <div className="acciones-tarea">
+            <p className="suave" id={`ayuda-iniciar-${tarea.id}`}>
+              {dependenciasPendientes.length === 0
+                ? 'Aceptar no inicia el reloj. Comenzá cuando el trabajo realmente empiece.'
+                : `Antes deben completarse: ${dependenciasPendientes
+                    .map((dependencia) => dependencia.titulo)
+                    .join(', ')}.`}
+            </p>
+            <button
+              className="boton"
+              type="button"
+              aria-describedby={`ayuda-iniciar-${tarea.id}`}
+              disabled={accionEnCurso !== undefined || dependenciasPendientes.length > 0}
+              onClick={() =>
+                void mutar('iniciar', 'iniciar', cas, 'La tarea quedó en curso desde ahora.')
+              }
+            >
+              {accionEnCurso === `iniciar-${tarea.id}` ? 'Comenzando…' : 'Comenzar la tarea'}
+            </button>
+          </div>
+        )}
+
+        {tarea.esMia && tarea.estado === 'en-curso' && (
+          <div className="acciones-tarea dos-columnas">
+            <form
+              onSubmit={(evento) => {
+                evento.preventDefault();
+                if (categoriaBloqueo === '') return;
+                void mutar(
+                  'bloquear',
+                  'bloquear',
+                  { ...cas, categoria: categoriaBloqueo },
+                  'El bloqueo quedó registrado y la tarea dejó de correr.',
+                ).then((ok) => {
+                  if (ok) setCategoriaBloqueo('');
+                });
+              }}
+            >
+              <fieldset disabled={accionEnCurso !== undefined}>
+                <legend>Declarar un bloqueo</legend>
+                <div className="campo">
+                  <label htmlFor={`categoria-bloqueo-${tarea.id}`}>Causa general</label>
+                  <select
+                    id={`categoria-bloqueo-${tarea.id}`}
+                    aria-describedby={`ayuda-bloqueo-${tarea.id}`}
+                    required
+                    value={categoriaBloqueo}
+                    onChange={(evento) => {
+                      setCategoriaBloqueo(evento.target.value as CategoriaBloqueoTarea);
+                    }}
+                  >
+                    <option value="">Elegí una opción</option>
+                    {Object.entries(CATEGORIA_BLOQUEO_EN_PALABRAS).map(([valor, texto]) => (
+                      <option key={valor} value={valor}>
+                        {texto}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="ayuda" id={`ayuda-bloqueo-${tarea.id}`}>
+                    Sólo queda pública esta categoría general.
+                  </span>
+                </div>
+                <button className="boton secundario">Declarar bloqueo</button>
+              </fieldset>
+            </form>
+          </div>
+        )}
+
+        {tarea.esMia && (tarea.estado === 'en-curso' || tarea.estado === 'bloqueada') && (
+          <form
+            className="acciones-tarea"
+            onSubmit={(evento) => {
+              evento.preventDefault();
+              if (categoriaAyuda === '') return;
+              void mutar(
+                'ayuda',
+                'ayuda',
+                { ...cas, categoria: categoriaAyuda },
+                'El pedido de ayuda quedó registrado y la tarea quedó en apoyo.',
+              ).then((ok) => {
+                if (ok) setCategoriaAyuda('');
+              });
+            }}
+          >
+            <fieldset disabled={accionEnCurso !== undefined}>
+              <legend>Pedir ayuda</legend>
+              <div className="campo">
+                <label htmlFor={`categoria-ayuda-${tarea.id}`}>Ayuda general</label>
+                <select
+                  id={`categoria-ayuda-${tarea.id}`}
+                  aria-describedby={`ayuda-solicitud-${tarea.id}`}
+                  required
+                  value={categoriaAyuda}
+                  onChange={(evento) => {
+                    setCategoriaAyuda(evento.target.value as CategoriaAyudaTarea);
+                  }}
+                >
+                  <option value="">Elegí una opción</option>
+                  {Object.entries(CATEGORIA_AYUDA_EN_PALABRAS).map(([valor, texto]) => (
+                    <option key={valor} value={valor}>
+                      {texto}
+                    </option>
+                  ))}
+                </select>
+                <span className="ayuda" id={`ayuda-solicitud-${tarea.id}`}>
+                  Pedir ayuda detiene el trabajo; no es una sanción.
+                </span>
+              </div>
+              <button className="boton secundario">Pedir ayuda</button>
+            </fieldset>
+          </form>
+        )}
+
+        {tarea.esMia &&
+          (tarea.estado === 'bloqueada' || tarea.estado === 'en-apoyo') &&
+          tarea.pausaActual !== undefined && (
+            <button
+              className="boton"
+              type="button"
+              disabled={accionEnCurso !== undefined}
+              onClick={() =>
+                void mutar(
+                  'reanudar',
+                  'reanudar',
+                  { ...cas, pauseId: tarea.pausaActual?.id },
+                  'La tarea volvió a estar en curso.',
+                )
+              }
+            >
+              {accionEnCurso === `reanudar-${tarea.id}` ? 'Reanudando…' : 'Reanudar la tarea'}
+            </button>
+          )}
+
+        {tarea.esMia &&
+          (tarea.estado === 'en-curso' ||
+            tarea.estado === 'bloqueada' ||
+            tarea.estado === 'en-apoyo') && (
+            <form
+              className="acciones-tarea"
+              onSubmit={(evento) => {
+                evento.preventDefault();
+                void mutar(
+                  'evidencia',
+                  'evidencias',
+                  { ...cas, contenido: notaEvidencia, visibilidad: 'restricted' },
+                  'La nota quedó guardada como evidencia restringida.',
+                ).then((ok) => {
+                  if (ok) setNotaEvidencia('');
+                });
+              }}
+            >
+              <fieldset disabled={accionEnCurso !== undefined}>
+                <legend>Agregar evidencia</legend>
+                <div className="campo">
+                  <label htmlFor={`evidencia-${tarea.id}`}>Nota restringida</label>
+                  <textarea
+                    id={`evidencia-${tarea.id}`}
+                    aria-describedby={`ayuda-evidencia-${tarea.id}`}
+                    required
+                    minLength={10}
+                    maxLength={16_384}
+                    value={notaEvidencia}
+                    onChange={(evento) => {
+                      setNotaEvidencia(evento.target.value);
+                    }}
+                  />
+                  <span className="ayuda" id={`ayuda-evidencia-${tarea.id}`}>
+                    El historial público sólo muestra clase, tamaño aproximado y fecha. El contenido
+                    se abre únicamente por una acción autorizada.
+                  </span>
+                </div>
+                <button className="boton secundario">Guardar evidencia restringida</button>
+              </fieldset>
+            </form>
+          )}
+
+        {tarea.esMia && tarea.estado === 'en-curso' && tarea.evidencias.length > 0 && (
+          <form
+            className="acciones-tarea"
+            onSubmit={(evento) => {
+              evento.preventDefault();
+              void mutar(
+                'entregar',
+                'entregas',
+                { ...cas, evidenciaIds: evidenciasEntrega, resumen: resumenEntrega },
+                'La entrega quedó esperando revisión.',
+              ).then((ok) => {
+                if (ok) {
+                  setEvidenciasEntrega([]);
+                  setResumenEntrega('');
+                }
+              });
+            }}
+          >
+            <fieldset disabled={accionEnCurso !== undefined}>
+              <legend>Entregar para revisión</legend>
+              <fieldset className="seleccion-evidencias">
+                <legend>Evidencias de esta entrega</legend>
+                {tarea.evidencias.map((evidencia) => (
+                  <label key={evidencia.id}>
+                    <input
+                      type="checkbox"
+                      checked={evidenciasEntrega.includes(evidencia.id)}
+                      onChange={(evento) => {
+                        setEvidenciasEntrega((actual) =>
+                          evento.target.checked
+                            ? [...actual, evidencia.id]
+                            : actual.filter((idEvidencia) => idEvidencia !== evidencia.id),
+                        );
+                      }}
+                    />{' '}
+                    Evidencia {evidencia.tipo} del {cuando(evidencia.agregadaEn)}
+                  </label>
+                ))}
+              </fieldset>
+              <div className="campo">
+                <label htmlFor={`resumen-entrega-${tarea.id}`}>Resumen restringido</label>
+                <textarea
+                  id={`resumen-entrega-${tarea.id}`}
+                  aria-describedby={`ayuda-resumen-${tarea.id}`}
+                  required
+                  minLength={20}
+                  maxLength={4000}
+                  value={resumenEntrega}
+                  onChange={(evento) => {
+                    setResumenEntrega(evento.target.value);
+                  }}
+                />
+                <span className="ayuda" id={`ayuda-resumen-${tarea.id}`}>
+                  El resumen no entra al ledger público.
+                </span>
+              </div>
+              <button
+                className="boton"
+                disabled={evidenciasEntrega.length === 0 || resumenEntrega.length < 20}
+              >
+                Entregar para revisión
+              </button>
+            </fieldset>
+          </form>
+        )}
+
+        {esResponsableInicial &&
+          tarea.estado === 'entregada' &&
+          tarea.entregaActualId !== undefined && (
+            <div className="acciones-tarea dos-columnas">
+              <form
+                onSubmit={(evento) => {
+                  evento.preventDefault();
+                  if (motivoCambios === '') return;
+                  void mutar(
+                    'cambios',
+                    'revisiones/cambios',
+                    {
+                      deliveryId: tarea.entregaActualId,
+                      revision: tarea.revision,
+                      motivo: motivoCambios,
+                    },
+                    'Los cambios quedaron pedidos y la tarea volvió a estar en curso.',
+                  ).then((ok) => {
+                    if (ok) setMotivoCambios('');
+                  });
+                }}
+              >
+                <fieldset disabled={accionEnCurso !== undefined}>
+                  <legend>Pedir cambios</legend>
+                  <div className="campo">
+                    <label htmlFor={`motivo-cambios-${tarea.id}`}>Motivo general</label>
+                    <select
+                      id={`motivo-cambios-${tarea.id}`}
+                      aria-describedby={`ayuda-cambios-${tarea.id}`}
+                      required
+                      value={motivoCambios}
+                      onChange={(evento) => {
+                        setMotivoCambios(evento.target.value as MotivoCambiosTarea);
+                      }}
+                    >
+                      <option value="">Elegí una opción</option>
+                      {Object.entries(MOTIVO_CAMBIOS_EN_PALABRAS).map(([valor, texto]) => (
+                        <option key={valor} value={valor}>
+                          {texto}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="ayuda" id={`ayuda-cambios-${tarea.id}`}>
+                      Sólo esta categoría queda en el historial.
+                    </span>
+                  </div>
+                  <button className="boton secundario">Pedir cambios</button>
+                </fieldset>
+              </form>
+              <form
+                onSubmit={(evento) => {
+                  evento.preventDefault();
+                  if (evidenciaCriterio === '') return;
+                  void mutar(
+                    'aceptar-revision',
+                    'revisiones/aceptar',
+                    {
+                      deliveryId: tarea.entregaActualId,
+                      revision: tarea.revision,
+                      evidenciaCriterio,
+                    },
+                    'La revisión quedó aceptada y la tarea está completada.',
+                  ).then((ok) => {
+                    if (ok) setEvidenciaCriterio('');
+                  });
+                }}
+              >
+                <fieldset disabled={accionEnCurso !== undefined}>
+                  <legend>Aceptar la revisión</legend>
+                  <div className="campo">
+                    <label htmlFor={`evidencia-criterio-${tarea.id}`}>Estado de la evidencia</label>
+                    <select
+                      id={`evidencia-criterio-${tarea.id}`}
+                      required
+                      value={evidenciaCriterio}
+                      onChange={(evento) => {
+                        setEvidenciaCriterio(evento.target.value as EvidenciaCriterioResultado);
+                      }}
+                    >
+                      <option value="">Elegí una opción</option>
+                      {Object.entries(EVIDENCIA_CRITERIO_EN_PALABRAS).map(([valor, texto]) => (
+                        <option key={valor} value={valor}>
+                          {texto}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button className="boton">Aceptar y completar</button>
+                </fieldset>
+              </form>
+            </div>
+          )}
 
         {puedeResponder && (
           <form className="respuesta-tarea" onSubmit={onResponder}>
@@ -777,6 +1505,7 @@ function TareaVisible({
                 <label htmlFor={`motivo-${tarea.id}`}>Motivo general</label>
                 <select
                   id={`motivo-${tarea.id}`}
+                  aria-describedby={`ayuda-motivo-${tarea.id}`}
                   required
                   disabled={accionEnCurso !== undefined}
                   value={motivo ?? ''}
@@ -791,7 +1520,7 @@ function TareaVisible({
                     </option>
                   ))}
                 </select>
-                <span className="ayuda">
+                <span className="ayuda" id={`ayuda-motivo-${tarea.id}`}>
                   No pedimos texto libre porque podría dejar datos personales para siempre en el
                   historial público. Podés elegir “Prefiero no publicar el motivo”.
                 </span>
@@ -807,7 +1536,7 @@ function TareaVisible({
             >
               {accionEnCurso === `responder-${tarea.id}`
                 ? 'Registrando…'
-                : tarea.estado === 'aceptada'
+                : tarea.estado !== 'ofrecida'
                   ? 'Pedir otra persona'
                   : 'Registrar mi respuesta'}
             </button>
@@ -821,7 +1550,7 @@ function TareaVisible({
               <div className="campo">
                 <label htmlFor={`reoferta-${tarea.id}`}>Nueva persona</label>
                 {miembros?.find((miembro) => miembro.id === tarea.destinatarioId) !== undefined && (
-                  <span className="ayuda">
+                  <span className="ayuda" id={`ayuda-reoferta-${tarea.id}`}>
                     La oferta anterior fue para{' '}
                     {miembros.find((miembro) => miembro.id === tarea.destinatarioId)?.alias}. Elegí
                     otra persona.
@@ -829,6 +1558,11 @@ function TareaVisible({
                 )}
                 <select
                   id={`reoferta-${tarea.id}`}
+                  aria-describedby={
+                    miembros?.some((miembro) => miembro.id === tarea.destinatarioId) === true
+                      ? `ayuda-reoferta-${tarea.id}`
+                      : undefined
+                  }
                   required
                   value={reoferta}
                   onChange={(e) => {

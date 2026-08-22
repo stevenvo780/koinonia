@@ -39,6 +39,8 @@ export const MENSAJES: Readonly<Record<string, string>> = {
     'enmienda, que queda como texto tuyo.',
   UNAUTHORIZED_NOT_THE_SUBJECT:
     'Nadie puede actuar en nombre de otra persona. Este acto quedaría a nombre de alguien que no sos vos.',
+  UNAUTHORIZED_NOT_A_READER:
+    'Ese material restringido sólo puede abrirlo quien lo aportó o quien debe revisar la entrega.',
   UNAUTHORIZED_NOT_IN_CIRCLE: 'Este asunto lo lleva otro grupo, y hay que ser parte de él.',
   UNAUTHORIZED_OWNER_UNKNOWN: 'No encontramos eso que querés cambiar.',
 
@@ -50,6 +52,12 @@ export const MENSAJES: Readonly<Record<string, string>> = {
   CORREO_NO_INSTITUCIONAL:
     'Sólo entran los correos que terminan en @udea.edu.co. Es lo único que verificamos: matrícula activa.',
   DEMASIADOS_INTENTOS: 'Pediste muchos enlaces seguidos. Esperá un momento y volvé a intentar.',
+  ERASURE_REAUTHENTICATION_REQUIRED:
+    'Para pedir una supresión irreversible tenés que volver a entrar. La sesión reciente confirma que sos vos.',
+  ERASURE_ALREADY_REQUESTED:
+    'Ya existe una solicitud de supresión a tu nombre. Conservá el radicado; no hace falta crear otra.',
+  ERASURE_AUTHORIZATION_UNAVAILABLE:
+    'No existe una solicitud propia válida que autorice esa supresión. No se borró ningún dato.',
 
   // ── Textos ──────────────────────────────────────────────────────────────────────────────────
   INVALID_TEXT: 'Falta texto o hay demasiado. Fijate en la ayuda que está debajo del campo.',
@@ -148,6 +156,57 @@ export const MENSAJES: Readonly<Record<string, string>> = {
     'La nueva oferta debe dirigirse a otra persona; ofrecerla de nuevo a quien la rechazó no resuelve el bloqueo.',
   TASK_OFFER_ID_REUSED:
     'Esa identificación de oferta ya existe. No se escribió una oferta ambigua ni se reemplazó la anterior.',
+  TASK_START_NOT_ALLOWED:
+    'Esta tarea no está lista para empezar. Revisá si sigue aceptada y si sus dependencias ya terminaron.',
+  TASK_DEPENDENCY_NOT_COMPLETED: 'Todavía falta terminar una tarea de la que depende este trabajo.',
+  TASK_BLOCK_NOT_ALLOWED: 'Esta tarea no está en un estado que permita declarar un bloqueo.',
+  TASK_HELP_NOT_ALLOWED: 'Esta tarea no está en un estado que permita pedir ayuda.',
+  TASK_RESUME_NOT_ALLOWED: 'Esta tarea no tiene una pausa vigente que se pueda reanudar.',
+  STALE_TASK_PAUSE:
+    'La pausa cambió mientras actuabas. Revisá el estado vigente antes de volver a intentarlo.',
+  TASK_EVIDENCE_NOT_ALLOWED:
+    'Esta tarea no está recibiendo evidencia en este momento. Revisá su estado vigente.',
+  INVALID_TASK_EVIDENCE_KIND_CODE: 'El tipo general de evidencia no es uno de los admitidos.',
+  INVALID_TASK_EVIDENCE_SIZE_CLASS: 'La clase general de tamaño no es una de las admitidas.',
+  INVALID_TASK_EVIDENCE_VISIBILITY: 'La visibilidad de la evidencia no es una de las admitidas.',
+  TASK_DELIVERY_NOT_ALLOWED:
+    'La tarea debe estar en curso, sin pausa vigente y con evidencia antes de entregarse.',
+  TASK_DELIVERY_EVIDENCE_COUNT_INVALID:
+    'La entrega debe referenciar al menos una evidencia válida.',
+  TASK_DELIVERY_EVIDENCE_DUPLICATE: 'Una evidencia sólo puede aparecer una vez en la entrega.',
+  UNKNOWN_TASK_EVIDENCE: 'Esa evidencia no pertenece a esta tarea.',
+  STALE_TASK_DELIVERY:
+    'La entrega cambió mientras actuabas. Revisá la entrega vigente antes de volver a intentarlo.',
+  TASK_REVIEW_NOT_ALLOWED: 'Esta entrega ya fue revisada o todavía no está lista para revisión.',
+  INVALID_TASK_BLOCK_CATEGORY: 'Elegí una de las causas generales de bloqueo.',
+  INVALID_TASK_HELP_CATEGORY: 'Elegí uno de los tipos generales de ayuda.',
+  INVALID_TASK_CHANGE_REASON: 'Elegí uno de los motivos generales para pedir cambios.',
+  TASK_EVIDENCE_ID_REUSED:
+    'Esa identificación de evidencia ya existe. No se escribió una referencia ambigua.',
+  TASK_DELIVERY_ID_REUSED:
+    'Esa identificación de entrega ya existe. No se escribió una entrega ambigua.',
+  TASK_PAUSE_TIME_REVERSED:
+    'El historial temporal de la pausa no es consistente. No se escribió ningún cambio.',
+
+  // ── Capacidad privada ──────────────────────────────────────────────────────────────────────
+  STALE_CAPACITY_REVISION:
+    'Tu capacidad cambió mientras la estabas editando. Revisá el valor vigente antes de volver a guardar.',
+  CAPACITY_SERVICE_UNAVAILABLE:
+    'Tu capacidad privada no está disponible en este momento. No se mostró ni se guardó un valor sin protección.',
+  PRIVATE_MATERIAL_UNAVAILABLE:
+    'Ese material restringido no está disponible o no pudo comprobarse de forma segura.',
+  TASK_CAPACITY_NOT_DECLARED:
+    'No pudimos confirmar esta aceptación. Revisá tu capacidad propia antes de volver a intentarlo.',
+  TASK_CAPACITY_CONFIRMATION_BLOCKED:
+    'No pudimos confirmar esta aceptación. Revisá tu capacidad propia antes de volver a intentarlo.',
+  TASK_CAPACITY_EXCEEDED:
+    'No se pudo confirmar esta tarea con tu capacidad vigente. Revisá tu capacidad privada en Mis tareas.',
+  TASK_CAPACITY_ADMISSION_REQUIRED:
+    'No se pudo comprobar tu capacidad de forma segura. No se aceptó la tarea.',
+  TASK_CAPACITY_ADMISSION_MISMATCH:
+    'La comprobación de capacidad ya no corresponde a esta oferta. Revisá la tarea vigente.',
+  TASK_ACCEPTANCE_CANDIDATE_REQUIRED:
+    'No se pudo validar la oferta antes de revisar tu capacidad. No se aceptó la tarea.',
 
   // ── Genéricos ───────────────────────────────────────────────────────────────────────────────
   NO_ENCONTRADO: 'No encontramos eso.',

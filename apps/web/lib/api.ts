@@ -41,11 +41,12 @@ async function leerError(respuesta: Response): Promise<ErrorDeApi> {
   }
 }
 
-export async function traer<T>(ruta: string): Promise<T> {
+export async function traer<T>(ruta: string, signal?: AbortSignal): Promise<T> {
   const respuesta = await fetch(`/api${ruta}`, {
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
     cache: 'no-store',
+    ...(signal === undefined ? {} : { signal }),
   });
   if (!respuesta.ok) throw await leerError(respuesta);
   return (await respuesta.json()) as T;
@@ -54,6 +55,18 @@ export async function traer<T>(ruta: string): Promise<T> {
 export async function enviar<T>(ruta: string, cuerpo: unknown): Promise<T> {
   const respuesta = await fetch(`/api${ruta}`, {
     method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(cuerpo),
+  });
+  if (!respuesta.ok) throw await leerError(respuesta);
+  return (await respuesta.json()) as T;
+}
+
+/** Reemplaza un recurso propio. Se usa para contratos CAS como la capacidad privada. */
+export async function reemplazar<T>(ruta: string, cuerpo: unknown): Promise<T> {
+  const respuesta = await fetch(`/api${ruta}`, {
+    method: 'PUT',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(cuerpo),

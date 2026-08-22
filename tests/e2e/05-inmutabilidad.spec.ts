@@ -65,7 +65,7 @@ test.beforeAll(async () => {
 
 test('antes de tocar nada, la pantalla dice que está todo bien', async ({ page }) => {
   await page.goto('/verificar');
-  await expect(page.getByText('El historial está completo y sin alteraciones')).toBeVisible();
+  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
   // Y lo dice explicando qué se comprobó y qué significaría que estuviera mal.
   await expect(page.getByRole('heading', { level: 2, name: 'Qué se comprobó' })).toBeVisible();
   await expect(page.getByText('Está bien').first()).toBeVisible();
@@ -233,5 +233,5 @@ test('reponer los bytes exactos devuelve la verificación al verde, sin ninguna 
 
   await page.goto('/verificar');
   await page.getByRole('button', { name: 'Comprobar ahora' }).click();
-  await expect(page.getByText('El historial está completo y sin alteraciones')).toBeVisible();
+  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
 });

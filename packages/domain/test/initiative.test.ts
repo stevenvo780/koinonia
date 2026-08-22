@@ -2,23 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import {
   acceptTaskBy,
+  acceptTaskReviewBy,
+  addTaskEvidenceBy,
+  admitTaskCapacity,
   activateInitiative,
+  applyInitiative,
   appendChained,
   type Actor,
+  authorizeTaskDeliveryRead,
+  authorizeTaskEvidenceRead,
+  blockTaskBy,
   createInitiative,
   currentInitiative,
+  deliverTaskBy,
   hash,
   initiativeId,
+  type InitiativeLog,
   milestoneId,
   offerTaskBy,
   planMilestoneBy,
+  prepareTaskAcceptanceBy,
   rejectTaskBy,
   reofferTaskBy,
   requestTaskReassignmentBy,
   taskId,
   type InitiativePayload,
   replayInitiative,
+  requestTaskChangesBy,
+  requestTaskHelpBy,
   verifyInitiativeLog,
+  resumeTaskBy,
+  startTaskBy,
+  type TaskAccepted,
+  toPrivateMaterialCommitment,
+  UnauthorizedError,
 } from '../src/index.js';
 import { circleIdAt, DECISION_ID, eventIdAt, memberIdAt, PROPOSAL_ID, T0 } from './arbitraries.js';
 import { instant } from '../src/ids.js';
@@ -72,9 +89,57 @@ const replacement: Actor = {
   roles: ['member'],
   circles: [input.circleId],
 };
+const facilitator: Actor = {
+  memberId: memberIdAt(4),
+  roles: ['facilitator'],
+  circles: [input.circleId],
+};
+const techAdmin: Actor = {
+  memberId: memberIdAt(5),
+  roles: ['tech-admin'],
+  circles: [input.circleId],
+};
 
 function by(event: number, actor: Actor, at = instant(CREATED_AT + event * 1_000)) {
   return { eventId: eventIdAt(event), at, by: actor } as const;
+}
+
+const commitment = (digit: string) => toPrivateMaterialCommitment(digit.repeat(64));
+
+function unauthorizedSignature(run: () => unknown) {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      return {
+        code: error.code,
+        message: error.message,
+        reason: error.reason,
+        action: error.action,
+      };
+    }
+    throw error;
+  }
+  throw new Error('la prueba esperaba una denegación de autorización');
+}
+
+async function acceptAt(
+  log: InitiativeLog,
+  event: number,
+  actor: Actor,
+  input: Omit<TaskAccepted, 'type'>,
+) {
+  const meta = by(event, actor);
+  const candidate = prepareTaskAcceptanceBy(log, meta, input);
+  return acceptTaskBy(
+    log,
+    meta,
+    input,
+    admitTaskCapacity(candidate, {
+      currentLoadMinutes: 0,
+      weeklyCapacityMinutes: 10_080,
+    }),
+  );
 }
 
 async function created() {
@@ -115,11 +180,155 @@ async function offered() {
   });
 }
 
+async function accepted() {
+  const log = await offered();
+  return acceptAt(log, 5, recipient, {
+    taskId: TASK,
+    offerId: eventIdAt(4),
+    expectedTaskSeq: revisionOf(log),
+  });
+}
+
+async function started() {
+  const log = await accepted();
+  return startTaskBy(log, by(6, recipient), {
+    taskId: TASK,
+    offerId: eventIdAt(4),
+    expectedTaskSeq: revisionOf(log),
+  });
+}
+
+async function evidenced() {
+  const log = await started();
+  return addTaskEvidenceBy(log, by(7, recipient), {
+    taskId: TASK,
+    offerId: eventIdAt(4),
+    expectedTaskSeq: revisionOf(log),
+    objectCommitment: commitment('1'),
+    kindCode: 'documento',
+    sizeClass: 'pequena',
+    visibility: 'restricted',
+  });
+}
+
+async function delivered() {
+  const log = await evidenced();
+  return deliverTaskBy(log, by(8, recipient), {
+    taskId: TASK,
+    offerId: eventIdAt(4),
+    expectedTaskSeq: revisionOf(log),
+    evidenceIds: [eventIdAt(7)],
+    summaryCommitment: commitment('2'),
+  });
+}
+
 function revisionOf(log: Awaited<ReturnType<typeof offered>>): number {
   const revision = replayInitiative(log).tasks.find((task) => task.taskId === TASK)?.lastSeq;
   if (revision === undefined) throw new Error('la prueba exige la tarea vigente');
   return revision;
 }
+
+describe('lectura autorizada de material privado de tareas', () => {
+  it('entregante y responsable inicial pueden abrir evidencia y resumen sin mutar el estado', async () => {
+    const state = replayInitiative(await delivered());
+    const before = structuredClone(state);
+
+    for (const actor of [recipient, responsible]) {
+      expect(authorizeTaskEvidenceRead(state, actor, TASK, eventIdAt(7))).toMatchObject({
+        evidenceId: eventIdAt(7),
+        addedBy: recipient.memberId,
+        visibility: 'restricted',
+      });
+      expect(authorizeTaskDeliveryRead(state, actor, TASK, eventIdAt(8))).toMatchObject({
+        deliveryId: eventIdAt(8),
+        deliveredBy: recipient.memberId,
+      });
+    }
+    expect(state).toEqual(before);
+  });
+
+  it('miembro ajeno y facilitador no distinguen IDs existentes, desconocidos o de otra tarea', async () => {
+    const state = replayInitiative(await delivered());
+
+    for (const actor of [replacement, facilitator]) {
+      for (const [task, evidence] of [
+        [TASK, eventIdAt(7)],
+        [TASK, eventIdAt(700)],
+        [TASK_2, eventIdAt(7)],
+      ] as const) {
+        expect(() => authorizeTaskEvidenceRead(state, actor, task, evidence)).toThrow(
+          expect.objectContaining({ code: 'UNAUTHORIZED_NOT_A_READER' }),
+        );
+      }
+      for (const [task, delivery] of [
+        [TASK, eventIdAt(8)],
+        [TASK, eventIdAt(800)],
+        [TASK_2, eventIdAt(8)],
+      ] as const) {
+        expect(() => authorizeTaskDeliveryRead(state, actor, task, delivery)).toThrow(
+          expect.objectContaining({ code: 'UNAUTHORIZED_NOT_A_READER' }),
+        );
+      }
+    }
+  });
+
+  it('tech-admin no hereda lectura y el dueño tampoco obtiene un oráculo sobre IDs ajenos', async () => {
+    const state = replayInitiative(await delivered());
+
+    for (const evidenceId of [eventIdAt(7), eventIdAt(700)]) {
+      expect(() => authorizeTaskEvidenceRead(state, techAdmin, TASK, evidenceId)).toThrow(
+        expect.objectContaining({ code: 'UNAUTHORIZED_ROLE_NOT_GRANTED' }),
+      );
+    }
+    for (const deliveryId of [eventIdAt(8), eventIdAt(800)]) {
+      expect(() => authorizeTaskDeliveryRead(state, techAdmin, TASK, deliveryId)).toThrow(
+        expect.objectContaining({ code: 'UNAUTHORIZED_ROLE_NOT_GRANTED' }),
+      );
+    }
+    expect(() => authorizeTaskEvidenceRead(state, recipient, TASK, eventIdAt(700))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_NOT_A_READER' }),
+    );
+    expect(() => authorizeTaskDeliveryRead(state, recipient, TASK, eventIdAt(800))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_NOT_A_READER' }),
+    );
+  });
+
+  it('un autor histórico fuera del círculo no distingue un ID real de uno desconocido', async () => {
+    const state = replayInitiative(await delivered());
+    const formerOwner = { ...recipient, circles: [] };
+    const denials = [
+      unauthorizedSignature(() =>
+        authorizeTaskEvidenceRead(state, formerOwner, TASK, eventIdAt(7)),
+      ),
+      unauthorizedSignature(() =>
+        authorizeTaskEvidenceRead(state, formerOwner, TASK, eventIdAt(700)),
+      ),
+      unauthorizedSignature(() =>
+        authorizeTaskDeliveryRead(state, formerOwner, TASK, eventIdAt(8)),
+      ),
+      unauthorizedSignature(() =>
+        authorizeTaskDeliveryRead(state, formerOwner, TASK, eventIdAt(800)),
+      ),
+    ];
+
+    expect(denials[0]).toMatchObject({ code: 'UNAUTHORIZED_NOT_IN_CIRCLE' });
+    expect(denials).toEqual([denials[0], denials[0], denials[0], denials[0]]);
+  });
+
+  it('el responsable autorizado sí recibe errores de existencia precisos', async () => {
+    const state = replayInitiative(await delivered());
+
+    expect(() => authorizeTaskEvidenceRead(state, responsible, TASK, eventIdAt(700))).toThrow(
+      expect.objectContaining({ code: 'UNKNOWN_TASK_EVIDENCE' }),
+    );
+    expect(() => authorizeTaskDeliveryRead(state, responsible, TASK, eventIdAt(800))).toThrow(
+      expect.objectContaining({ code: 'UNKNOWN_TASK_DELIVERY' }),
+    );
+    expect(() => authorizeTaskEvidenceRead(state, responsible, TASK_2, eventIdAt(7))).toThrow(
+      expect.objectContaining({ code: 'UNKNOWN_TASK' }),
+    );
+  });
+});
 
 describe('iniciativa nacida de un resultado', () => {
   it('un resultado approved crea exactamente un genesis enlazado y por empezar', async () => {
@@ -463,13 +672,13 @@ describe('ofertas y respuestas de tareas', () => {
   it('sólo el destinatario responde y aceptar crea la asignación', async () => {
     const base = await offered();
     await expect(
-      acceptTaskBy(base, by(40, replacement), {
+      acceptAt(base, 40, replacement, {
         taskId: TASK,
         offerId: eventIdAt(4),
         expectedTaskSeq: revisionOf(base),
       }),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED_NOT_THE_SUBJECT' });
-    const accepted = await acceptTaskBy(base, by(41, recipient), {
+    const accepted = await acceptAt(base, 41, recipient, {
       taskId: TASK,
       offerId: eventIdAt(4),
       expectedTaskSeq: revisionOf(base),
@@ -478,6 +687,168 @@ describe('ofertas y respuestas de tareas', () => {
       status: 'aceptada',
       assigneeId: recipient.memberId,
     });
+    expect(accepted.at(-1)?.payload).toEqual({
+      type: 'TaskAccepted',
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(base),
+    });
+    expect(accepted.at(-1)?.payload).not.toHaveProperty('capacity');
+    expect(accepted.at(-1)?.payload).not.toHaveProperty('admission');
+  });
+
+  it('prevalida existencia, oferta, revisión, estado y actor en ese orden sin tocar el log', async () => {
+    const base = await offered();
+    const before = [...base];
+    const revision = revisionOf(base);
+
+    expect(() =>
+      prepareTaskAcceptanceBy(base, by(400, replacement), {
+        taskId: TASK_2,
+        offerId: eventIdAt(400),
+        expectedTaskSeq: 0,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'UNKNOWN_TASK' }));
+    expect(() =>
+      prepareTaskAcceptanceBy(base, by(401, replacement), {
+        taskId: TASK,
+        offerId: eventIdAt(400),
+        expectedTaskSeq: 0,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'STALE_TASK_OFFER' }));
+    expect(() =>
+      prepareTaskAcceptanceBy(base, by(402, replacement), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision - 1,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'STALE_TASK_REVISION' }));
+
+    const answered = await acceptAt(base, 403, recipient, {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revision,
+    });
+    expect(() =>
+      prepareTaskAcceptanceBy(answered, by(404, replacement), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(answered),
+      }),
+    ).toThrow(expect.objectContaining({ code: 'TASK_OFFER_ALREADY_ANSWERED' }));
+    expect(() =>
+      prepareTaskAcceptanceBy(base, by(405, replacement), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED_NOT_THE_SUBJECT' }));
+    expect(base).toEqual(before);
+  });
+
+  it('aceptar exige una admisión privada vigente, exacta y con cupo', async () => {
+    const base = await offered();
+    const meta = by(410, recipient);
+    const command = {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(base),
+    } as const;
+    const candidate = prepareTaskAcceptanceBy(base, meta, command);
+
+    expect(Object.keys(candidate).sort()).toEqual([
+      'checkedAt',
+      'effortMinutes',
+      'memberId',
+      'offerId',
+      'taskId',
+    ]);
+    expect(Object.isFrozen(candidate)).toBe(true);
+    expect(candidate).toMatchObject({
+      memberId: recipient.memberId,
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      effortMinutes: 120,
+      checkedAt: meta.at,
+    });
+
+    await expect(acceptTaskBy(base, meta, command, undefined as never)).rejects.toMatchObject({
+      code: 'TASK_CAPACITY_ADMISSION_REQUIRED',
+    });
+    expect(() =>
+      admitTaskCapacity(candidate, {
+        currentLoadMinutes: 9_961,
+        weeklyCapacityMinutes: 10_080,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'TASK_CAPACITY_EXCEEDED' }));
+    expect(() =>
+      admitTaskCapacity(candidate, {
+        currentLoadMinutes: 9_960,
+        weeklyCapacityMinutes: 10_080.5,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'TASK_WEEKLY_CAPACITY_INVALID' }));
+    expect(() =>
+      admitTaskCapacity(undefined as never, {
+        currentLoadMinutes: 0,
+        weeklyCapacityMinutes: 10_080,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'TASK_ACCEPTANCE_CANDIDATE_REQUIRED' }));
+    const serializedCandidate = JSON.parse(JSON.stringify(candidate)) as unknown;
+    expect(() =>
+      admitTaskCapacity(serializedCandidate as never, {
+        currentLoadMinutes: 0,
+        weeklyCapacityMinutes: 10_080,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'TASK_ACCEPTANCE_CANDIDATE_REQUIRED' }));
+
+    const checkedLater = prepareTaskAcceptanceBy(
+      base,
+      { ...meta, at: instant(meta.at + 1) },
+      command,
+    );
+    const mismatches = [
+      admitTaskCapacity(checkedLater, {
+        currentLoadMinutes: 0,
+        weeklyCapacityMinutes: 10_080,
+      }),
+    ];
+
+    let reoffered = await rejectTaskBy(base, by(411, recipient), {
+      ...command,
+      reason: 'plazo-inviable',
+    });
+    reoffered = await reofferTaskBy(reoffered, by(412, responsible), {
+      taskId: TASK,
+      previousOfferId: eventIdAt(4),
+      offeredTo: replacement.memberId!,
+      recipient: replacement,
+    });
+    const replacementCandidate = prepareTaskAcceptanceBy(reoffered, by(413, replacement, meta.at), {
+      taskId: TASK,
+      offerId: eventIdAt(412),
+      expectedTaskSeq: revisionOf(reoffered),
+    });
+    mismatches.push(
+      admitTaskCapacity(replacementCandidate, {
+        currentLoadMinutes: 0,
+        weeklyCapacityMinutes: 10_080,
+      }),
+    );
+    for (const admission of mismatches) {
+      await expect(acceptTaskBy(base, meta, command, admission)).rejects.toMatchObject({
+        code: 'TASK_CAPACITY_ADMISSION_MISMATCH',
+      });
+    }
+
+    const validAdmission = admitTaskCapacity(candidate, {
+      currentLoadMinutes: 9_960,
+      weeklyCapacityMinutes: 10_080,
+    });
+    const serializedAdmission = JSON.parse(JSON.stringify(validAdmission)) as unknown;
+    await expect(
+      acceptTaskBy(base, meta, command, serializedAdmission as never),
+    ).rejects.toMatchObject({ code: 'TASK_CAPACITY_ADMISSION_REQUIRED' });
+    await expect(acceptTaskBy(base, meta, command, validAdmission)).resolves.toHaveLength(5);
   });
 
   it('rechazo y solicitud sólo registran motivos públicos no sensibles', async () => {
@@ -504,7 +875,7 @@ describe('ofertas y respuestas de tareas', () => {
 
   it('pedir reasignación revoca de inmediato la asignación aceptada', async () => {
     let log = await offered();
-    log = await acceptTaskBy(log, by(44, recipient), {
+    log = await acceptAt(log, 44, recipient, {
       taskId: TASK,
       offerId: eventIdAt(4),
       expectedTaskSeq: revisionOf(log),
@@ -523,7 +894,7 @@ describe('ofertas y respuestas de tareas', () => {
 
   it('serializa respuestas concurrentes: una gana y la segunda no se repliega', async () => {
     const base = await offered();
-    const winner = await acceptTaskBy(base, by(46, recipient), {
+    const winner = await acceptAt(base, 46, recipient, {
       taskId: TASK,
       offerId: eventIdAt(4),
       expectedTaskSeq: revisionOf(base),
@@ -550,7 +921,7 @@ describe('ofertas y respuestas de tareas', () => {
   it('aceptar y pedir relevo desde la misma revisión no se escriben ambos', async () => {
     const base = await offered();
     const revision = revisionOf(base);
-    const accepted = await acceptTaskBy(base, by(470, recipient), {
+    const accepted = await acceptAt(base, 470, recipient, {
       taskId: TASK,
       offerId: eventIdAt(4),
       expectedTaskSeq: revision,
@@ -597,7 +968,7 @@ describe('ofertas y respuestas de tareas', () => {
     });
 
     await expect(
-      acceptTaskBy(log, by(50, recipient), {
+      acceptAt(log, 50, recipient, {
         taskId: TASK,
         offerId: eventIdAt(4),
         expectedTaskSeq: revisionOf(log),
@@ -626,5 +997,575 @@ describe('ofertas y respuestas de tareas', () => {
         recipient: replacement,
       }),
     ).rejects.toMatchObject({ code: 'STALE_TASK_OFFER' });
+  });
+});
+
+describe('trabajo activo, evidencia y revisión', () => {
+  it('recorre inicio, bloqueo, ayuda, reanudación, entrega, cambios y aceptación final', async () => {
+    let log = await accepted();
+    log = await startTaskBy(log, by(60, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'en-curso',
+      startedAt: by(60, recipient).at,
+      starts: [expect.objectContaining({ offerId: eventIdAt(4), by: recipient.memberId })],
+    });
+
+    log = await blockTaskBy(log, by(61, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      category: 'respuesta-externa',
+      privateDetailCommitment: commitment('3'),
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'bloqueada',
+      currentPause: {
+        pauseId: eventIdAt(61),
+        kind: 'blocked',
+        category: 'respuesta-externa',
+      },
+    });
+
+    log = await requestTaskHelpBy(log, by(62, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      category: 'desbloqueo',
+    });
+    const inSupport = replayInitiative(log).tasks[0]!;
+    expect(inSupport).toMatchObject({
+      status: 'en-apoyo',
+      currentPause: { pauseId: eventIdAt(61) },
+      helpRequests: [
+        expect.objectContaining({ helpRequestId: eventIdAt(62), pauseId: eventIdAt(61) }),
+      ],
+    });
+    expect(inSupport.pauses).toHaveLength(1);
+
+    await expect(
+      resumeTaskBy(log, by(63, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(log),
+        pauseId: eventIdAt(62),
+      }),
+    ).rejects.toMatchObject({ code: 'STALE_TASK_PAUSE' });
+
+    log = await addTaskEvidenceBy(log, by(64, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      objectCommitment: commitment('4'),
+      kindCode: 'imagen',
+      sizeClass: 'mediana',
+      visibility: 'public',
+    });
+    expect(log.at(-1)?.payload).toEqual({
+      type: 'TaskEvidenceAdded',
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log) - 1,
+      objectCommitment: commitment('4'),
+      kindCode: 'imagen',
+      sizeClass: 'mediana',
+      visibility: 'public',
+    });
+    expect(log.at(-1)?.payload).not.toHaveProperty('mediaType');
+    expect(log.at(-1)?.payload).not.toHaveProperty('bytes');
+    log = await resumeTaskBy(log, by(65, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      pauseId: eventIdAt(61),
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'en-curso',
+      currentPause: undefined,
+      pauses: [expect.objectContaining({ endedBy: 'resumed', endedAt: by(65, recipient).at })],
+      evidence: [
+        expect.objectContaining({ evidenceId: eventIdAt(64), addedBy: recipient.memberId }),
+      ],
+    });
+
+    log = await deliverTaskBy(log, by(66, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      evidenceIds: [eventIdAt(64)],
+      summaryCommitment: commitment('5'),
+    });
+    const firstDelivery = replayInitiative(log).tasks[0]!;
+    expect(firstDelivery).toMatchObject({
+      status: 'entregada',
+      currentDeliveryId: eventIdAt(66),
+      deliveries: [expect.objectContaining({ deliveryId: eventIdAt(66), review: undefined })],
+    });
+
+    await expect(
+      requestTaskChangesBy(log, by(67, replacement), {
+        taskId: TASK,
+        deliveryId: eventIdAt(66),
+        expectedTaskSeq: revisionOf(log),
+        reason: 'evidencia-insuficiente',
+      }),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED_NOT_THE_OWNER' });
+
+    log = await requestTaskChangesBy(log, by(68, responsible), {
+      taskId: TASK,
+      deliveryId: eventIdAt(66),
+      expectedTaskSeq: revisionOf(log),
+      reason: 'evidencia-insuficiente',
+      privateDetailCommitment: commitment('6'),
+    });
+    const reopened = replayInitiative(log).tasks[0]!;
+    expect(reopened).toMatchObject({
+      status: 'en-curso',
+      currentDeliveryId: undefined,
+    });
+    expect(reopened.deliveries[0]?.review).toMatchObject({
+      type: 'changes-requested',
+      by: responsible.memberId,
+    });
+
+    log = await deliverTaskBy(log, by(69, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      evidenceIds: [eventIdAt(64)],
+      summaryCommitment: commitment('7'),
+    });
+    log = await acceptTaskReviewBy(log, by(70, responsible), {
+      taskId: TASK,
+      deliveryId: eventIdAt(69),
+      expectedTaskSeq: revisionOf(log),
+      outcomeCriterionEvidence: 'verificada',
+    });
+    const completed = replayInitiative(log).tasks[0]!;
+    expect(completed).toMatchObject({
+      status: 'completada',
+      assigneeId: recipient.memberId,
+      currentDeliveryId: undefined,
+      completedAt: by(70, responsible).at,
+    });
+    expect(completed.deliveries[1]?.review).toMatchObject({
+      type: 'accepted',
+      by: responsible.memberId,
+      outcomeCriterionEvidence: 'verificada',
+    });
+
+    await expect(
+      addTaskEvidenceBy(log, by(71, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(log),
+        objectCommitment: commitment('8'),
+        kindCode: 'texto',
+        sizeClass: 'pequena',
+        visibility: 'restricted',
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_EVIDENCE_NOT_ALLOWED' });
+  });
+
+  it('pedir ayuda directamente abre una sola pausa cuyo eventId debe usarse al reanudar', async () => {
+    let log = await started();
+    log = await requestTaskHelpBy(log, by(72, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      category: 'orientacion',
+      privateDetailCommitment: commitment('9'),
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'en-apoyo',
+      currentPause: { pauseId: eventIdAt(72), kind: 'support' },
+      helpRequests: [
+        expect.objectContaining({ helpRequestId: eventIdAt(72), pauseId: eventIdAt(72) }),
+      ],
+    });
+    expect(replayInitiative(log).tasks[0]?.pauses).toHaveLength(1);
+
+    log = await resumeTaskBy(log, by(73, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      pauseId: eventIdAt(72),
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'en-curso',
+      currentPause: undefined,
+    });
+  });
+
+  it('no inicia hasta que todas sus dependencias estén completadas', async () => {
+    let log = await offered();
+    log = await offerTaskBy(log, by(80, responsible), {
+      taskId: TASK_2,
+      milestoneId: MILESTONE,
+      offeredTo: replacement.memberId!,
+      recipient: replacement,
+      title: 'Publicar el resultado verificado',
+      description: 'Publicar el resultado sólo después de completar la evidencia anterior.',
+      effortMinutes: 30,
+      dueAt: instant(PLAN.reviewAt - 1_500),
+      dependsOn: [TASK],
+    });
+    log = await acceptAt(log, 81, replacement, {
+      taskId: TASK_2,
+      offerId: eventIdAt(80),
+      expectedTaskSeq: replayInitiative(log).tasks[1]!.lastSeq,
+    });
+    await expect(
+      startTaskBy(log, by(82, replacement), {
+        taskId: TASK_2,
+        offerId: eventIdAt(80),
+        expectedTaskSeq: replayInitiative(log).tasks[1]!.lastSeq,
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_DEPENDENCY_NOT_COMPLETED' });
+
+    log = await acceptAt(log, 83, recipient, {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+    });
+    log = await startTaskBy(log, by(84, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+    });
+    log = await addTaskEvidenceBy(log, by(85, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+      objectCommitment: commitment('a'),
+      kindCode: 'texto',
+      sizeClass: 'pequena',
+      visibility: 'public',
+    });
+    log = await deliverTaskBy(log, by(86, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+      evidenceIds: [eventIdAt(85)],
+      summaryCommitment: commitment('b'),
+    });
+    log = await acceptTaskReviewBy(log, by(87, responsible), {
+      taskId: TASK,
+      deliveryId: eventIdAt(86),
+      expectedTaskSeq: replayInitiative(log).tasks[0]!.lastSeq,
+      outcomeCriterionEvidence: 'verificada',
+    });
+    log = await startTaskBy(log, by(88, replacement), {
+      taskId: TASK_2,
+      offerId: eventIdAt(80),
+      expectedTaskSeq: replayInitiative(log).tasks[1]!.lastSeq,
+    });
+    expect(replayInitiative(log).tasks[1]?.status).toBe('en-curso');
+  });
+
+  it('reasignar desde trabajo activo cierra la pausa, revoca el assignee y permite reoferta', async () => {
+    let log = await started();
+    log = await blockTaskBy(log, by(90, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      category: 'recurso',
+    });
+    log = await requestTaskReassignmentBy(log, by(91, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(log),
+      reason: 'sin-disponibilidad',
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'reasignacion-solicitada',
+      assigneeId: undefined,
+      currentPause: undefined,
+      pauses: [expect.objectContaining({ endedBy: 'reassignment', endedAt: by(91, recipient).at })],
+    });
+
+    log = await reofferTaskBy(log, by(92, responsible), {
+      taskId: TASK,
+      previousOfferId: eventIdAt(4),
+      offeredTo: replacement.memberId!,
+      recipient: replacement,
+    });
+    expect(replayInitiative(log).tasks[0]).toMatchObject({
+      status: 'ofrecida',
+      currentOfferId: eventIdAt(92),
+      assigneeId: undefined,
+      startedAt: undefined,
+    });
+  });
+
+  it('rechaza categorías, commitments, archivos y entregas inválidos sin mutar el log', async () => {
+    const base = await started();
+    const revision = revisionOf(base);
+    await expect(
+      blockTaskBy(base, by(100, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision,
+        category: 'salud' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK_BLOCK_CATEGORY' });
+    await expect(
+      requestTaskHelpBy(base, by(101, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision,
+        category: 'dato-personal' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK_HELP_CATEGORY' });
+    await expect(
+      addTaskEvidenceBy(base, by(102, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision,
+        objectCommitment: 'no-es-un-hash' as never,
+        kindCode: 'texto',
+        sizeClass: 'pequena',
+        visibility: 'restricted',
+      }),
+    ).rejects.toBeDefined();
+    for (const candidate of [
+      { kindCode: 'audio', sizeClass: 'pequena', visibility: 'restricted' },
+      { kindCode: 'texto', sizeClass: 'diminuta', visibility: 'restricted' },
+      { kindCode: 'texto', sizeClass: 'pequena', visibility: 'secret' },
+    ] as const) {
+      await expect(
+        addTaskEvidenceBy(base, by(103, recipient), {
+          taskId: TASK,
+          offerId: eventIdAt(4),
+          expectedTaskSeq: revision,
+          objectCommitment: commitment('c'),
+          kindCode: candidate.kindCode as never,
+          sizeClass: candidate.sizeClass as never,
+          visibility: candidate.visibility as never,
+        }),
+      ).rejects.toBeDefined();
+    }
+    await expect(
+      deliverTaskBy(base, by(104, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revision,
+        evidenceIds: [],
+        summaryCommitment: commitment('d'),
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_DELIVERY_EVIDENCE_COUNT_INVALID' });
+    expect(replayInitiative(base).tasks[0]?.lastSeq).toBe(revision);
+  });
+
+  it('rechaza revisión obsoleta o vocabulario inventado y deja completada como terminal', async () => {
+    let log = await delivered();
+    const deliveryRevision = revisionOf(log);
+    await expect(
+      requestTaskChangesBy(log, by(110, responsible), {
+        taskId: TASK,
+        deliveryId: eventIdAt(999),
+        expectedTaskSeq: deliveryRevision,
+        reason: 'criterio-no-cumplido',
+      }),
+    ).rejects.toMatchObject({ code: 'STALE_TASK_DELIVERY' });
+    await expect(
+      requestTaskChangesBy(log, by(111, responsible), {
+        taskId: TASK,
+        deliveryId: eventIdAt(8),
+        expectedTaskSeq: deliveryRevision,
+        reason: 'porque-si' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK_CHANGE_REASON' });
+    await expect(
+      acceptTaskReviewBy(log, by(112, responsible), {
+        taskId: TASK,
+        deliveryId: eventIdAt(8),
+        expectedTaskSeq: deliveryRevision,
+        outcomeCriterionEvidence: 'excelente' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_OUTCOME_CRITERION_EVIDENCE' });
+
+    log = await acceptTaskReviewBy(log, by(113, responsible), {
+      taskId: TASK,
+      deliveryId: eventIdAt(8),
+      expectedTaskSeq: deliveryRevision,
+      outcomeCriterionEvidence: 'sin-verificar',
+    });
+    await expect(
+      requestTaskReassignmentBy(log, by(114, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(log),
+        reason: 'razon-privada',
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_REASSIGNMENT_NOT_ALLOWED' });
+    await expect(
+      acceptTaskReviewBy(log, by(115, responsible), {
+        taskId: TASK,
+        deliveryId: eventIdAt(8),
+        expectedTaskSeq: revisionOf(log),
+        outcomeCriterionEvidence: 'verificada',
+      }),
+    ).rejects.toMatchObject({ code: 'STALE_TASK_DELIVERY' });
+  });
+
+  it('replay rechaza que otra persona fabrique un inicio aunque la cadena sea válida', async () => {
+    const base = await accepted();
+    const forged = await appendChained<InitiativePayload>(base, {
+      eventId: eventIdAt(120),
+      aggregateId: INITIATIVE,
+      occurredAt: by(120, replacement).at,
+      actor: replacement.memberId!,
+      payload: {
+        type: 'TaskStarted',
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(base),
+      },
+    });
+    expect(() => replayInitiative([...base, forged])).toThrow(
+      expect.objectContaining({ code: 'TASK_ACTOR_MISMATCH' }),
+    );
+  });
+});
+
+describe('fronteras adversariales del historial de iniciativa', () => {
+  it('apply, replay y emit rechazan una colisión eventId entre tipos distintos', async () => {
+    const base = await started();
+    const duplicate = await appendChained<InitiativePayload>(base, {
+      eventId: eventIdAt(4),
+      aggregateId: INITIATIVE,
+      occurredAt: by(130, recipient).at,
+      actor: recipient.memberId!,
+      payload: {
+        type: 'TaskBlocked',
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(base),
+        category: 'dependencia',
+      },
+    });
+
+    expect(() => applyInitiative(replayInitiative(base), duplicate)).toThrow(
+      expect.objectContaining({ code: 'DUPLICATE_INITIATIVE_EVENT_ID' }),
+    );
+    expect(() => replayInitiative([...base, duplicate])).toThrow(
+      expect.objectContaining({ code: 'DUPLICATE_INITIATIVE_EVENT_ID' }),
+    );
+    await expect(
+      blockTaskBy(base, by(4, recipient), {
+        taskId: TASK,
+        offerId: eventIdAt(4),
+        expectedTaskSeq: revisionOf(base),
+        category: 'dependencia',
+      }),
+    ).rejects.toMatchObject({ code: 'DUPLICATE_INITIATIVE_EVENT_ID' });
+  });
+
+  it('los comandos proyectan campos explícitos y jamás arrastran metadatos hostiles', async () => {
+    const base = await accepted();
+    const log = await startTaskBy(base, by(131, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(base),
+      privateDetail: 'texto que no debe entrar',
+      filename: 'diagnostico.pdf',
+      url: 'https://ejemplo.invalid/privado',
+      bytes: 99,
+      capacity: 120,
+    } as never);
+    expect(log.at(-1)?.payload).toEqual({
+      type: 'TaskStarted',
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(base),
+    });
+  });
+
+  it('replay rechaza claves desconocidas en cada tipo histórico aunque sean casteadas', async () => {
+    const base = await delivered();
+    const forbidden = ['privateDetail', 'filename', 'url', 'bytes', 'capacity'] as const;
+    for (let index = 0; index < base.length; index++) {
+      for (const key of forbidden) {
+        const original = base[index]!;
+        const forged = {
+          ...original,
+          payload: { ...original.payload, [key]: 'dato-prohibido' },
+        };
+        const log = base.map((event, candidate) => (candidate === index ? forged : event));
+        expect(() => replayInitiative(log as InitiativeLog)).toThrow(
+          expect.objectContaining({ code: 'INITIATIVE_PAYLOAD_UNKNOWN_FIELD' }),
+        );
+      }
+    }
+  });
+
+  it('replay rechaza getters, propiedades ocultas y opcionales undefined antes de usarlos', async () => {
+    const base = await accepted();
+    const original = base.at(-1)!;
+    let getterCalls = 0;
+    const getterPayload = {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(await offered()),
+    };
+    Object.defineProperty(getterPayload, 'type', {
+      enumerable: true,
+      get: () => {
+        getterCalls++;
+        return 'TaskAccepted';
+      },
+    });
+    expect(() =>
+      replayInitiative([...base.slice(0, -1), { ...original, payload: getterPayload as never }]),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_INITIATIVE_PAYLOAD' }));
+    expect(getterCalls).toBe(0);
+
+    const hiddenPayload = { ...original.payload };
+    Object.defineProperty(hiddenPayload, 'filename', {
+      enumerable: false,
+      value: 'oculto.pdf',
+    });
+    expect(() =>
+      replayInitiative([...base.slice(0, -1), { ...original, payload: hiddenPayload }]),
+    ).toThrow(expect.objectContaining({ code: 'INITIATIVE_PAYLOAD_UNKNOWN_FIELD' }));
+
+    const blocked = await blockTaskBy(await started(), by(132, recipient), {
+      taskId: TASK,
+      offerId: eventIdAt(4),
+      expectedTaskSeq: revisionOf(await started()),
+      category: 'dependencia',
+    });
+    const blockedEvent = blocked.at(-1)!;
+    expect(() =>
+      replayInitiative([
+        ...blocked.slice(0, -1),
+        {
+          ...blockedEvent,
+          payload: { ...blockedEvent.payload, privateDetailCommitment: undefined } as never,
+        },
+      ]),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_INITIATIVE_PAYLOAD' }));
+  });
+
+  it('rechaza campos desconocidos dentro del plan y de sus criterios', async () => {
+    await expect(
+      createInitiative(systemMeta, {
+        ...input,
+        executionPlan: { ...PLAN, privateDetail: 'no publicar' } as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INITIATIVE_EXECUTION_PLAN_PAYLOAD' });
+    await expect(
+      createInitiative(systemMeta, {
+        ...input,
+        executionPlan: {
+          ...PLAN,
+          successCriteria: [{ ...PLAN.successCriteria[0], url: 'https://privado.invalid' }],
+        } as never,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INITIATIVE_EXECUTION_PLAN_PAYLOAD' });
   });
 });

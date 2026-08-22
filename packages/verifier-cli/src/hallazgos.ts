@@ -31,6 +31,7 @@ export type CodigoHallazgo =
   | 'PUNTERO_COLGANTE'
   | 'AGREGADO_NO_REGISTRADO'
   | 'CABEZA_INCOHERENTE'
+  | 'IDENTIDAD_DE_EVENTO_DUPLICADA'
   // ── Checkpoints ────────────────────────────────────────────────────────────────────────────
   | 'CHECKPOINT_INCOHERENTE'
   | 'RAIZ_MERKLE_NO_COINCIDE'
@@ -163,6 +164,16 @@ export const CATALOGO: Record<CodigoHallazgo, DescripcionHallazgo> = {
       'El sistema guarda, por comodidad, el estado final de cada expediente. Aquí ese resumen no es ' +
       'el que sale de recorrer los registros uno a uno. Manda lo segundo.',
     queHacer: 'Avisá a la veeduría; indicá el expediente que aparece abajo.',
+  },
+  IDENTIDAD_DE_EVENTO_DUPLICADA: {
+    severidad: 'alarma',
+    titulo: 'Dos hechos distintos usan la misma identidad global.',
+    queSignifica:
+      'Las referencias a una oferta, pausa, evidencia o entrega dejarían de identificar un solo ' +
+      'hecho. Las cadenas pueden seguir cuadrando aunque alguien haya quitado la barrera de ' +
+      'unicidad de la base antes de escribirlos.',
+    queHacer:
+      'Guardá el paquete y avisá a la veeduría. No uses las referencias afectadas para ejecutar nuevas acciones.',
   },
 
   CHECKPOINT_INCOHERENTE: {
@@ -351,6 +362,7 @@ const GRUPO: Record<CodigoHallazgo, CodigoSalida> = {
   PUNTERO_COLGANTE: SALIDA.integridadInterna,
   AGREGADO_NO_REGISTRADO: SALIDA.integridadInterna,
   CABEZA_INCOHERENTE: SALIDA.integridadInterna,
+  IDENTIDAD_DE_EVENTO_DUPLICADA: SALIDA.integridadInterna,
 
   CHECKPOINT_INCOHERENTE: SALIDA.checkpoints,
   RAIZ_MERKLE_NO_COINCIDE: SALIDA.checkpoints,

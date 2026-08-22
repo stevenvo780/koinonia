@@ -19,6 +19,7 @@ import {
   ensureSpine,
   MemoryMailer,
   migrate,
+  NodeAes256GcmVaultCrypto,
   setAppRolePassword,
   udeaIdentityAdapter,
   type PgPool,
@@ -94,6 +95,7 @@ export interface ApiListo {
   readonly correo: MemoryMailer;
   readonly reloj: RelojDePrueba;
   readonly azar: AzarDePrueba;
+  readonly vault: NodeAes256GcmVaultCrypto;
   readonly stop: () => Promise<void>;
 }
 
@@ -161,6 +163,7 @@ export async function apiEnv(): Promise<ApiEnv> {
 
   const correo = new MemoryMailer();
   const azar = new AzarDePrueba();
+  const vault = new NodeAes256GcmVaultCrypto(Uint8Array.from({ length: 32 }, (_, i) => i + 1));
   const app = await buildApp({
     pool,
     ports: {
@@ -175,6 +178,8 @@ export async function apiEnv(): Promise<ApiEnv> {
         facilitadores: [FACILITADORA],
         garantias: [GARANTIAS],
       }),
+      // Clave fija exclusiva de pruebas; nunca se imprime ni se usa fuera del contenedor efímero.
+      vault,
     },
     ratePepper: 'pimienta-de-prueba-suficientemente-larga',
     webBaseUrl: 'http://localhost:3000',
@@ -190,6 +195,7 @@ export async function apiEnv(): Promise<ApiEnv> {
     correo,
     reloj,
     azar,
+    vault,
     stop: async () => {
       await app.close().catch(() => undefined);
       await pool.end().catch(() => undefined);
@@ -242,6 +248,35 @@ export async function entrar(
   }
   const cuerpo = sesion.json<{ testigo: string; miembroId: string; roles: string[] }>();
   return cuerpo;
+}
+
+/** Declara capacidad de forma explicita; entrar nunca inventa disponibilidad para una persona. */
+export async function declararCapacidad(
+  env: ApiListo,
+  testigo: string,
+  minutosPorSemana = 10_080,
+): Promise<void> {
+  const current = await env.app.inject({
+    method: 'GET',
+    url: '/mi/capacidad',
+    headers: como(testigo),
+  });
+  if (current.statusCode !== 200) {
+    throw new Error(`no se pudo leer capacidad: ${String(current.statusCode)} ${current.body}`);
+  }
+  const body = current.json<{ readonly declarada: boolean; readonly revision?: number }>();
+  const updated = await env.app.inject({
+    method: 'PUT',
+    url: '/mi/capacidad',
+    headers: como(testigo),
+    payload: {
+      revision: body.declarada ? body.revision : 0,
+      minutosPorSemana,
+    },
+  });
+  if (updated.statusCode !== 200) {
+    throw new Error(`no se pudo declarar capacidad: ${String(updated.statusCode)} ${updated.body}`);
+  }
 }
 
 /** Cabeceras de una persona. Es también el camino que usan las pruebas para saltarse la interfaz. */

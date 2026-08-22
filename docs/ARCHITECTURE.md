@@ -260,6 +260,52 @@ API no admite texto libre en esos eventos. Los plazos capturados en la web se co
 Colombia de forma explícita; el servidor siempre recibe un instante epoch, independiente de la zona
 del dispositivo.
 
+### 4.3 Seguimiento, capacidad y entrega
+
+[ADR-0045](adr/0045-seguimiento-capacidad-privada-y-entrega-revisable.md) completa el primer ciclo
+operativo sin introducir una tabla mutable de estado. `TaskStarted`, `TaskBlocked`,
+`TaskHelpRequested`, `TaskResumed`, `TaskEvidenceAdded`, `TaskDelivered`, `TaskChangesRequested` y
+`TaskReviewAccepted` se encadenan en el mismo stream. Cada orden lleva la oferta y revisión que vio;
+reanudar y revisar llevan además el `pauseId` o `deliveryId` vigente. El dominio rechaza transiciones
+ilegales aunque una ruta nueva olvide hacerlo.
+
+La persona asignada mueve el trabajo; quien asumió el plan revisa la entrega. El administrador
+técnico no hereda ninguna de las dos capacidades. Las dependencias tienen que estar completadas antes
+de empezar, pedir ayuda o declarar bloqueo pausa la tarea, y una entrega exige evidencia y ausencia
+de pausa. Pedir cambios conserva la entrega y vuelve al trabajo; aceptar la revisión hace terminal la
+tarea, no la iniciativa.
+
+La capacidad semanal cruza deliberadamente la frontera en una sola operación: el número exacto se
+lee cifrado desde `identity`, pero la carga se reconstruye de los hechos de tarea. Bajo el orden de
+cerrojos `ledger → identity.member`, aceptar comprueba oferta, actor, revisión y cupo y añade
+`TaskAccepted` en el mismo commit. No se escribe un `CapacityChecked`: convertiría una protección
+privada en un hecho político permanente. Si los dos esquemas pasan a instancias diferentes, este
+commit se sustituye por la saga definida en ADR-0045, no por una doble escritura optimista.
+
+Los eventos de material conservan solamente clases gruesas y un compromiso con nonce. La apertura,
+el tipo detectado, el tamaño exacto y la clave de almacenamiento quedan fuera del ledger. Con ello un
+verificador autorizado detecta sustitución mientras exista la apertura, pero una supresión puede
+destruirla sin reescribir la historia. Las aperturas textuales usan un frame autenticado de longitud
+fija: 128 KiB más el tag GCM, de modo que inspeccionar `octet_length(ciphertext)` no revela si la nota
+era corta o cercana al máximo. La lectura de capacidad y material usa `FOR SHARE`; sólo crear,
+suprimir o cambiar datos asciende a `FOR UPDATE`, evitando deadlocks entre lectores.
+
+La comprobación interna de `/integridad` deriva del ledger el conjunto exacto de aperturas esperadas,
+las abre dentro del mismo snapshot y contrasta dueño, propósito, instante, contexto y commitment.
+Una fila faltante, huérfana, movida, corrupta o una bóveda indisponible deja esa comprobación en rojo
+con códigos y contadores sanitizados. El export público no finge poder abrir material privado: su
+verificador independiente sí recomprueba cadenas, anclajes y la unicidad global de `eventId`, incluso
+si un administrador retiró el índice SQL antes de insertar hechos ambiguos.
+
+La supresión evita confundir cumplimiento legal con destrucción silenciosa. Cada solicitud crea su
+propio agregado `pii_erasure`: seq 0 `PIIErasureRequested` sólo nace desde una sesión propia de diez
+minutos o menos; seq 1 `PIIErased` sólo puede consumir ese agregado y deriva de él al sujeto, sin
+recibirlo del ejecutor. Bajo el orden `ledger → member`, autentica todas las aperturas, ejecuta el
+`DELETE` físico y comprueba las cascadas antes del append final. `/integridad` exige actor propio en
+seq 0, enlace por ID y hash exactos en seq 1, conjunto exacto y ausencia de la identidad. Un DELETE
+más un tombstone sintácticamente perfecto pero sin solicitud queda rojo. Los eventos contienen sólo
+MemberId y eventIds ya públicos, nunca correo, token, texto, nonce, DSK ni ciphertext.
+
 ## 5. Separación Governance Ledger / PII Vault
 
 ```mermaid
@@ -330,6 +376,8 @@ graph LR
   D --- IP["IdentityProviderAdapter"] --- A3["magic-link-email"]
   D --- NP["NotificationPort"] --- A4["correo · digest semanal"]
   D --- AI["AIAssistantPort"] --- A5["asistente de redacción"]
+  D --- VC["VaultCryptoPort"] --- A6["AES-GCM · DSK envuelta"]
+  D -. futuro .- ES["EvidenceStorePort"] -. pendiente .- A7["S3 compatible"]
 ```
 
 | Puerto | Qué abstrae | Implementaciones | Restricción propia | ADR |
@@ -339,6 +387,8 @@ graph LR
 | `IdentityProviderAdapter` | Comprobar que alguien controla un correo `@udea.edu.co` | `magic-link-email` | No se asume ninguna API de la Universidad que no exista; un convenio futuro es un adaptador, no una reescritura | [0012](adr/0012-autenticacion-por-enlace-magico-al-correo-institucional.md) |
 | `NotificationPort` | Avisar a una persona | correo, resumen periódico | Sujeto al **presupuesto de atención**: tope duro de notificaciones por persona y semana, y todo tipo de aviso con tasa de acción bajo 5 % se elimina, no se «mejora» | [0040](adr/0040-prohibicion-de-metricas-de-actividad-individual.md) |
 | `AIAssistantPort` | Ayuda de redacción: teoría del cambio, resúmenes, detección de duplicados | proveedor externo, sustituible | **Nunca decide, nunca puntúa a personas, nunca escribe en el ledger.** Su salida es una sugerencia editable por quien redacta, y la persona sigue siendo la autora del evento | [0039](adr/0039-prohibicion-de-tokens-voto-ponderado-y-reputacion.md), [0040](adr/0040-prohibicion-de-metricas-de-actividad-individual.md) |
+| `VaultCryptoPort` | Cifrado autenticado y envoltura de claves por sujeto | AES-256-GCM con KEK inyectada; KMS futuro | No expone claves a contratos HTTP; intercambiar sujeto, campo o revisión rompe el AAD; sin clave falla cerrado, nunca vuelve a texto claro | [0045](adr/0045-seguimiento-capacidad-privada-y-entrega-revisable.md) |
+| `EvidenceStorePort` **futuro** | Bytes de evidencia y su borrado fuera del ledger | **No implementado**; S3-compatible es el destino previsto | Clave aleatoria sin identidad; acceso corto y autorizado; publicación crea otra copia; ninguna URL, filename o metadata privada entra al evento | [0045](adr/0045-seguimiento-capacidad-privada-y-entrega-revisable.md) |
 
 `AnchorProvider` y `VotingBackend` son los dos que llevan la garantía: si alguno se degrada, el
 sistema lo **anuncia** en la portada en vez de callarlo. El estado público es `NO ANCLADO` **desde el

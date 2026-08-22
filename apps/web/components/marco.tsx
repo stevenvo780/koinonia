@@ -13,7 +13,7 @@
  */
 
 import Link from 'next/link';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
 import { ErrorDeApi, traer } from '../lib/api';
 import type { Sesion } from '@koinonia/contracts';
@@ -80,6 +80,15 @@ export function useSesion(): {
   const [cargando, setCargando] = useState(true);
   const [tic, setTic] = useState(0);
 
+  const recargar = useCallback(() => {
+    // La identidad anterior deja de ser utilizable en el mismo turno en que pedimos revalidarla.
+    // Conservarla hasta que responda `/auth/yo` puede mostrar datos privados de otra cuenta si la
+    // cookie cambió en una pestaña distinta.
+    setSesion(undefined);
+    setCargando(true);
+    setTic((n) => n + 1);
+  }, []);
+
   useEffect(() => {
     let vivo = true;
     setCargando(true);
@@ -98,12 +107,17 @@ export function useSesion(): {
     };
   }, [tic]);
 
+  useEffect(() => {
+    window.addEventListener('focus', recargar);
+    return () => {
+      window.removeEventListener('focus', recargar);
+    };
+  }, [recargar]);
+
   return {
     sesion,
     cargando,
-    recargar: () => {
-      setTic((n) => n + 1);
-    },
+    recargar,
   };
 }
 

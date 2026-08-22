@@ -310,6 +310,9 @@ export const DECISION_C = id32('decision-horarios');
 export interface OpcionesLedger {
   /** Texto del resumen de la primera decisión. Cambiarlo es «reescribir el pasado». */
   readonly resumenA?: string;
+  /** Identidades opcionales para probar la regla global sin reutilizar código del servidor. */
+  readonly eventIdA?: string;
+  readonly eventIdB?: string;
 }
 
 /** Un ledger pequeño pero realista: espina, dos expedientes y dos sellos. */
@@ -318,6 +321,7 @@ export async function construirLedger(opciones: OpcionesLedger = {}): Promise<Le
   await constructor.abrirLedger();
 
   await constructor.abrirAgregado(DECISION_A, 'decision', 'DecisionRedactada', {
+    ...(opciones.eventIdA === undefined ? {} : { eventId: opciones.eventIdA }),
     resumen: opciones.resumenA ?? 'Aprobar el acta de la asamblea del 3 de marzo',
   });
   await constructor.anadir(DECISION_A, 'DecisionAbierta', { ronda: 1 });
@@ -327,6 +331,7 @@ export async function construirLedger(opciones: OpcionesLedger = {}): Promise<Le
   await constructor.emitirSello();
 
   await constructor.abrirAgregado(DECISION_B, 'decision', 'DecisionRedactada', {
+    ...(opciones.eventIdB === undefined ? {} : { eventId: opciones.eventIdB }),
     resumen: 'Repartir el presupuesto de eventos del semestre',
   });
   await constructor.anadir(DECISION_B, 'DecisionAbierta', { ronda: 1 });

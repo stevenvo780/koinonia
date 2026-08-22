@@ -21,6 +21,7 @@ import type {
   ProblemState,
   ProposalState,
   ProposalVersion,
+  TaskPauseRecord,
 } from '@koinonia/domain';
 import type {
   DecisionDetalle,
@@ -28,6 +29,7 @@ import type {
   Desenlace,
   Evidencia,
   IniciativaDetalle,
+  PausaTarea,
   PlanEjecucion,
   PasoTraza,
   ProblemaDetalle,
@@ -307,6 +309,22 @@ export function resultadoDto(resultado: DecisionResult, iniciativaId?: string): 
   };
 }
 
+function pausaTareaDto(pausa: TaskPauseRecord): PausaTarea {
+  return {
+    id: pausa.pauseId,
+    tipo: pausa.kind === 'blocked' ? 'bloqueo' : 'apoyo',
+    categoria: pausa.category,
+    iniciadaEn: pausa.startedAt,
+    ...(pausa.endedAt === undefined || pausa.endedBy === undefined
+      ? {}
+      : {
+          finalizadaEn: pausa.endedAt,
+          causaDeFin:
+            pausa.endedBy === 'resumed' ? ('reanudacion' as const) : ('reasignacion' as const),
+        }),
+  };
+}
+
 export function iniciativaDto(
   id: string,
   state: InitiativeState,
@@ -356,6 +374,55 @@ export function iniciativaDto(
       esfuerzoMinutos: task.effortMinutes,
       dependeDe: [...task.dependsOn],
       estado: task.status,
+      ...(task.startedAt === undefined ? {} : { iniciadaEn: task.startedAt }),
+      pausas: task.pauses.map(pausaTareaDto),
+      ...(task.currentPause === undefined
+        ? {}
+        : {
+            pausaActual: pausaTareaDto(task.currentPause),
+          }),
+      solicitudesDeAyuda: task.helpRequests.map((request) => ({
+        id: request.helpRequestId,
+        pausaId: request.pauseId,
+        categoria: request.category,
+        solicitadaEn: request.requestedAt,
+      })),
+      evidencias: task.evidence.map((evidence) => ({
+        id: evidence.evidenceId,
+        tipo: evidence.kindCode,
+        tamano: evidence.sizeClass,
+        visibilidad: evidence.visibility,
+        agregadaEn: evidence.addedAt,
+        puedeAbrirse:
+          quien !== undefined &&
+          (evidence.addedBy === quien || state.executionPlan.responsibleId === quien),
+      })),
+      entregas: task.deliveries.map((delivery) => ({
+        id: delivery.deliveryId,
+        evidenciaIds: [...delivery.evidenceIds],
+        entregadaEn: delivery.deliveredAt,
+        puedeAbrirse:
+          quien !== undefined &&
+          (delivery.deliveredBy === quien || state.executionPlan.responsibleId === quien),
+        ...(delivery.review === undefined
+          ? {}
+          : {
+              revision:
+                delivery.review.type === 'changes-requested'
+                  ? {
+                      tipo: 'cambios-solicitados' as const,
+                      motivo: delivery.review.reason,
+                      revisadaEn: delivery.review.at,
+                    }
+                  : {
+                      tipo: 'aceptada' as const,
+                      evidenciaCriterio: delivery.review.outcomeCriterionEvidence,
+                      revisadaEn: delivery.review.at,
+                    },
+            }),
+      })),
+      ...(task.currentDeliveryId === undefined ? {} : { entregaActualId: task.currentDeliveryId }),
+      ...(task.completedAt === undefined ? {} : { completadaEn: task.completedAt }),
       esMia: quien !== undefined && (task.assigneeId === quien || task.offeredTo === quien),
     })),
   };

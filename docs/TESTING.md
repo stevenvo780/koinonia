@@ -1,9 +1,9 @@
 # Estrategia de pruebas de Koinonía
 
 > **Estado:** normativo. Documenta una estrategia **en marcha**, no un plan. Hoy el repositorio tiene
-> **696 pruebas en verde repartidas en 49 ficheros** —108 en `packages/crypto`, 307 en
-> `packages/domain`, 80 en `packages/anchor`, 33 en `packages/verifier-cli`, 16 en
-> `packages/contracts`, 18 en `services/api` y 134 de integración contra PostgreSQL real—, entre ellas
+> **798 pruebas en verde repartidas en 61 ficheros** —108 en `packages/crypto`, 338 en
+> `packages/domain`, 80 en `packages/anchor`, 34 en `packages/verifier-cli`, 24 en
+> `packages/contracts`, 53 en `services/api` y 161 de integración contra PostgreSQL real—, entre ellas
 > las **propiedades de fast-check** mapeadas a un invariante de la PARTE E de la spec 30. A eso se suman
 > los escenarios de extremo a extremo en Playwright, cuyo contador vigente se registra en el handoff.
 >
@@ -253,6 +253,28 @@ reasignación— compiten contra PostgreSQL real: exactamente una escribe y las 
 Un intento posterior sólo puede avanzar con la revisión nueva. Las pruebas leen luego el payload
 persistido y demuestran que ni un campo extra de texto libre ni su valor llegan al ledger.
 
+Para ADR-0045, dos aceptaciones sobre el mismo último cupo y la carrera aceptar-versus-bajar
+capacidad se ejecutan con transacciones distintas: el orden `ledger → miembro` evita deadlock, no
+duplica carga y bloquea la siguiente aceptación. Evidencia y resumen se cifran y comprometen en el
+mismo commit que el evento; ciphertext, contexto o compromiso alterados fallan cerrados. Las pruebas
+de lectura comparan recurso real e inventado para un tercero y para el aportante cuya membresía fue
+retirada. Otra integración fuerza el mismo `eventId` en dos agregados y comprueba que PostgreSQL
+revierte también el puntero de la espina y conserva el ledger verificable. Las regresiones
+adversariales quitan después ese índice y exigen que tanto el verificador del servidor como el CLI
+independiente detecten el duplicado semánticamente; dos lecturas privadas concurrentes se sincronizan
+para demostrar que no ascienden `FOR SHARE` a `FOR UPDATE`; textos de 1 byte y 16 KiB producen el
+mismo ciphertext de 131 088 bytes; y `/integridad` queda rojo ante apertura alterada, faltante o
+huérfana sin incluir texto ni identificadores privados en el informe.
+La pareja de supresión crea una apertura real, exige solicitud propia desde una sesión de diez
+minutos o menos y comprueba que el ejecutor sólo recibe el agregado: seq 1 enlaza ID y hash de seq 0,
+borra físicamente al sujeto y mantiene verde la comprobación local. Se prueban schema estricto sin
+`subjectId`, confirmación irreversible, sesión vieja, replay, dos solicitudes concurrentes y dos
+ejecutores concurrentes. Otras regresiones fuerzan un identificador inválido después del `DELETE`
+para demostrar rollback, borran una solicitud todavía pendiente y fabrican `DELETE` más un tombstone
+exacto sin solicitud; todos los caminos no autorizados quedan rojos sin filtrar texto, material ID,
+correo ni token. También se afirma que la página no presenta esta auditoría local como algo que el
+export público pueda reproducir.
+
 ---
 
 ## 6. E2E con Playwright
@@ -270,7 +292,11 @@ Nueve escenarios **obligatorios**. Si uno falla, no hay release.
    tarea y otra sesión la acepta. Antes de aceptar no aparece responsable. Una respuesta a la oferta
    anterior tras reofertar falla sin cambiar la vigente. Aceptar exige una elección sin valor
    predeterminado. Si el servidor guarda una orden y se pierde sólo la respuesta, el reintento usa la
-   misma clave y no duplica el hecho (ADR-0044).
+   misma clave y no duplica el hecho (ADR-0044). La persona declara capacidad privada, comienza,
+   bloquea, pide ayuda, reanuda, agrega evidencia y entrega; el responsable pide cambios, recibe otra
+   entrega y la acepta. Se prueba por API que otra cuenta no puede leer capacidad o evidencia
+   restringida, que una dependencia pendiente impide empezar y que dos aceptaciones sobre el último
+   cupo dejan una sola confirmada (ADR-0045).
 3. **Inmutabilidad.** Se altera el ledger **por debajo de la aplicación** —`UPDATE` directo sobre el
    payload de un evento intermedio— y la verificación **lo denuncia**: señala el `seq` exacto donde se
    rompe la cadena y la decisión queda en cuarentena. La prueba simétrica es igual de obligatoria: sin

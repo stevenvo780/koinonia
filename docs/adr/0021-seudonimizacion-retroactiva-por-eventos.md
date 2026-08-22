@@ -26,6 +26,23 @@ Con la separación de almacenes (ADR-0008) esto es casi trivial: `ProposalSubmit
 
 La resolución de identidad **falla en abierto** hacia un seudónimo estable de visualización: la interfaz muestra *«Autoría: Miembro retirado K7F2 · datos personales suprimidos el 14/03/2027»*. El evento no cambia **ni un byte**: `prevHash` verifica y la raíz Merkle anclada hace dos años sigue válida.
 
+### Perfil implementado inicialmente por ADR-0045
+
+Cada solicitud usa un agregado `pii_erasure/<erasureId>`: seq 0 es `PIIErasureRequested`, con actor
+igual al titular derivado de una sesión revalidada de diez minutos o menos; seq 1 es `PIIErased`, con
+actor sistema y referencia al ID y hash exactos de seq 0. La ruta pública no acepta `subjectId`, y el
+ejecutor técnico recibe sólo `erasureId`: la persona por borrar se deriva de la autorización.
+
+El primer corte ya conserva base legal, radicado opaco, instante, sujeto seudónimo y conjunto de
+aperturas privadas destruidas. Todavía no afirma que el `shredReportHash`, `displayPseudonym` y
+`backupsClearAt` del contrato completo estén operativos: faltan el worker durable, el informe de
+trituración, el re-shred de restauraciones y la vista de estado. Una solicitud pendiente no autoriza
+ausencia; `/integridad` exige que identidad y aperturas sigan presentes hasta seq 1.
+
+La autoría prueba una sesión validada por la aplicación, no una firma personal. Ante root o una app
+completamente comprometida, una prueba de voluntad no falsificable requerirá WebAuthn/passkey o un
+custodio externo; hasta entonces ésa es una limitación explícita, no una garantía inventada.
+
 **Por qué esto no es reescribir la historia.** Reescribirla sería afirmar que la propuesta no existió, que la escribió otro, o cambiar su contenido. Nada de eso ocurre. Lo que se retira es el **vínculo entre un acto público y una identidad civil privada** —vínculo que nunca estuvo en el ledger y cuya permanencia la ley no exige. Es un acta de asamblea: el acuerdo sigue vigente aunque el archivo de afiliados se depure.
 
 ## Alternativas consideradas

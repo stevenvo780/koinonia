@@ -13,6 +13,8 @@ import {
   miembrosCirculo,
   planEjecucion,
   resultadoDecision,
+  solicitarSupresion,
+  supresionSolicitada,
   versionPropuesta,
 } from '../src/http.js';
 
@@ -140,6 +142,37 @@ describe('contrato HTTP de propuestas e iniciativas', () => {
   });
 });
 
+describe('contrato de solicitud propia de supresión', () => {
+  const requestId = '123e4567-e89b-42d3-a456-426614174000';
+
+  it('exige confirmación irreversible y rechaza cualquier selector de otra persona', () => {
+    const ownRequest = {
+      requestId,
+      baseLegal: 'ley-1581-art-8e',
+      confirmacionIrreversible: true,
+    } as const;
+    expect(solicitarSupresion.parse(ownRequest)).toEqual(ownRequest);
+    expect(solicitarSupresion.safeParse({ ...ownRequest, subjectId: id }).success).toBe(false);
+    expect(
+      solicitarSupresion.safeParse({ ...ownRequest, confirmacionIrreversible: false }).success,
+    ).toBe(false);
+    expect(
+      solicitarSupresion.safeParse({ ...ownRequest, baseLegal: 'porque-lo-dice-admin' }).success,
+    ).toBe(false);
+  });
+
+  it('expone sólo radicado, solicitud, instante y estado pendiente', () => {
+    const response = {
+      solicitudId: id,
+      radicado: id,
+      solicitadaEn: 1_700_000_000_000,
+      estado: 'pendiente',
+    } as const;
+    expect(supresionSolicitada.parse(response)).toEqual(response);
+    expect(supresionSolicitada.safeParse({ ...response, subjectId: id }).success).toBe(false);
+  });
+});
+
 describe('contrato HTTP ADR-0044: ratificación, hitos y ofertas', () => {
   const requestId = '123e4567-e89b-42d3-a456-426614174000';
   const hitoId = '1123456789abcdef0123456789abcdef';
@@ -264,6 +297,10 @@ describe('contrato HTTP ADR-0044: ratificación, hitos y ofertas', () => {
           esfuerzoMinutos: 45,
           dependeDe: [],
           estado: 'aceptada',
+          pausas: [],
+          solicitudesDeAyuda: [],
+          evidencias: [],
+          entregas: [],
           esMia: true,
         },
       ],

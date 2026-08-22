@@ -168,7 +168,7 @@ test('la V1 sigue intacta e íntegra después de que existe la V2 y se vota sobr
 
   // ── 5. Y la V1 sigue VERIFICANDO ───────────────────────────────────────────────────────────
   await page.goto('/verificar');
-  await expect(page.getByText('El historial está completo y sin alteraciones')).toBeVisible();
+  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
   await expect(
     page.getByText('La versión 1 conserva sus palabras, responsable, fecha y criterios', {
       exact: false,

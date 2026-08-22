@@ -18,6 +18,8 @@ import { toHex } from '@koinonia/crypto';
 import {
   type Actor,
   authorize,
+  authorizeTaskDeliveryRead,
+  authorizeTaskEvidenceRead,
   amendProposal,
   attachEvidence,
   type BallotPayload,
@@ -85,19 +87,36 @@ import {
   ratifyDecisionBy,
   activateInitiative,
   acceptTaskBy,
+  acceptTaskReviewBy,
+  addTaskEvidenceBy,
+  admitTaskCapacity,
+  blockTaskBy,
+  deliverTaskBy,
   offerTaskBy,
   planMilestoneBy,
+  prepareTaskAcceptanceBy,
   milestoneId,
   rejectTaskBy,
   reofferTaskBy,
+  requestTaskChangesBy,
+  requestTaskHelpBy,
   requestTaskReassignmentBy,
+  resumeTaskBy,
+  startTaskBy,
   taskId,
   type InitiativeEvent,
   type InitiativeLog,
+  type TaskCapacityAdmission,
+  type TaskBlockCategory,
+  type TaskChangeReason,
+  type TaskHelpCategory,
+  type OutcomeCriterionEvidence,
+  type PrivateMaterialContext,
+  type TaskEvidenceSizeClass,
   type TaskResponseReason,
 } from '@koinonia/domain';
 
-import { withTransaction, type PgClient, type PgPool } from '../db/client.js';
+import { withTransaction, type PgClient, type PgPool, type PgPoolClient } from '../db/client.js';
 import {
   loadDecisionLog,
   persistDecisionLog,
@@ -129,6 +148,15 @@ import {
   sha256Hex,
 } from './identity.js';
 import type { Ports } from './ports.js';
+import { readOwnCapacityWithin } from './capacity.js';
+import {
+  createRestrictedTextMaterialWithin,
+  openRestrictedTextMaterialWithin,
+  unavailablePrivateMaterialVerification,
+  verifyRestrictedPrivateMaterialsWithin,
+  type PrivateMaterialVerification,
+} from './private-material-store.js';
+import { deriveCapacityLoadWithin, taskCapacityBucket } from './task-capacity.js';
 
 /** El actor anónimo con el que se atienden las lecturas públicas. */
 export const ACTOR_ANONIMO: Actor = { memberId: undefined, roles: ['observer'], circles: [] };
@@ -1267,11 +1295,23 @@ interface InitiativeMutation {
     | 'TaskAccepted'
     | 'TaskRejected'
     | 'TaskReassignmentRequested'
-    | 'TaskReoffered';
+    | 'TaskReoffered'
+    | 'TaskStarted'
+    | 'TaskBlocked'
+    | 'TaskHelpRequested'
+    | 'TaskResumed'
+    | 'TaskEvidenceAdded'
+    | 'TaskDelivered'
+    | 'TaskChangesRequested'
+    | 'TaskReviewAccepted';
   /** Sólo para órdenes que ofrecen trabajo. Se bloquea y relee antes de construir el evento. */
   readonly recipientId?: MemberId;
   /** Compara únicamente entradas del cliente; IDs e instante generados se recuperan del evento. */
-  readonly matchesReplay: (event: InitiativeEvent) => boolean;
+  readonly matchesReplay: (
+    event: InitiativeEvent,
+    client: PgPoolClient,
+    state: InitiativeState,
+  ) => boolean | Promise<boolean>;
   /** Revalida la capacidad viva del actor aun cuando el evento ya exista y no vaya a reescribirse. */
   readonly reauthorizeReplay: (state: InitiativeState, current: Actor) => void;
   readonly run: (
@@ -1279,6 +1319,8 @@ interface InitiativeMutation {
     current: Actor,
     at: Instant,
     recipient: Actor | undefined,
+    client: PgPoolClient,
+    state: InitiativeState,
   ) => Promise<InitiativeLog>;
 }
 
@@ -1291,14 +1333,16 @@ function rejectInitiativeReplay(requestId: string, detail: string): never {
  * milestoneId ni instante. El `seq` del ledger es también el índice del evento en el log de dominio
  * (ledger 0 ↔ dominio 1), por lo que la recuperación no depende de buscar un identificador nuevo.
  */
-function assertInitiativeReplay(
+async function assertInitiativeReplay(
   previous: AppendResult,
   initiativeIdRaw: string,
   requestId: string,
   actorId: MemberId,
   mutation: InitiativeMutation,
   log: InitiativeLog,
-): void {
+  client: PgPoolClient,
+  state: InitiativeState,
+): Promise<void> {
   const stored = previous.events[0];
   const isSingleExpectedEvent =
     previous.aggregateId === initiativeIdRaw &&
@@ -1315,12 +1359,12 @@ function assertInitiativeReplay(
   }
 
   const original = log[stored.event.seq];
-  if (
-    original === undefined ||
-    original.actor !== actorId ||
-    original.payload.type !== mutation.eventType ||
-    !mutation.matchesReplay(original)
-  ) {
+  const sameInput =
+    original !== undefined &&
+    original.actor === actorId &&
+    original.payload.type === mutation.eventType &&
+    (await mutation.matchesReplay(original, client, state));
+  if (!sameInput) {
     rejectInitiativeReplay(
       requestId,
       'no describe los mismos datos que la operación original; usá una clave nueva',
@@ -1369,7 +1413,16 @@ async function mutateInitiative(
     };
 
     if (previous !== undefined) {
-      assertInitiativeReplay(previous, id, requestId, member.memberId, mutation, log);
+      await assertInitiativeReplay(
+        previous,
+        id,
+        requestId,
+        member.memberId,
+        mutation,
+        log,
+        client,
+        state,
+      );
       // La idempotencia conserva el resultado del comando, no una autorización caducada. El actor
       // y el cuerpo ya coincidieron semánticamente; antes de revelar el replay se vuelve a aplicar
       // la capacidad vigente con los roles y círculos recién leídos de la bóveda.
@@ -1399,7 +1452,7 @@ async function mutateInitiative(
       };
     }
 
-    const next = await mutation.run(log, current, instant(now), recipient);
+    const next = await mutation.run(log, current, instant(now), recipient, client, state);
     await persistInitiativeLogWithin(client, next, { requestId });
     return verifyInitiativeLog(next);
   });
@@ -1553,15 +1606,68 @@ export async function responderOfertaTarea(
         { kind: 'task', subject: current.memberId, circleId: state.circleId },
       );
     },
-    run: (log, by, at) => {
+    run: async (log, by, at, _recipient, client, state) => {
       const meta = { eventId: nuevoEventId(deps), at, by };
       switch (input.tipo) {
-        case 'aceptar':
-          return acceptTaskBy(log, meta, {
+        case 'aceptar': {
+          const command = {
             taskId: task,
             offerId: offer,
             expectedTaskSeq: input.revision,
-          });
+          };
+          // El preflight de dominio ocurre antes de tocar la fila privada. Asi una oferta o
+          // revision manipulada no llega a convertirse en una operacion de Vault.
+          const candidate = prepareTaskAcceptanceBy(log, meta, command);
+          const taskState = state.tasks.find((currentTask) => currentTask.taskId === task);
+          if (taskState === undefined) {
+            throw new ServicioError(
+              'INTEGRITY_TASK_ACCEPTANCE_STATE',
+              500,
+              'la tarea validada no aparece en la proyeccion verificada',
+            );
+          }
+          const capacity = await readOwnCapacityWithin(
+            client,
+            deps.ports.vault,
+            candidate.memberId,
+          );
+          if (!capacity.declarada) {
+            throw new ServicioError(
+              'TASK_CAPACITY_CONFIRMATION_BLOCKED',
+              422,
+              'la aceptacion exige revisar primero la capacidad privada propia',
+            );
+          }
+          const bucket = taskCapacityBucket(taskState.dueAt, at);
+          const currentLoadMinutes = await deriveCapacityLoadWithin(
+            client,
+            candidate.memberId,
+            bucket,
+            at,
+          );
+          let admission: TaskCapacityAdmission;
+          try {
+            admission = admitTaskCapacity(candidate, {
+              currentLoadMinutes,
+              weeklyCapacityMinutes: capacity.minutosPorSemana,
+            });
+          } catch (error) {
+            if (
+              typeof error === 'object' &&
+              error !== null &&
+              'code' in error &&
+              error.code === 'TASK_CAPACITY_EXCEEDED'
+            ) {
+              throw new ServicioError(
+                'TASK_CAPACITY_CONFIRMATION_BLOCKED',
+                422,
+                'la aceptacion no cabe en la capacidad privada vigente',
+              );
+            }
+            throw error;
+          }
+          return await acceptTaskBy(log, meta, command, admission);
+        }
         case 'rechazar':
           return rejectTaskBy(log, meta, {
             taskId: task,
@@ -1578,6 +1684,431 @@ export async function responderOfertaTarea(
           });
       }
     },
+  });
+}
+
+interface MutacionAsignadaInput {
+  readonly requestId: string;
+  readonly offerId: string;
+  readonly revision: number;
+}
+
+function reauthorizeAssigneeTask(
+  state: InitiativeState,
+  current: Actor,
+  action:
+    | 'task:start'
+    | 'task:block'
+    | 'task:request-help'
+    | 'task:resume'
+    | 'task:add-evidence'
+    | 'task:deliver',
+): void {
+  authorize(current, action, {
+    kind: 'task',
+    subject: current.memberId,
+    circleId: state.circleId,
+  });
+}
+
+function memberFromCurrent(actor: Actor): MemberId {
+  if (actor.memberId === undefined) {
+    throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'requiere identidad vigente');
+  }
+  return actor.memberId;
+}
+
+function restrictedTextSizeClass(content: string): TaskEvidenceSizeClass {
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes <= 1_024) return 'pequena';
+  if (bytes <= 8_192) return 'mediana';
+  return 'grande';
+}
+
+export async function iniciarTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput,
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskStarted',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskStarted' &&
+      event.payload.taskId === task &&
+      event.payload.offerId === offer &&
+      event.payload.expectedTaskSeq === input.revision,
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:start');
+    },
+    run: (log, by, at) =>
+      startTaskBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        { taskId: task, offerId: offer, expectedTaskSeq: input.revision },
+      ),
+  });
+}
+
+export async function bloquearTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput & { readonly categoria: TaskBlockCategory },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskBlocked',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskBlocked' &&
+      event.payload.taskId === task &&
+      event.payload.offerId === offer &&
+      event.payload.expectedTaskSeq === input.revision &&
+      event.payload.category === input.categoria &&
+      event.payload.privateDetailCommitment === undefined,
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:block');
+    },
+    run: (log, by, at) =>
+      blockTaskBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: task,
+          offerId: offer,
+          expectedTaskSeq: input.revision,
+          category: input.categoria,
+        },
+      ),
+  });
+}
+
+export async function pedirAyudaTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput & { readonly categoria: TaskHelpCategory },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskHelpRequested',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskHelpRequested' &&
+      event.payload.taskId === task &&
+      event.payload.offerId === offer &&
+      event.payload.expectedTaskSeq === input.revision &&
+      event.payload.category === input.categoria &&
+      event.payload.privateDetailCommitment === undefined,
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:request-help');
+    },
+    run: (log, by, at) =>
+      requestTaskHelpBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: task,
+          offerId: offer,
+          expectedTaskSeq: input.revision,
+          category: input.categoria,
+        },
+      ),
+  });
+}
+
+export async function reanudarTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput & { readonly pauseId: string },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  const pause = eventId(input.pauseId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskResumed',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskResumed' &&
+      event.payload.taskId === task &&
+      event.payload.offerId === offer &&
+      event.payload.expectedTaskSeq === input.revision &&
+      event.payload.pauseId === pause,
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:resume');
+    },
+    run: (log, by, at) =>
+      resumeTaskBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: task,
+          offerId: offer,
+          expectedTaskSeq: input.revision,
+          pauseId: pause,
+        },
+      ),
+  });
+}
+
+export async function agregarEvidenciaTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput & {
+    readonly contenido: string;
+    readonly visibilidad: 'restricted';
+  },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  const sizeClass = restrictedTextSizeClass(input.contenido);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskEvidenceAdded',
+    matchesReplay: async (event, client, state) => {
+      if (
+        event.payload.type !== 'TaskEvidenceAdded' ||
+        event.payload.taskId !== task ||
+        event.payload.offerId !== offer ||
+        event.payload.expectedTaskSeq !== input.revision ||
+        event.payload.kindCode !== 'texto' ||
+        event.payload.sizeClass !== sizeClass ||
+        event.payload.visibility !== 'restricted' ||
+        event.actor === 'system'
+      ) {
+        return false;
+      }
+      const context: PrivateMaterialContext = {
+        purpose: 'task-evidence-object',
+        initiativeId: state.initiativeId,
+        taskId: task,
+        offerId: offer,
+        visibility: 'restricted',
+      };
+      const opening = await openRestrictedTextMaterialWithin(client, deps.ports.vault, {
+        materialId: event.eventId,
+        ownerId: event.actor,
+        expectedContext: context,
+        expectedCommitment: event.payload.objectCommitment,
+      });
+      return opening.content === input.contenido;
+    },
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:add-evidence');
+    },
+    run: async (log, by, at, _recipient, client, state) => {
+      const evidenceId = nuevoEventId(deps);
+      const context: PrivateMaterialContext = {
+        purpose: 'task-evidence-object',
+        initiativeId: state.initiativeId,
+        taskId: task,
+        offerId: offer,
+        visibility: 'restricted',
+      };
+      const stored = await createRestrictedTextMaterialWithin(
+        client,
+        deps.ports.vault,
+        deps.ports.random,
+        {
+          materialId: evidenceId,
+          ownerId: memberFromCurrent(by),
+          context,
+          content: input.contenido,
+          createdAt: at,
+        },
+      );
+      return await addTaskEvidenceBy(
+        log,
+        { eventId: evidenceId, at, by },
+        {
+          taskId: task,
+          offerId: offer,
+          expectedTaskSeq: input.revision,
+          objectCommitment: stored.commitment,
+          kindCode: 'texto',
+          sizeClass,
+          visibility: 'restricted',
+        },
+      );
+    },
+  });
+}
+
+export async function entregarTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: MutacionAsignadaInput & {
+    readonly evidenciaIds: readonly string[];
+    readonly resumen: string;
+  },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const offer = eventId(input.offerId);
+  const evidenceIds = input.evidenciaIds.map(eventId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskDelivered',
+    matchesReplay: async (event, client, state) => {
+      if (
+        event.payload.type !== 'TaskDelivered' ||
+        event.payload.taskId !== task ||
+        event.payload.offerId !== offer ||
+        event.payload.expectedTaskSeq !== input.revision ||
+        event.payload.evidenceIds.length !== evidenceIds.length ||
+        !event.payload.evidenceIds.every((evidence, index) => evidence === evidenceIds[index]) ||
+        event.actor === 'system'
+      ) {
+        return false;
+      }
+      const context: PrivateMaterialContext = {
+        purpose: 'task-delivery-summary',
+        initiativeId: state.initiativeId,
+        taskId: task,
+        offerId: offer,
+        deliveryId: event.eventId,
+        visibility: 'restricted',
+      };
+      const opening = await openRestrictedTextMaterialWithin(client, deps.ports.vault, {
+        materialId: event.eventId,
+        ownerId: event.actor,
+        expectedContext: context,
+        expectedCommitment: event.payload.summaryCommitment,
+      });
+      return opening.content === input.resumen;
+    },
+    reauthorizeReplay: (state, current) => {
+      reauthorizeAssigneeTask(state, current, 'task:deliver');
+    },
+    run: async (log, by, at, _recipient, client, state) => {
+      const deliveryId = nuevoEventId(deps);
+      const context: PrivateMaterialContext = {
+        purpose: 'task-delivery-summary',
+        initiativeId: state.initiativeId,
+        taskId: task,
+        offerId: offer,
+        deliveryId,
+        visibility: 'restricted',
+      };
+      const stored = await createRestrictedTextMaterialWithin(
+        client,
+        deps.ports.vault,
+        deps.ports.random,
+        {
+          materialId: deliveryId,
+          ownerId: memberFromCurrent(by),
+          context,
+          content: input.resumen,
+          createdAt: at,
+        },
+      );
+      return await deliverTaskBy(
+        log,
+        { eventId: deliveryId, at, by },
+        {
+          taskId: task,
+          offerId: offer,
+          expectedTaskSeq: input.revision,
+          evidenceIds,
+          summaryCommitment: stored.commitment,
+        },
+      );
+    },
+  });
+}
+
+export async function pedirCambiosTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: {
+    readonly requestId: string;
+    readonly deliveryId: string;
+    readonly revision: number;
+    readonly motivo: TaskChangeReason;
+  },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const delivery = eventId(input.deliveryId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskChangesRequested',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskChangesRequested' &&
+      event.payload.taskId === task &&
+      event.payload.deliveryId === delivery &&
+      event.payload.expectedTaskSeq === input.revision &&
+      event.payload.reason === input.motivo &&
+      event.payload.privateDetailCommitment === undefined,
+    reauthorizeReplay: (state, current) => {
+      authorize(current, 'task:request-changes', {
+        kind: 'task',
+        owner: state.executionPlan.responsibleId,
+        circleId: state.circleId,
+      });
+    },
+    run: (log, by, at) =>
+      requestTaskChangesBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: task,
+          deliveryId: delivery,
+          expectedTaskSeq: input.revision,
+          reason: input.motivo,
+        },
+      ),
+  });
+}
+
+export async function aceptarRevisionTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  input: {
+    readonly requestId: string;
+    readonly deliveryId: string;
+    readonly revision: number;
+    readonly evidenciaCriterio: OutcomeCriterionEvidence;
+  },
+): Promise<InitiativeState> {
+  const task = taskId(taskIdRaw);
+  const delivery = eventId(input.deliveryId);
+  return mutateInitiative(deps, actor, id, input.requestId, {
+    eventType: 'TaskReviewAccepted',
+    matchesReplay: (event) =>
+      event.payload.type === 'TaskReviewAccepted' &&
+      event.payload.taskId === task &&
+      event.payload.deliveryId === delivery &&
+      event.payload.expectedTaskSeq === input.revision &&
+      event.payload.outcomeCriterionEvidence === input.evidenciaCriterio,
+    reauthorizeReplay: (state, current) => {
+      authorize(current, 'task:accept-review', {
+        kind: 'task',
+        owner: state.executionPlan.responsibleId,
+        circleId: state.circleId,
+      });
+    },
+    run: (log, by, at) =>
+      acceptTaskReviewBy(
+        log,
+        { eventId: nuevoEventId(deps), at, by },
+        {
+          taskId: task,
+          deliveryId: delivery,
+          expectedTaskSeq: input.revision,
+          outcomeCriterionEvidence: input.evidenciaCriterio,
+        },
+      ),
   });
 }
 
@@ -1804,12 +2335,99 @@ export async function verIniciativa(deps: ServicioDeps, id: string): Promise<Ini
   });
 }
 
+async function currentInitiativeReader(
+  client: PgPoolClient,
+  actor: Actor,
+  state: InitiativeState,
+  now: number,
+): Promise<Actor> {
+  if (actor.memberId === undefined) {
+    throw new ServicioError('UNAUTHORIZED_NOT_AUTHENTICATED', 401, 'requiere identidad');
+  }
+  const member = await findActiveMemberInCircleForShare(
+    client,
+    actor.memberId,
+    state.circleId,
+    now,
+  );
+  if (member === undefined) {
+    throw new ServicioError('UNAUTHORIZED_NOT_IN_CIRCLE', 403, 'no pertenecés al círculo');
+  }
+  return { memberId: member.memberId, roles: member.roles, circles: member.circles };
+}
+
+export async function verEvidenciaTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  evidenceIdRaw: string,
+): Promise<{ readonly contenido: string }> {
+  return withTransaction(deps.pool, async (client) => {
+    const log = await loadInitiativeLog(client, id);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa iniciativa');
+    const state = await verifyInitiativeLog(log);
+    const current = await currentInitiativeReader(client, actor, state, deps.ports.clock.now());
+    const task = taskId(taskIdRaw);
+    const evidenceId = eventId(evidenceIdRaw);
+    const evidence = authorizeTaskEvidenceRead(state, current, task, evidenceId);
+    const context: PrivateMaterialContext = {
+      purpose: 'task-evidence-object',
+      initiativeId: state.initiativeId,
+      taskId: task,
+      offerId: evidence.offerId,
+      visibility: 'restricted',
+    };
+    const opening = await openRestrictedTextMaterialWithin(client, deps.ports.vault, {
+      materialId: evidence.evidenceId,
+      ownerId: evidence.addedBy,
+      expectedContext: context,
+      expectedCommitment: evidence.objectCommitment,
+    });
+    return { contenido: opening.content };
+  });
+}
+
+export async function verResumenEntregaTarea(
+  deps: ServicioDeps,
+  actor: Actor,
+  id: string,
+  taskIdRaw: string,
+  deliveryIdRaw: string,
+): Promise<{ readonly contenido: string }> {
+  return withTransaction(deps.pool, async (client) => {
+    const log = await loadInitiativeLog(client, id);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa iniciativa');
+    const state = await verifyInitiativeLog(log);
+    const current = await currentInitiativeReader(client, actor, state, deps.ports.clock.now());
+    const task = taskId(taskIdRaw);
+    const deliveryId = eventId(deliveryIdRaw);
+    const delivery = authorizeTaskDeliveryRead(state, current, task, deliveryId);
+    const context: PrivateMaterialContext = {
+      purpose: 'task-delivery-summary',
+      initiativeId: state.initiativeId,
+      taskId: task,
+      offerId: delivery.offerId,
+      deliveryId: delivery.deliveryId,
+      visibility: 'restricted',
+    };
+    const opening = await openRestrictedTextMaterialWithin(client, deps.ports.vault, {
+      materialId: delivery.deliveryId,
+      ownerId: delivery.deliveredBy,
+      expectedContext: context,
+      expectedCommitment: delivery.summaryCommitment,
+    });
+    return { contenido: opening.content };
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Integridad
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export interface VerificacionCompleta {
   readonly ledger: LedgerVerification;
+  readonly materialPrivado: PrivateMaterialVerification;
   readonly hechos: number;
   readonly desde: number | undefined;
   readonly propuestasVerificadas: number;
@@ -1852,10 +2470,13 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
     const decisionesRotas: { id: string; motivo: string }[] = [];
     const iniciativasRotas: { id: string; motivo: string }[] = [];
     const initiativeStates: InitiativeState[] = [];
+    const initiativeLogs: InitiativeLog[] = [];
     let iniciativasVerificadas = 0;
     for (const id of await listAggregateIds(client, INITIATIVE_AGGREGATE_TYPE)) {
       try {
-        initiativeStates.push(await loadInitiativeState(client, id));
+        const log = await loadInitiativeLog(client, id);
+        initiativeStates.push(await verifyInitiativeLog(log));
+        initiativeLogs.push(log);
         iniciativasVerificadas++;
       } catch (error) {
         iniciativasRotas.push({
@@ -1863,6 +2484,19 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
           motivo: error instanceof Error ? error.message : 'motivo desconocido',
         });
       }
+    }
+
+    let materialPrivado: PrivateMaterialVerification;
+    try {
+      materialPrivado = await verifyRestrictedPrivateMaterialsWithin(
+        client,
+        deps.ports.vault,
+        initiativeLogs,
+      );
+    } catch {
+      // La pantalla de integridad nunca convierte una comprobación que no pudo correr en verde ni
+      // filtra el error SQL/criptográfico. El resto del informe sigue siendo útil.
+      materialPrivado = unavailablePrivateMaterialVerification();
     }
 
     const ejecucionRotas: { id: string; motivo: string }[] = [];
@@ -2058,6 +2692,7 @@ export async function verificarTodo(deps: ServicioDeps): Promise<VerificacionCom
 
     return {
       ledger,
+      materialPrivado,
       hechos: eventos.length,
       desde: desde === undefined ? undefined : Date.parse(desde.event.occurredAt),
       propuestasVerificadas,

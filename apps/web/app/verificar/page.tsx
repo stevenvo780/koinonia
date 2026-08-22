@@ -9,9 +9,9 @@
  *     informa: informa que hay un semáforo. Cada comprobación dice qué se miró y qué querría decir
  *     que estuviera mal.
  *  2. **Nada depende del color.** Verde lleva «✓ Está bien» y rojo lleva «✕ Algo no cuadra».
- *  3. **Cómo comprobarlo con la herramienta independiente.** Si sólo verifica nuestra web, no
- *     probamos nada: le estaríamos pidiendo a la gente que nos crea, que es exactamente lo que este
- *     proyecto existe para no tener que pedir.
+ *  3. **Qué comprueba la herramienta independiente.** El historial público se descarga y verifica
+ *     fuera del servidor. La disponibilidad de ciphertexts privados se marca como auditoría local:
+ *     el export no los incluye y no se finge una independencia que no existe.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -69,8 +69,8 @@ export default function Verificar(): ReactNode {
             <span className="marca-estado">
               <span aria-hidden="true">{informe.todoBien ? '✓' : '✕'} </span>
               {informe.todoBien
-                ? 'El historial está completo y sin alteraciones'
-                : 'Algo en el historial no cuadra'}
+                ? 'Todas las comprobaciones pasaron'
+                : 'Una comprobación necesita atención'}
             </span>
             <p>
               Se revisaron {informe.hechosRevisados} hechos
@@ -81,9 +81,9 @@ export default function Verificar(): ReactNode {
             </p>
             {!informe.todoBien && (
               <p>
-                <strong>Esto es una alarma pública, no un arreglo silencioso.</strong> Las
-                decisiones afectadas quedan en cuarentena hasta que alguien explique de dónde salió
-                el cambio.
+                <strong>Esto es una alarma pública, no un arreglo silencioso.</strong> El detalle
+                distingue si no cuadra el historial público o la disponibilidad local de material
+                privado; no son la misma prueba.
               </p>
             )}
           </div>
@@ -117,7 +117,7 @@ export default function Verificar(): ReactNode {
           </section>
 
           <section aria-labelledby="solo-titulo">
-            <h2 id="solo-titulo">Comprobarlo vos mismo, sin confiar en esta página</h2>
+            <h2 id="solo-titulo">Comprobar el historial público por tu cuenta</h2>
             <p>{informe.comoComprobarloVosMismo.explicacion}</p>
             <ol>
               <li>
@@ -138,8 +138,9 @@ export default function Verificar(): ReactNode {
               </li>
               <li>
                 <p>
-                  Compará. Si te da lo mismo que dice esta página, es porque es verdad, no porque lo
-                  digamos nosotros. Si te da distinto,{' '}
+                  Compará las comprobaciones del historial público. La herramienta no recibe los
+                  ciphertexts privados y por eso no puede reproducir su fila local. Si el historial
+                  te da distinto,{' '}
                   <strong>publicalo: eso es exactamente lo que hay que hacer</strong>.
                 </p>
               </li>

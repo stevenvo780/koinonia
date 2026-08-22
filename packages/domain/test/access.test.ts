@@ -140,6 +140,15 @@ describe('autorización VERTICAL', () => {
       'task:accept',
       'task:reject',
       'task:request-reassignment',
+      'task:start',
+      'task:block',
+      'task:request-help',
+      'task:resume',
+      'task:add-evidence',
+      'task:deliver',
+      'task:read-private-material',
+      'task:request-changes',
+      'task:accept-review',
     ] as const) {
       expect(can(admin, accion, { kind: 'decision', circleId: CIRCULO })).toBe(false);
     }
@@ -191,8 +200,14 @@ describe('autorización HORIZONTAL — el mismo rol, y aun así no', () => {
     ).toBe('NOT_THE_SUBJECT');
   });
 
-  it('hitos, ofertas y reofertas son del responsable inicial y de su círculo', () => {
-    for (const action of ['initiative:plan', 'task:offer', 'task:reoffer'] as const) {
+  it('planificación, ofertas y revisión son del responsable inicial y de su círculo', () => {
+    for (const action of [
+      'initiative:plan',
+      'task:offer',
+      'task:reoffer',
+      'task:request-changes',
+      'task:accept-review',
+    ] as const) {
       const resource = {
         kind: action === 'initiative:plan' ? ('initiative' as const) : ('task' as const),
         owner: daniela.memberId,
@@ -206,8 +221,18 @@ describe('autorización HORIZONTAL — el mismo rol, y aun así no', () => {
     }
   });
 
-  it('aceptar, rechazar y pedir reasignación pertenecen al destinatario vigente', () => {
-    for (const action of ['task:accept', 'task:reject', 'task:request-reassignment'] as const) {
+  it('responder y mover trabajo pertenecen al destinatario o assignee vigente', () => {
+    for (const action of [
+      'task:accept',
+      'task:reject',
+      'task:request-reassignment',
+      'task:start',
+      'task:block',
+      'task:request-help',
+      'task:resume',
+      'task:add-evidence',
+      'task:deliver',
+    ] as const) {
       const task = { kind: 'task' as const, subject: daniela.memberId, circleId: CIRCULO };
       expect(can(daniela, action, task)).toBe(true);
       expect(denialReason(julian, action, task)).toBe('NOT_THE_SUBJECT');
@@ -216,6 +241,26 @@ describe('autorización HORIZONTAL — el mismo rol, y aun así no', () => {
         'NOT_IN_CIRCLE',
       );
     }
+  });
+
+  it('abrir material privado exige estar en la lista cerrada de lectores', () => {
+    const material = {
+      kind: 'task' as const,
+      authorizedReaders: [daniela.memberId!, julian.memberId!],
+      circleId: CIRCULO,
+    };
+    expect(can(daniela, 'task:read-private-material', material)).toBe(true);
+    expect(can(julian, 'task:read-private-material', material)).toBe(true);
+    expect(denialReason(lucia, 'task:read-private-material', material)).toBe('NOT_A_READER');
+    expect(
+      denialReason(daniela, 'task:read-private-material', {
+        kind: 'task',
+        circleId: CIRCULO,
+      }),
+    ).toBe('READERS_UNKNOWN');
+    expect(
+      denialReason({ ...daniela, circles: [OTRO_CIRCULO] }, 'task:read-private-material', material),
+    ).toBe('NOT_IN_CIRCLE');
   });
 
   it('SIN AUTOR DECLARADO se deniega, no se deja pasar: es la puerta que abre la escalada', () => {

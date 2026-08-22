@@ -16,6 +16,7 @@ import {
   avanzarReloj,
   type Cuenta,
   crearProblemaPorApi,
+  declararCapacidad,
   entrarPorApi,
   marca,
   planDe,
@@ -115,6 +116,8 @@ test.beforeAll(async () => {
   destinataria = await entrarPorApi(correoDestinataria);
   reemplazo = await entrarPorApi(correoReemplazo);
   facilitadora = await entrarPorApi(CORREO_FACILITADORA);
+  await declararCapacidad(destinataria);
+  await declararCapacidad(reemplazo);
 
   const problemaId = await crearProblemaPorApi(responsable, {
     titulo: `Falta un horario nocturno estable ${sufijo}`,
@@ -290,7 +293,7 @@ test('la destinataria acepta con teclado y sólo entonces queda como responsable
   await tabularHasta(page, registrar);
   await page.keyboard.press('Enter');
   await expect(page.getByText('Aceptaste la tarea. Desde ahora figura a tu cargo.')).toBeVisible();
-  await expect(page.locator('#resultado-accion')).toBeFocused();
+  await expect(page.getByRole('article', { name: TITULO_TAREA_ACEPTADA })).toBeFocused();
 
   const vista = await iniciativaComo(destinataria);
   const tarea = vista.tareas.find((candidata) => candidata.id === tareaAceptadaId)!;

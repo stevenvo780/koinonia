@@ -12,7 +12,16 @@
  */
 
 import { z } from 'zod';
-import { TASK_RESPONSE_REASONS } from '@koinonia/domain';
+import {
+  OUTCOME_CRITERION_EVIDENCE,
+  TASK_BLOCK_CATEGORIES,
+  TASK_CHANGE_REASONS,
+  TASK_EVIDENCE_KIND_CODES,
+  TASK_EVIDENCE_SIZE_CLASSES,
+  TASK_EVIDENCE_VISIBILITIES,
+  TASK_HELP_CATEGORIES,
+  TASK_RESPONSE_REASONS,
+} from '@koinonia/domain';
 
 import { apiError } from './errors.js';
 import { email, hash64, instantMs, opaqueId, requestId } from './ids.js';
@@ -52,6 +61,29 @@ export const sesion = z.object({
   expiraEn: instantMs,
 });
 export type Sesion = z.infer<typeof sesion>;
+
+export const baseLegalSupresion = z.enum(['ley-1581-art-8e', 'revocatoria-consentimiento']);
+export type BaseLegalSupresion = z.infer<typeof baseLegalSupresion>;
+
+/** No existe selector de sujeto: la persona se deriva de una sesión recién autenticada. */
+export const solicitarSupresion = z
+  .object({
+    requestId,
+    baseLegal: baseLegalSupresion,
+    confirmacionIrreversible: z.literal(true),
+  })
+  .strict();
+export type SolicitarSupresion = z.infer<typeof solicitarSupresion>;
+
+export const supresionSolicitada = z
+  .object({
+    solicitudId: opaqueId,
+    radicado: opaqueId,
+    solicitadaEn: instantMs,
+    estado: z.literal('pendiente'),
+  })
+  .strict();
+export type SupresionSolicitada = z.infer<typeof supresionSolicitada>;
 
 /**
  * Vista autenticada y mínima para elegir una persona del mismo círculo. No es un directorio:
@@ -371,6 +403,41 @@ export const ratificarDecision = z.object({ requestId });
 export type RatificarDecision = z.infer<typeof ratificarDecision>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+// Capacidad privada
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * La ausencia no se convierte en cero: cero es una declaración válida y tiene una revisión.
+ * El discriminante evita que un cliente invente valores por defecto cuando todavía no hay dato.
+ */
+export const capacidadPropia = z.discriminatedUnion('declarada', [
+  z.object({ declarada: z.literal(false) }).strict(),
+  z
+    .object({
+      declarada: z.literal(true),
+      revision: z.number().int().positive(),
+      minutosPorSemana: z.number().int().min(0).max(10_080),
+      updatedAt: instantMs,
+    })
+    .strict(),
+]);
+export type CapacidadPropia = z.infer<typeof capacidadPropia>;
+
+/**
+ * CAS de la capacidad propia. `revision: 0` significa «crear sólo si sigue ausente»; una fila
+ * existente exige presentar su revisión exacta. Es estricto para que `memberId` (o cualquier otra
+ * forma de direccionar a otra persona) sea un error de frontera y no un campo silenciosamente
+ * ignorado.
+ */
+export const actualizarCapacidad = z
+  .object({
+    revision: z.number().int().min(0).max(2_147_483_646),
+    minutosPorSemana: z.number().int().min(0).max(10_080),
+  })
+  .strict();
+export type ActualizarCapacidad = z.infer<typeof actualizarCapacidad>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Iniciativas
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -378,7 +445,17 @@ export const estadoIniciativa = z.enum(['por-empezar']);
 export type EstadoIniciativa = z.infer<typeof estadoIniciativa>;
 
 /** Estados visibles: una oferta no atribuye trabajo hasta que la persona la acepta. */
-export const estadoTarea = z.enum(['ofrecida', 'aceptada', 'rechazada', 'reasignacion-solicitada']);
+export const estadoTarea = z.enum([
+  'ofrecida',
+  'aceptada',
+  'rechazada',
+  'reasignacion-solicitada',
+  'en-curso',
+  'bloqueada',
+  'en-apoyo',
+  'entregada',
+  'completada',
+]);
 export type EstadoTarea = z.infer<typeof estadoTarea>;
 
 export const planificarHito = z.object({
@@ -443,6 +520,118 @@ export type ResponderOfertaTarea = z.infer<typeof responderOfertaTarea>;
 export const reofrecerTarea = z.object({ requestId, offerId: opaqueId, destinatarioId: opaqueId });
 export type ReofrecerTarea = z.infer<typeof reofrecerTarea>;
 
+const mutacionTareaBase = z
+  .object({
+    requestId,
+    offerId: opaqueId,
+    revision: z.number().int().positive(),
+  })
+  .strict();
+
+export const iniciarTarea = mutacionTareaBase;
+export type IniciarTarea = z.infer<typeof iniciarTarea>;
+
+export const categoriaBloqueoTarea = z.enum(TASK_BLOCK_CATEGORIES);
+export type CategoriaBloqueoTarea = z.infer<typeof categoriaBloqueoTarea>;
+export const CATEGORIA_BLOQUEO_EN_PALABRAS: Readonly<Record<CategoriaBloqueoTarea, string>> = {
+  dependencia: 'Dependo de otra tarea o persona',
+  recurso: 'Falta un recurso',
+  'respuesta-externa': 'Falta una respuesta externa',
+  alcance: 'El alcance necesita aclararse',
+  'razon-privada': 'Prefiero no publicar la causa',
+};
+
+export const bloquearTarea = mutacionTareaBase
+  .extend({ categoria: categoriaBloqueoTarea })
+  .strict();
+export type BloquearTarea = z.infer<typeof bloquearTarea>;
+
+export const categoriaAyudaTarea = z.enum(TASK_HELP_CATEGORIES);
+export type CategoriaAyudaTarea = z.infer<typeof categoriaAyudaTarea>;
+export const CATEGORIA_AYUDA_EN_PALABRAS: Readonly<Record<CategoriaAyudaTarea, string>> = {
+  desbloqueo: 'Necesito ayuda para destrabarla',
+  revision: 'Necesito que alguien revise conmigo',
+  'trabajo-compartido': 'Necesito compartir parte del trabajo',
+  orientacion: 'Necesito orientación',
+  'razon-privada': 'Prefiero no publicar el motivo',
+};
+
+export const pedirAyudaTarea = mutacionTareaBase
+  .extend({ categoria: categoriaAyudaTarea })
+  .strict();
+export type PedirAyudaTarea = z.infer<typeof pedirAyudaTarea>;
+
+export const reanudarTarea = mutacionTareaBase.extend({ pauseId: opaqueId }).strict();
+export type ReanudarTarea = z.infer<typeof reanudarTarea>;
+
+/**
+ * Corte inicial: una nota textual restringida. No se acepta nombre de archivo, MIME, URL, tamaño,
+ * nonce ni commitment; el servidor clasifica y compromete lo que realmente almacenó.
+ */
+export const agregarEvidenciaTarea = mutacionTareaBase
+  .extend({
+    contenido: z.string().min(10).max(16_384),
+    visibilidad: z.literal('restricted'),
+  })
+  .strict();
+export type AgregarEvidenciaTarea = z.infer<typeof agregarEvidenciaTarea>;
+
+export const aperturaMaterialRestringido = z.object({ contenido: z.string().max(16_384) }).strict();
+export type AperturaMaterialRestringido = z.infer<typeof aperturaMaterialRestringido>;
+
+export const entregarTarea = mutacionTareaBase
+  .extend({
+    evidenciaIds: z
+      .array(opaqueId)
+      .min(1)
+      .max(50)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        'Una evidencia sólo se referencia una vez.',
+      ),
+    resumen: z.string().min(20).max(4000),
+  })
+  .strict();
+export type EntregarTarea = z.infer<typeof entregarTarea>;
+
+export const motivoCambiosTarea = z.enum(TASK_CHANGE_REASONS);
+export type MotivoCambiosTarea = z.infer<typeof motivoCambiosTarea>;
+export const MOTIVO_CAMBIOS_EN_PALABRAS: Readonly<Record<MotivoCambiosTarea, string>> = {
+  'criterio-no-cumplido': 'Todavía no cumple el criterio acordado',
+  'evidencia-insuficiente': 'La evidencia todavía no permite verificarlo',
+  'alcance-incompleto': 'Falta una parte del alcance acordado',
+  'razon-privada': 'Hay un detalle que debe tratarse por el canal privado',
+};
+
+export const pedirCambiosTarea = z
+  .object({
+    requestId,
+    deliveryId: opaqueId,
+    revision: z.number().int().positive(),
+    motivo: motivoCambiosTarea,
+  })
+  .strict();
+export type PedirCambiosTarea = z.infer<typeof pedirCambiosTarea>;
+
+export const evidenciaCriterioResultado = z.enum(OUTCOME_CRITERION_EVIDENCE);
+export type EvidenciaCriterioResultado = z.infer<typeof evidenciaCriterioResultado>;
+export const EVIDENCIA_CRITERIO_EN_PALABRAS: Readonly<Record<EvidenciaCriterioResultado, string>> =
+  {
+    verificada: 'La evidencia permite verificar esta entrega',
+    'sin-verificar': 'La entrega se acepta, pero la evidencia no pudo verificarse',
+    'no-aplica': 'Este encargo no requería esa clase de verificación',
+  };
+
+export const aceptarRevisionTarea = z
+  .object({
+    requestId,
+    deliveryId: opaqueId,
+    revision: z.number().int().positive(),
+    evidenciaCriterio: evidenciaCriterioResultado,
+  })
+  .strict();
+export type AceptarRevisionTarea = z.infer<typeof aceptarRevisionTarea>;
+
 export const hito = z.object({
   id: opaqueId,
   titulo: z.string(),
@@ -451,6 +640,67 @@ export const hito = z.object({
   planificadoEn: instantMs,
 });
 export type Hito = z.infer<typeof hito>;
+
+export const causaFinPausaTarea = z.enum(['reanudacion', 'reasignacion']);
+export type CausaFinPausaTarea = z.infer<typeof causaFinPausaTarea>;
+
+export const pausaTarea = z
+  .object({
+    id: opaqueId,
+    tipo: z.enum(['bloqueo', 'apoyo']),
+    categoria: z.union([categoriaBloqueoTarea, categoriaAyudaTarea]),
+    iniciadaEn: instantMs,
+    finalizadaEn: instantMs.optional(),
+    causaDeFin: causaFinPausaTarea.optional(),
+  })
+  .refine(
+    (pausa) => (pausa.finalizadaEn === undefined) === (pausa.causaDeFin === undefined),
+    'Una pausa histórica debe presentar juntas la fecha y la causa de finalización.',
+  );
+export type PausaTarea = z.infer<typeof pausaTarea>;
+
+export const solicitudAyudaTarea = z.object({
+  id: opaqueId,
+  pausaId: opaqueId,
+  categoria: categoriaAyudaTarea,
+  solicitadaEn: instantMs,
+});
+export type SolicitudAyudaTarea = z.infer<typeof solicitudAyudaTarea>;
+
+export const evidenciaTarea = z.object({
+  id: opaqueId,
+  tipo: z.enum(TASK_EVIDENCE_KIND_CODES),
+  tamano: z.enum(TASK_EVIDENCE_SIZE_CLASSES),
+  visibilidad: z.enum(TASK_EVIDENCE_VISIBILITIES),
+  agregadaEn: instantMs,
+  /** Autoriza mostrar el control; la ruta vuelve a comprobar y no confía en este booleano. */
+  puedeAbrirse: z.boolean(),
+});
+export type EvidenciaTarea = z.infer<typeof evidenciaTarea>;
+
+export const revisionEntregaTarea = z.discriminatedUnion('tipo', [
+  z.object({
+    tipo: z.literal('cambios-solicitados'),
+    motivo: motivoCambiosTarea,
+    revisadaEn: instantMs,
+  }),
+  z.object({
+    tipo: z.literal('aceptada'),
+    evidenciaCriterio: evidenciaCriterioResultado,
+    revisadaEn: instantMs,
+  }),
+]);
+export type RevisionEntregaTarea = z.infer<typeof revisionEntregaTarea>;
+
+export const entregaTarea = z.object({
+  id: opaqueId,
+  evidenciaIds: z.array(opaqueId),
+  entregadaEn: instantMs,
+  /** Autoriza mostrar el control; la ruta vuelve a comprobar y no confía en este booleano. */
+  puedeAbrirse: z.boolean(),
+  revision: revisionEntregaTarea.optional(),
+});
+export type EntregaTarea = z.infer<typeof entregaTarea>;
 
 export const tarea = z.object({
   id: opaqueId,
@@ -467,6 +717,15 @@ export const tarea = z.object({
   esfuerzoMinutos: z.number().int().positive(),
   dependeDe: z.array(opaqueId),
   estado: estadoTarea,
+  iniciadaEn: instantMs.optional(),
+  /** Historia completa; `pausaActual` sólo facilita operar sobre la pausa vigente. */
+  pausas: z.array(pausaTarea),
+  pausaActual: pausaTarea.optional(),
+  solicitudesDeAyuda: z.array(solicitudAyudaTarea),
+  evidencias: z.array(evidenciaTarea),
+  entregas: z.array(entregaTarea),
+  entregaActualId: opaqueId.optional(),
+  completadaEn: instantMs.optional(),
   /** El servidor lo calcula contra la sesión; no se muestra el nombre de otra persona. */
   esMia: z.boolean(),
 });
@@ -527,7 +786,7 @@ export const informeIntegridad = z.object({
   historialDesde: instantMs.optional(),
   hechosRevisados: z.number().int().nonnegative(),
   comprobaciones: z.array(comprobacion),
-  /** Qué hacer para comprobarlo por tu cuenta, sin confiar en esta página. */
+  /** Qué parte pública comprobar por cuenta propia y qué parte privada sigue siendo auditoría local. */
   comoComprobarloVosMismo: z.object({
     explicacion: z.string(),
     comando: z.string(),

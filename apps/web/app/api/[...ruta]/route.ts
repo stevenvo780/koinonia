@@ -89,3 +89,7 @@ export async function GET(request: NextRequest, contexto: Contexto): Promise<Nex
 export async function POST(request: NextRequest, contexto: Contexto): Promise<NextResponse> {
   return reenviar(request, (await contexto.params).ruta);
 }
+
+export async function PUT(request: NextRequest, contexto: Contexto): Promise<NextResponse> {
+  return reenviar(request, (await contexto.params).ruta);
+}
