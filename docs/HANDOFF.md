@@ -60,14 +60,17 @@ Quien reduzca el proyecto a «votar en línea» va a construir la parte fácil y
 | Dato | Valor verificado |
 |---|---|
 | Rama | `main` |
-| Último commit funcional | `2eea322` — *Activa iniciativas y ofrece tareas con consentimiento* |
+| Último commit funcional | `286db3d` — *Seguimiento, capacidad privada y entrega revisable (ADR-0045)* |
 | Árbol de trabajo | Limpio (`git status --porcelain` sin salida) |
+| Remoto | **Ninguno configurado** (`git remote -v` vacío); `main` sin upstream. El repositorio existe **sólo en disco local** |
 | Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` |
 | Licencia | AGPL-3.0-or-later |
 
 Últimos commits relevantes:
 
 ```
+286db3d Seguimiento, capacidad privada y entrega revisable (ADR-0045)
+e98bc1b Actualiza el handoff tras ADR 0044
 2eea322 Activa iniciativas y ofrece tareas con consentimiento
 872834b Actualiza el handoff tras ADR 0043
 5e93f44 Vincula decisiones aprobadas con iniciativas atomicas
@@ -81,22 +84,50 @@ d731607 Capa de persistencia del ledger en services/api sobre PostgreSQL
 2f73136 Andamiaje del monorepo y packages/crypto completo
 ```
 
-### 2.2 Resultado real de los comandos (ejecutados el 2026-08-21)
+> **Incidente de custodia, 2026-08-22.** Este documento afirmaba hasta hoy que el último commit era
+> `2eea322` y que el árbol estaba limpio. **Las dos cosas eran falsas.** La sesión de ADR-0045 dejó
+> **70 entradas sin commitear** (47 ficheros modificados y 23 sin rastrear: migraciones 0008-0010,
+> `private-material.ts`, `apps/web/app/mis-tareas/`, los cuatro módulos HTTP de capacidad y material
+> privado, 11 ficheros de test nuevos y el propio ADR-0045). Se commiteó en `286db3d`
+> —**+13 699 / −219** sobre 70 ficheros— **antes** de verificar nada, para no arriesgar la pérdida.
+> Como **no hay remoto**, un `git clean` o un borrado del directorio habría destruido el trabajo sin
+> copia posible. **Configurar un remoto es la tarea de infraestructura más urgente del proyecto.**
 
-| Comando | Resultado | Detalle |
+### 2.2 Resultado real de los comandos (ejecutados el 2026-08-22)
+
+Medición hecha sobre `286db3d`, en este orden, con la salida copiada literalmente:
+
+| Comando | Salida | Detalle |
 |---|---|---|
-| `pnpm build` | **verde** (código de salida 0) | `tsc --build`, sin diagnósticos |
-| `pnpm typecheck` | **verde** | `tsconfig.check.json` + `contracts`/`api` + `tests/e2e` |
-| `pnpm lint` | **verde** | ESLint + Prettier (`All matched files use Prettier code style!`) + `check-domain-purity.mjs` (`Pureza del dominio: correcta`) |
-| `pnpm test` | **verde** | `Test Files 61 passed (61)` · `Tests 798 passed (798)`; integración real contra PostgreSQL disponible |
-| `pnpm e2e` (solo chromium) | **verde** | `44 passed (36.2s)` |
-| Firefox + Chrome móvil, ADR-0045 | **verde** | `8 passed (19.9s)`; 4 por proyecto sobre seguimiento, privacidad y carreras de sesión |
-| WebKit / Safari móvil | **bloqueo de host reproducido** | WebKit falla antes del primer test por `libicu74`, `libxml2`, `libflite1` y `libmanette-0.2-0` ausentes — ver §2.4; no se silenció |
+| `pnpm install` | **código 0** | `Scope: all 8 workspace projects` · `Already up to date` · `Done in 321ms using pnpm v11.20.0` |
+| `docker compose -f infra/docker/docker-compose.yml up -d` | **código 0** | `Container koinonia-postgres Running` |
+| `pnpm run build` | **código 0** | `tsc --build`, sin diagnósticos |
+| `pnpm run typecheck` | **código 0** | `tsconfig.check.json` + `contracts`/`api` + `tests/e2e`, sin diagnósticos |
+| `pnpm run lint` | **código 0** | `All matched files use Prettier code style!` · `Pureza del dominio: correcta (packages/domain y packages/crypto sin dependencias de runtime).` |
+| `KOINONIA_REQUIRE_DOCKER=1 pnpm run test` | **código 0** | `Test Files  61 passed (61)` · `Tests  798 passed (798)` · `Duration 9.03s` |
 
-Los **161 tests de integración corrieron de verdad contra PostgreSQL 16**: con
-`KOINONIA_REQUIRE_DOCKER=1`, si Testcontainers no puede levantar Docker el arnés **lanza** en vez de
-saltarse la suite (`tests/integration/helpers/ledger-env.ts:81`). Un verde con esa variable puesta no
-puede ser un verde vacío. La imagen es `postgres:16-alpine`.
+**Docker arrancó de verdad.** No es una inferencia del código de salida; se comprobó por tres vías
+independientes:
+
+1. `docker compose ps` da `Up 14 hours (healthy)`, y `psql -U postgres -d koinonia` responde
+   `PostgreSQL 16.15 on x86_64-pc-linux-musl`.
+2. Muestreando `docker ps` cada segundo **durante** la corrida se observaron hasta **10 contenedores
+   `postgres:16-alpine` simultáneos** (1 del compose + 9 levantados por Testcontainers). Los 16
+   ficheros de `tests/integration/` están dentro del glob `tests/**/*.test.ts` de `vitest.config.ts`,
+   y hay exactamente 61 ficheros `*.test.ts` en el repositorio: los 61 que corrieron **son** todos,
+   integración incluida.
+3. **Prueba de falsación**, que es la que de verdad cierra la cuestión: con `DOCKER_HOST` apuntando a
+   un puerto muerto y `KOINONIA_REQUIRE_DOCKER=1`, la suite **falla** —
+   `Error: Testcontainers no pudo levantar Docker: Could not find a working container runtime
+   strategy. KOINONIA_REQUIRE_DOCKER=1 exige que corran de verdad.` en
+   `tests/integration/helpers/api-env.ts:131`. Un verde que sobreviviera a romper Docker sería un
+   verde vacío; éste no sobrevive, luego no lo es.
+
+El resultado **coincide exactamente** con el corte anterior: 798 tests en 61 ficheros, sin delta.
+
+**No reverificado hoy:** los extremos a extremo (`pnpm e2e`) **no se volvieron a ejecutar** en esta
+sesión. Las cifras de §2.4 son las del corte del 2026-08-21 y se conservan como tales; no deben
+leerse como medición del 2026-08-22.
 
 ### 2.3 Desglose por paquete (verificado uno por uno)
 
@@ -112,7 +143,18 @@ puede ser un verde vacío. La imagen es `postgres:16-alpine`.
 | | **798** | **en 61 ficheros** |
 
 `packages/domain` declara **60** llamadas `fc.property`/`fc.asyncProperty`, incluidas las invariantes
-de transiciones y referencias causales de tareas.
+de transiciones y referencias causales de tareas. Recontado el 2026-08-22: **13 `fc.property` + 47
+`fc.asyncProperty` = 60**, repartidas en `ids` (2), `fraction` (2), `window` (2), `electorate` (1),
+`ballot` (1), `props/invariants` (3) y `props/initiative-invariants` (2) para las síncronas, y el
+resto asíncronas. Comprobación:
+
+```sh
+grep -roh -E "fc\.(property|asyncProperty)" packages/domain/test | wc -l   # 60
+```
+
+**Cuidado con el patrón al recontar:** `fc\.\(async\)\?property` **no sirve** —busca
+`fc.asyncproperty` en minúscula y se deja fuera las 47 asíncronas, devolviendo 13. La `P` de
+`asyncProperty` es mayúscula.
 
 ### 2.4 Extremo a extremo
 
@@ -437,6 +479,19 @@ Se pagaron en esta sesión. No son preferencias de estilo.
 MiniMax o Gemini; no se atribuye a esos modelos ningún resultado de esta ronda. Es un fallo de
 transporte distinto de los timeouts históricos de la tabla.
 
+**Actualización 2026-08-22 — el transporte se reprobó y responde.** `delegar_a_cloud` vuelve a estar
+en el catálogo de herramientas y **los tres proveedores respondieron** a una llamada trivial
+(«respondé únicamente con la palabra PONG»): **`minimax/MiniMax-M3`**, **`gemini/flash`** y
+**`codex/gpt-5.6-sol`** (con `effort: low`) devolvieron `PONG` los tres, sin timeout y sin el
+`invalid ID token format` que la tabla de arriba atribuía a Codex. El fallo de catálogo de ADR-0044 y
+la autenticación rota de Codex **ya no se reproducen**.
+
+**Queda pendiente medir el umbral de generación larga.** Lo único demostrado hoy es que el transporte
+sobrevive a una llamada trivial; **no** se ha vuelto a probar el límite que describen los dos
+párrafos siguientes (los ≥600 palabras que reventaban). Hasta que ese umbral se mida de nuevo, la
+tabla de fallos y el dato del umbral **siguen siendo el supuesto operativo**: planificar delegaciones
+largas como si aún reventaran, y confirmarlo antes de apoyarse en ellas.
+
 **Dato empírico del umbral.** La **única** llamada que completó fue a `minimax/MiniMax-M3` con una
 salida de **~15 líneas** (crear un esqueleto de directorios). **Todo lo que pedía ≥600 palabras de
 generación reventó, incluso troceado.** Se probó a **2800**, a **2000** y a **600-900** palabras: los
@@ -514,7 +569,7 @@ repositorio** y aquí figuran ya corregidos. Esta tabla conserva la comparación
 | 3 | Los dos tests emparejados están «en **`packages/anchor`**» | Están en **`packages/verifier-cli/test/ataques.test.ts:310` y `:318`** | Además, sin anclajes el verificador **no calla**: emite `SIN_ANCLAJE` y sale **ámbar**, nunca verde. Matiz recogido en §6. |
 | 4 | `apps/web`: «**14 rutas**» | **12** ficheros `page.tsx` **+ 1** route handler proxy (`app/api/[...ruta]/route.ts`) = **13** entradas de enrutado | `find apps/web/app`. |
 | 5 | WebKit: instalar «`libicu74 libxml2 libflite1 libmanette-0.2-0`» | Son los **nombres Debian** que sugiere Playwright, **no instalables aquí**: el sistema es **CachyOS/Arch**, sin `apt-get` (`--with-deps` aborta con `spawn apt-get ENOENT`) y `sudo` pide contraseña | `/etc/os-release`; `ldd` sobre `webkit-2336` da los sonames reales (§2.4). Salida sensata: **CI**. |
-| 6 | `packages/domain`: «**40 propiedades** fast-check» | **44** `fc.property` | El 40 procede de `MODEL_CONTEXT.md` §3, escrito cuando `domain` tenía 229 pruebas (hoy 255). La semilla `30_000_821` **sí** es exacta. |
+| 6 | `packages/domain`: «**40 propiedades** fast-check» | **60** `fc.property`/`fc.asyncProperty` | El 40 procede de `MODEL_CONTEXT.md` §3, escrito cuando `domain` tenía 229 pruebas (hoy 255). La semilla `30_000_821` **sí** es exacta. **Corregido el 2026-08-22:** esta fila decía **44** y contradecía el **60** de §2.3 y del resumen de abajo. El recuento real es **60** (13 síncronas + 47 asíncronas), luego el valor equivocado era el 44 de esta fila; §2.3 era correcto. |
 
 **Estado vigente tras ADR-0045:** rama `main`; **798 tests en 61 ficheros**, incluidos **161** contra
 PostgreSQL 16 real; desglose (**108 / 338 / 80 / 34 / 24 / 53 + 161**); **45 ADR + README**;
