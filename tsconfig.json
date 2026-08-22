@@ -6,6 +6,7 @@
     { "path": "packages/anchor" },
     { "path": "packages/domain" },
     { "path": "packages/consensus" },
+    { "path": "packages/metrics" },
     { "path": "packages/contracts" },
     { "path": "services/api" },
     { "path": "packages/verifier-cli" }

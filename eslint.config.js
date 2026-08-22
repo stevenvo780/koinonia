@@ -58,7 +58,18 @@ export default tseslint.config(
     // siembra de k-means o un `localeCompare` al ordenar afirmaciones convertirían el análisis en
     // irreproducible sin que ningún test lo notara —cambiaría sólo entre entornos, no entre
     // ejecuciones—, que es la peor forma de perder el determinismo.
-    files: ['packages/domain/**/*.ts', 'packages/crypto/**/*.ts', 'packages/consensus/**/*.ts'],
+    //
+    // `packages/metrics` entra por una razón añadida: sus cifras se publican a 300 personas con su
+    // serie histórica, y una serie sólo dice algo si cada punto se puede recomputar. Un `Date.now()`
+    // haría que el informe de la semana pasada dejara de salir igual —el «ahora» y las ventanas
+    // entran como dato—, y un `localeCompare` ordenaría los estratos distinto según la locale del
+    // proceso, es decir, produciría dos paneles distintos del mismo mes sin que nadie lo notara.
+    files: [
+      'packages/domain/**/*.ts',
+      'packages/crypto/**/*.ts',
+      'packages/consensus/**/*.ts',
+      'packages/metrics/**/*.ts',
+    ],
     rules: {
       'no-restricted-syntax': [
         'error',

@@ -8,7 +8,12 @@
  *  - `packages/consensus` tampoco: no es dominio, pero su único valor es que dos máquinas obtengan
  *    los mismos grupos de opinión a partir de la misma matriz, y eso se pierde con la primera
  *    dependencia que traiga su propio orden, su propio reloj o su propia aleatoriedad;
- *  - ninguno de los tres puede importar módulos de Node, ni `apps/`, ni `services/`, ni usar
+ *  - `packages/metrics` sólo puede depender de `@koinonia/domain`, y sólo por su aritmética exacta
+ *    de fracciones y sus índices de concentración, que ya existen ahí probados contra INV-31.
+ *    Cualquier otra dependencia sobra: las cinco métricas de salud reciben datos ya proyectados y
+ *    **no leen la base**, así que un cliente de base de datos o un formateador de fechas en este
+ *    manifiesto significaría que alguien movió la frontera sin decirlo;
+ *  - ninguno de los cuatro puede importar módulos de Node, ni `apps/`, ni `services/`, ni usar
  *    `Date.now()`, `Math.random()` o `localeCompare` (no determinismo).
  *
  * Falla con código 1 y una lista de infracciones. Se corre en `pnpm lint` y en CI.
@@ -25,6 +30,7 @@ const PERMITIDAS = {
   'packages/domain': new Set(['@koinonia/crypto']),
   'packages/crypto': new Set([]),
   'packages/consensus': new Set([]),
+  'packages/metrics': new Set(['@koinonia/domain']),
 };
 
 const CAMPOS_RUNTIME = ['dependencies', 'peerDependencies', 'optionalDependencies'];
@@ -170,12 +176,15 @@ if (infracciones.length > 0) {
 }
 
 // El mensaje se construye desde `PERMITIDAS` para que no pueda mentir: si mañana se añade o se quita
-// un paquete de la comprobación, la línea que se imprime cambia sola. Un guardián que anuncia haber
-// revisado más de lo que revisa es peor que no tener guardián.
-const revisados = Object.keys(PERMITIDAS);
+// un paquete de la comprobación —o se le concede una dependencia—, la línea que se imprime cambia
+// sola. Un guardián que anuncia haber revisado más de lo que revisa es peor que no tener guardián,
+// y uno que dice «sin dependencias» de un paquete al que se le acaba de conceder una, también.
+const revisados = Object.entries(PERMITIDAS).map(([paquete, permitidas]) =>
+  permitidas.size === 0 ? paquete : `${paquete} (sólo ${[...permitidas].join(', ')})`,
+);
 const ultimo = revisados.length - 1;
 const listado =
   revisados.length === 1
     ? revisados[0]
     : `${revisados.slice(0, ultimo).join(', ')} y ${revisados[ultimo]}`;
-console.log(`Pureza del dominio: correcta (${listado} sin dependencias de runtime).`);
+console.log(`Pureza del dominio: correcta (${listado}).`);
