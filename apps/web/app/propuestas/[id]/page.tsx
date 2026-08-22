@@ -24,7 +24,8 @@ import {
   convertirPlan,
   type BorradorPlanEjecucion,
 } from '../../../components/plan-ejecucion';
-import { cuando, enviar, nuevoRequestId, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { cuando, enviar, traer } from '../../../lib/api';
 
 export default function DetallePropuesta(): ReactNode {
   const params = useParams<{ id: string }>();
@@ -45,6 +46,7 @@ export default function DetallePropuesta(): ReactNode {
   );
   const [duracionHoras, setDuracionHoras] = useState('72');
   const [errorAbrir, setErrorAbrir] = useState<unknown>(undefined);
+  const { enCurso, ejecutar } = useAccionUnica();
 
   const recargar = useCallback(() => {
     traer<PropuestaDetalle>(`/propuestas/${id}`).then(setPropuesta).catch(setError);
@@ -71,36 +73,40 @@ export default function DetallePropuesta(): ReactNode {
       );
       return;
     }
-    try {
-      setPropuesta(
-        await enviar<PropuestaDetalle>(`/propuestas/${id}/enmiendas`, {
-          requestId: nuevoRequestId(),
+    const resultado = await ejecutar(
+      'enmendar',
+      { titulo, cuerpo, motivo, plan: planParaEnviar },
+      (requestId) =>
+        enviar<PropuestaDetalle>(`/propuestas/${id}/enmiendas`, {
+          requestId,
           titulo,
           cuerpo,
           motivo,
           plan: planParaEnviar,
         }),
-      );
+    );
+    if (resultado.estado === 'hecho') {
+      setPropuesta(resultado.valor);
       setEnmendando(false);
-    } catch (fallo) {
-      setErrorEnmienda(fallo);
-    }
+    } else if (resultado.estado === 'fallo') setErrorEnmienda(resultado.error);
   }
 
   async function abrirDecision(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setErrorAbrir(undefined);
-    try {
-      const decision = await enviar<{ id: string }>('/decisiones', {
-        requestId: nuevoRequestId(),
-        propuestaId: propuesta?.id,
-        metodo,
-        duracionHoras: Number(duracionHoras),
-      });
-      router.push(`/decisiones/${decision.id}`);
-    } catch (fallo) {
-      setErrorAbrir(fallo);
-    }
+    const resultado = await ejecutar(
+      'abrir-decision',
+      { propuestaId: propuesta?.id, metodo, duracionHoras },
+      (requestId) =>
+        enviar<{ id: string }>('/decisiones', {
+          requestId,
+          propuestaId: propuesta?.id,
+          metodo,
+          duracionHoras: Number(duracionHoras),
+        }),
+    );
+    if (resultado.estado === 'hecho') router.push(`/decisiones/${resultado.valor.id}`);
+    else if (resultado.estado === 'fallo') setErrorAbrir(resultado.error);
   }
 
   if (error !== undefined) return <ErrorVisible error={error} />;
@@ -177,8 +183,8 @@ export default function DetallePropuesta(): ReactNode {
                 }}
               />
             </div>
-            <button className="boton" type="submit">
-              Abrir la decisión
+            <button className="boton" type="submit" disabled={enCurso !== undefined}>
+              {enCurso === 'abrir-decision' ? 'Abriendo…' : 'Abrir la decisión'}
             </button>
           </form>
         </section>
@@ -280,12 +286,13 @@ export default function DetallePropuesta(): ReactNode {
                   />
                 </div>
                 <PlanEjecucionFormulario value={plan} onChange={setPlan} prefijo="plan-enmienda" />
-                <button className="boton" type="submit">
-                  Guardar la versión nueva
+                <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                  {enCurso === 'enmendar' ? 'Guardando…' : 'Guardar la versión nueva'}
                 </button>{' '}
                 <button
                   className="boton secundario"
                   type="button"
+                  disabled={enCurso !== undefined}
                   onClick={() => {
                     setEnmendando(false);
                   }}

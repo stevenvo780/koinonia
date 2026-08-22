@@ -24,7 +24,8 @@ import type { DecisionDetalle } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
 import { PlanEjecucionVisible } from '../../../components/plan-ejecucion';
-import { cuando, enviar, nuevoRequestId, plazo, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { cuando, enviar, plazo, traer } from '../../../lib/api';
 
 type Postura = 'consent' | 'concern' | 'object';
 type Binario = 'si' | 'no' | 'abstengo';
@@ -40,7 +41,10 @@ export default function Decision(): ReactNode {
   const [errorEnvio, setErrorEnvio] = useState<unknown>(undefined);
   const [enviado, setEnviado] = useState(false);
   const [errorCierre, setErrorCierre] = useState<unknown>(undefined);
-  const [cerrando, setCerrando] = useState(false);
+  // Las dos acciones más caras de la pantalla comparten guarda: mientras una está en vuelo, ni ella
+  // ni la otra pueden volver a salir. Y las dos conservan su clave de idempotencia entre reintentos,
+  // que es lo que impide que una respuesta perdida se convierta en dos papeletas o en dos cierres.
+  const { enCurso, ejecutar } = useAccionUnica();
 
   const [postura, setPostura] = useState<Postura>('consent');
   const [binario, setBinario] = useState<Binario>('si');
@@ -48,6 +52,7 @@ export default function Decision(): ReactNode {
   const [objetivo, setObjetivo] = useState('');
 
   const recargar = useCallback(() => {
+    setError(undefined);
     traer<DecisionDetalle>(`/decisiones/${id}`).then(setDecision).catch(setError);
   }, [id]);
 
@@ -69,33 +74,48 @@ export default function Decision(): ReactNode {
           ? { tipo: 'abstain' as const }
           : { tipo: 'binary' as const, aprueba: binario === 'si' };
 
-    try {
-      setDecision(
-        await enviar<DecisionDetalle>(`/decisiones/${id}/papeletas`, {
-          requestId: nuevoRequestId(),
+    const resultado = await ejecutar(
+      'papeleta',
+      { huellaVersion: decision.huellaVersion, respuesta },
+      (requestId) =>
+        enviar<DecisionDetalle>(`/decisiones/${id}/papeletas`, {
+          requestId,
           huellaVersion: decision.huellaVersion,
           respuesta,
         }),
-      );
+    );
+    if (resultado.estado === 'hecho') {
+      setDecision(resultado.valor);
       setEnviado(true);
-    } catch (fallo) {
-      setErrorEnvio(fallo);
-    }
+    } else if (resultado.estado === 'fallo') setErrorEnvio(resultado.error);
   }
 
   async function cerrar(): Promise<void> {
     setErrorCierre(undefined);
-    setCerrando(true);
-    try {
-      await enviar(`/decisiones/${id}/cerrar`, { requestId: nuevoRequestId() });
-      router.push(`/decisiones/${id}/resultado`);
-    } catch (fallo) {
-      setErrorCierre(fallo);
-      setCerrando(false);
-    }
+    const resultado = await ejecutar('cerrar', {}, (requestId) =>
+      enviar(`/decisiones/${id}/cerrar`, { requestId }),
+    );
+    if (resultado.estado === 'hecho') router.push(`/decisiones/${id}/resultado`);
+    else if (resultado.estado === 'fallo') setErrorCierre(resultado.error);
   }
 
-  if (error !== undefined) return <ErrorVisible error={error} />;
+  // Mismo callejón que había en el detalle de un problema: el aviso solo, sin reintento ni vuelta.
+  if (error !== undefined) {
+    return (
+      <>
+        <h1>No pudimos abrir esta decisión</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button className="boton" type="button" onClick={recargar}>
+            Volver a intentar
+          </button>{' '}
+          <Link className="boton secundario" href="/decisiones">
+            Ver todas las decisiones
+          </Link>
+        </p>
+      </>
+    );
+  }
   if (decision === undefined) return <Cargando que="la decisión" />;
 
   const consentimiento = decision.metodo === 'sociocratic-consent';
@@ -163,9 +183,9 @@ export default function Decision(): ReactNode {
             className="boton secundario"
             type="button"
             onClick={() => void cerrar()}
-            disabled={cerrando}
+            disabled={enCurso !== undefined}
           >
-            {cerrando ? 'Cerrando…' : 'Cerrar y publicar el resultado'}
+            {enCurso === 'cerrar' ? 'Cerrando…' : 'Cerrar y publicar el resultado'}
           </button>
         </section>
       )}
@@ -338,8 +358,12 @@ export default function Decision(): ReactNode {
             </p>
           )}
 
-          <button className="boton" type="submit">
-            {decision.miRespuesta === undefined ? 'Enviar mi respuesta' : 'Cambiar mi respuesta'}
+          <button className="boton" type="submit" disabled={enCurso !== undefined}>
+            {enCurso === 'papeleta'
+              ? 'Enviando…'
+              : decision.miRespuesta === undefined
+                ? 'Enviar mi respuesta'
+                : 'Cambiar mi respuesta'}
           </button>
         </form>
       )}

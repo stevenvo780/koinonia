@@ -9,13 +9,15 @@
  * no vuelve nunca.
  */
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type SyntheticEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type SyntheticEvent, type ReactNode } from 'react';
 
 import type { ProblemaDetalle } from '@koinonia/contracts';
 
-import { Aviso, ErrorVisible, useSesion } from '../../../components/marco';
-import { enviar, nuevoRequestId, traer } from '../../../lib/api';
+import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
+import { useAccionUnica } from '../../../lib/acciones';
+import { enviar, traer } from '../../../lib/api';
 
 interface Circulo {
   readonly id: string;
@@ -26,38 +28,34 @@ interface Circulo {
 export default function NuevoProblema(): ReactNode {
   const router = useRouter();
   const { sesion, cargando } = useSesion();
-  const [circulos, setCirculos] = useState<Circulo[]>([]);
+  const [circulos, setCirculos] = useState<Circulo[] | undefined>(undefined);
   const [titulo, setTitulo] = useState('');
   const [cuerpo, setCuerpo] = useState('');
   const [circuloId, setCirculoId] = useState('');
   const [error, setError] = useState<unknown>(undefined);
-  const [enviando, setEnviando] = useState(false);
+  const [errorCirculos, setErrorCirculos] = useState<unknown>(undefined);
+  const { enCurso, ejecutar } = useAccionUnica();
 
-  useEffect(() => {
+  const cargarCirculos = useCallback(() => {
+    setErrorCirculos(undefined);
     traer<Circulo[]>('/circulos')
       .then((lista) => {
         setCirculos(lista);
         setCirculoId(lista[0]?.id ?? '');
       })
-      .catch(setError);
+      .catch(setErrorCirculos);
   }, []);
+
+  useEffect(cargarCirculos, [cargarCirculos]);
 
   async function guardar(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setError(undefined);
-    setEnviando(true);
-    try {
-      const creado = await enviar<ProblemaDetalle>('/problemas', {
-        requestId: nuevoRequestId(),
-        titulo,
-        cuerpo,
-        circuloId,
-      });
-      router.push(`/problemas/${creado.id}`);
-    } catch (fallo) {
-      setError(fallo);
-      setEnviando(false);
-    }
+    const resultado = await ejecutar('guardar', { titulo, cuerpo, circuloId }, (requestId) =>
+      enviar<ProblemaDetalle>('/problemas', { requestId, titulo, cuerpo, circuloId }),
+    );
+    if (resultado.estado === 'hecho') router.push(`/problemas/${resultado.valor.id}`);
+    else if (resultado.estado === 'fallo') setError(resultado.error);
   }
 
   return (
@@ -67,82 +65,109 @@ export default function NuevoProblema(): ReactNode {
       {!cargando && sesion === undefined && (
         <Aviso tipo="atencion" titulo="Antes de escribir">
           Para que quede constancia hay que entrar con el correo institucional.{' '}
-          <a href="/entrar">Entrar ahora</a>. Lo que escribas acá se conserva mientras tanto.
+          {/* `Link` y no `<a>`: una navegación completa tira el borrador que ya escribiste. */}
+          <Link href="/entrar">Entrar ahora</Link>. Lo que escribas acá se conserva mientras tanto.
         </Aviso>
       )}
 
       <ErrorVisible error={error} />
 
-      <form onSubmit={(e) => void guardar(e)} noValidate>
-        <div className="campo">
-          <label htmlFor="titulo">
-            En una frase, ¿qué está pasando que no debería estar pasando?
-          </label>
-          <span className="ayuda" id="ayuda-titulo">
-            Sin rodeos. Entre 10 y 140 caracteres. Ejemplo: «La sala de estudio cierra a las 6 y los
-            de la nocturna no tenemos dónde leer».
-          </span>
-          <input
-            id="titulo"
-            name="titulo"
-            type="text"
-            required
-            minLength={10}
-            maxLength={140}
-            aria-describedby="ayuda-titulo"
-            value={titulo}
-            onChange={(e) => {
-              setTitulo(e.target.value);
-            }}
-          />
-        </div>
+      {/*
+       * Sin la lista de grupos no hay formulario. Antes se pintaba igual, con el desplegable vacío
+       * y `circuloId` en cadena vacía: la persona escribía dos párrafos y el servidor los rechazaba
+       * al final. Un formulario que no puede tener éxito no se enseña.
+       */}
+      {errorCirculos !== undefined ? (
+        <>
+          <ErrorVisible error={errorCirculos} />
+          <p>
+            No pudimos traer la lista de grupos que deciden, y sin ella lo que escribas no se puede
+            guardar. No perdés nada por intentarlo otra vez.
+          </p>
+          <p>
+            <button className="boton" type="button" onClick={cargarCirculos}>
+              Volver a intentar
+            </button>{' '}
+            <Link className="boton secundario" href="/problemas">
+              Ver los problemas que ya existen
+            </Link>
+          </p>
+        </>
+      ) : circulos === undefined ? (
+        <Cargando que="los grupos que deciden" />
+      ) : (
+        <form onSubmit={(e) => void guardar(e)} noValidate>
+          <div className="campo">
+            <label htmlFor="titulo">
+              En una frase, ¿qué está pasando que no debería estar pasando?
+            </label>
+            <span className="ayuda" id="ayuda-titulo">
+              Sin rodeos. Entre 10 y 140 caracteres. Ejemplo: «La sala de estudio cierra a las 6 y
+              los de la nocturna no tenemos dónde leer».
+            </span>
+            <input
+              id="titulo"
+              name="titulo"
+              type="text"
+              required
+              minLength={10}
+              maxLength={140}
+              aria-describedby="ayuda-titulo"
+              value={titulo}
+              onChange={(e) => {
+                setTitulo(e.target.value);
+              }}
+            />
+          </div>
 
-        <div className="campo">
-          <label htmlFor="cuerpo">¿Cómo te diste cuenta? Contá el hecho concreto.</label>
-          <span className="ayuda" id="ayuda-cuerpo">
-            A quiénes les pasa, desde cuándo, y qué va a pasar si nadie hace nada. Si no sabés algo,
-            escribí «todavía no sé»: vale, y queda como algo que alguien puede averiguar.
-          </span>
-          <textarea
-            id="cuerpo"
-            name="cuerpo"
-            required
-            minLength={30}
-            maxLength={4000}
-            aria-describedby="ayuda-cuerpo"
-            value={cuerpo}
-            onChange={(e) => {
-              setCuerpo(e.target.value);
-            }}
-          />
-        </div>
+          <div className="campo">
+            <label htmlFor="cuerpo">¿Cómo te diste cuenta? Contá el hecho concreto.</label>
+            <span className="ayuda" id="ayuda-cuerpo">
+              A quiénes les pasa, desde cuándo, y qué va a pasar si nadie hace nada. Si no sabés
+              algo, escribí «todavía no sé»: vale, y queda como algo que alguien puede averiguar.
+            </span>
+            <textarea
+              id="cuerpo"
+              name="cuerpo"
+              required
+              minLength={30}
+              maxLength={4000}
+              aria-describedby="ayuda-cuerpo"
+              value={cuerpo}
+              onChange={(e) => {
+                setCuerpo(e.target.value);
+              }}
+            />
+          </div>
 
-        <div className="campo">
-          <label htmlFor="circulo">¿Quién decide esto?</label>
-          <span className="ayuda" id="ayuda-circulo">
-            Si te equivocás no pasa nada: se reenvía al grupo que corresponde y te decimos por qué.
-          </span>
-          <select
-            id="circulo"
-            name="circulo"
-            aria-describedby="ayuda-circulo"
-            value={circuloId}
-            onChange={(e) => {
-              setCirculoId(e.target.value);
-            }}
-          >
-            {circulos.map((circulo) => (
-              <option key={circulo.id} value={circulo.id}>
-                {circulo.nombre} — {circulo.decideSinConsultar}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="campo">
+            <label htmlFor="circulo">¿Quién decide esto?</label>
+            <span className="ayuda" id="ayuda-circulo">
+              Si te equivocás no pasa nada: se reenvía al grupo que corresponde y te decimos por
+              qué.
+            </span>
+            <select
+              id="circulo"
+              name="circulo"
+              aria-describedby="ayuda-circulo"
+              value={circuloId}
+              onChange={(e) => {
+                setCirculoId(e.target.value);
+              }}
+            >
+              {circulos.map((circulo) => (
+                <option key={circulo.id} value={circulo.id}>
+                  {circulo.nombre} — {circulo.decideSinConsultar}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <button className="boton" type="submit" disabled={enviando}>
-          {enviando ? 'Guardando…' : 'Guardar el problema'}
-        </button>
-      </form>
+          <button className="boton" type="submit" disabled={enCurso !== undefined}>
+            {enCurso === 'guardar' ? 'Guardando…' : 'Guardar el problema'}
+          </button>
+        </form>
+      )}
     </>
   );
 }

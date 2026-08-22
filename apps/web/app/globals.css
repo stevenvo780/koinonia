@@ -389,8 +389,23 @@ fieldset.plan-ejecucion[disabled] {
   flex: 0 0 auto;
 }
 
+/*
+ * El círculo del radio se dibuja de 24 px —agrandarlo lo deforma—, pero el encabezado de este
+ * fichero promete objetivos táctiles de 44 y la promesa vale para el objetivo, no para el dibujo.
+ * La etiqueta se estira por el resto de la fila, que ya mide 44 de alto, y pulsarla activa su
+ * radio: el pulgar acierta en cualquier punto del texto y de la explicación.
+ *
+ * Se hace estirando la etiqueta y **no** superponiéndola con un `::before` en posición absoluta:
+ * eso tapaba el propio control, y un elemento que intercepta los eventos de su radio no es un
+ * objetivo más grande, es un objetivo roto.
+ */
 .opcion label {
   font-weight: 600;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
 }
 
 .opcion .explica {
@@ -695,4 +710,35 @@ ul.tareas > li {
     gap: 1rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ── Diálogo propio ──────────────────────────────────────────────────────────────────────── */
+
+/*
+ * Reemplaza a `window.prompt`, que no se puede etiquetar ni estilar y que en la PWA de iOS se
+ * cierra sin devolver valor. Ancho acotado y relleno generoso: se responde de pie, con una mano.
+ */
+.dialogo {
+  border: 2px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 1.25rem;
+  max-width: 32rem;
+  width: calc(100% - 2rem);
+  color: var(--tinta);
+  background: var(--fondo);
+}
+
+.dialogo::backdrop {
+  background: rgb(22 25 29 / 55%);
+}
+
+.dialogo h2 {
+  margin-top: 0;
+}
+
+.acciones-dialogo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }

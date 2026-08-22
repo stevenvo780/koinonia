@@ -29,16 +29,22 @@ export function Cargando({ que }: { readonly que: string }): ReactNode {
 export function Aviso({
   tipo,
   titulo,
+  id,
   children,
 }: {
   readonly tipo: 'error' | 'bien' | 'atencion';
   readonly titulo?: string;
+  readonly id?: string;
   readonly children: ReactNode;
 }): ReactNode {
   const simbolo = tipo === 'error' ? '✕' : tipo === 'bien' ? '✓' : '!';
   const palabra = tipo === 'error' ? 'Problema' : tipo === 'bien' ? 'Todo bien' : 'Atención';
   return (
-    <div className={`aviso ${tipo}`} role={tipo === 'error' ? 'alert' : 'status'}>
+    <div
+      className={`aviso ${tipo}`}
+      role={tipo === 'error' ? 'alert' : 'status'}
+      {...(id === undefined ? {} : { id })}
+    >
       <strong>
         <span aria-hidden="true">{simbolo} </span>
         {titulo ?? palabra}:{' '}
@@ -48,7 +54,18 @@ export function Aviso({
   );
 }
 
-export function ErrorVisible({ error }: { readonly error: unknown }): ReactNode {
+/**
+ * El `id` es opcional pero no decorativo: cuando el error pertenece a un campo concreto, el campo
+ * tiene que poder apuntarlo con `aria-describedby`. Sin eso, quien usa un lector de pantalla llega
+ * al campo, oye la ayuda, y nunca se entera de por qué lo rechazaron.
+ */
+export function ErrorVisible({
+  error,
+  id,
+}: {
+  readonly error: unknown;
+  readonly id?: string;
+}): ReactNode {
   if (error === null || error === undefined) return null;
   const mensaje =
     error instanceof ErrorDeApi
@@ -58,7 +75,7 @@ export function ErrorVisible({ error }: { readonly error: unknown }): ReactNode 
         : 'Algo no salió bien.';
   const queHacer = error instanceof ErrorDeApi ? error.queHacer : undefined;
   return (
-    <Aviso tipo="error" titulo="No se pudo">
+    <Aviso tipo="error" titulo="No se pudo" {...(id === undefined ? {} : { id })}>
       {mensaje}
       {queHacer !== undefined && (
         <>

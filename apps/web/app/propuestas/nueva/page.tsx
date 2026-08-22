@@ -13,7 +13,8 @@ import {
   convertirPlan,
   type BorradorPlanEjecucion,
 } from '../../../components/plan-ejecucion';
-import { enviar, nuevoRequestId, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { enviar, traer } from '../../../lib/api';
 
 function Formulario(): ReactNode {
   const router = useRouter();
@@ -26,6 +27,7 @@ function Formulario(): ReactNode {
   const [cuerpo, setCuerpo] = useState('');
   const [plan, setPlan] = useState<BorradorPlanEjecucion>(borradorPlanInicial);
   const [error, setError] = useState<unknown>(undefined);
+  const { enCurso, ejecutar } = useAccionUnica();
 
   useEffect(() => {
     if (problemaId === '') return;
@@ -40,18 +42,20 @@ function Formulario(): ReactNode {
       setError(new Error('Entrá con tu correo institucional antes de guardar la propuesta.'));
       return;
     }
-    try {
-      const creada = await enviar<PropuestaDetalle>('/propuestas', {
-        requestId: nuevoRequestId(),
-        problemaId,
-        titulo,
-        cuerpo,
-        plan: planParaEnviar,
-      });
-      router.push(`/propuestas/${creada.id}`);
-    } catch (fallo) {
-      setError(fallo);
-    }
+    const resultado = await ejecutar(
+      'guardar',
+      { problemaId, titulo, cuerpo, plan: planParaEnviar },
+      (requestId) =>
+        enviar<PropuestaDetalle>('/propuestas', {
+          requestId,
+          problemaId,
+          titulo,
+          cuerpo,
+          plan: planParaEnviar,
+        }),
+    );
+    if (resultado.estado === 'hecho') router.push(`/propuestas/${resultado.valor.id}`);
+    else if (resultado.estado === 'fallo') setError(resultado.error);
   }
 
   // No se propone sin problema (PRODUCT §4). Y en vez de un error, se ofrece crearlo.
@@ -129,8 +133,12 @@ function Formulario(): ReactNode {
           bloqueado={cargando || sesion === undefined}
         />
 
-        <button className="boton" type="submit" disabled={cargando || sesion === undefined}>
-          Guardar la propuesta
+        <button
+          className="boton"
+          type="submit"
+          disabled={cargando || sesion === undefined || enCurso !== undefined}
+        >
+          {enCurso === 'guardar' ? 'Guardando…' : 'Guardar la propuesta'}
         </button>
       </form>
     </>
@@ -139,7 +147,15 @@ function Formulario(): ReactNode {
 
 export default function NuevaPropuesta(): ReactNode {
   return (
-    <Suspense fallback={<p className="cargando">Cargando…</p>}>
+    // `role="status"` para que la espera se anuncie: sin él, quien usa un lector de pantalla se
+    // queda ante una página que no dice nada mientras se resuelven los parámetros de la dirección.
+    <Suspense
+      fallback={
+        <p className="cargando" role="status">
+          Cargando el formulario…
+        </p>
+      }
+    >
       <Formulario />
     </Suspense>
   );

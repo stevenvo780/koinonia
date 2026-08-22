@@ -59,7 +59,13 @@ function Confirmacion(): ReactNode {
 
 export default function Confirmar(): ReactNode {
   return (
-    <Suspense fallback={<p className="cargando">Cargando…</p>}>
+    <Suspense
+      fallback={
+        <p className="cargando" role="status">
+          Comprobando el enlace…
+        </p>
+      }
+    >
       <Confirmacion />
     </Suspense>
   );

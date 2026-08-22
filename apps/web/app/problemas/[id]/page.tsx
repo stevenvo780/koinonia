@@ -11,8 +11,10 @@ import {
   type PropuestaResumen,
 } from '@koinonia/contracts';
 
+import { DialogoTexto } from '../../../components/dialogo';
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
-import { cuando, enviar, nuevoRequestId, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { cuando, enviar, traer } from '../../../lib/api';
 
 const CERTEZAS: readonly Certeza[] = ['visto', 'me-lo-contaron', 'lo-supongo'];
 
@@ -24,11 +26,22 @@ export default function DetalleProblema(): ReactNode {
   const [problema, setProblema] = useState<ProblemaDetalle | undefined>(undefined);
   const [propuestas, setPropuestas] = useState<PropuestaResumen[]>([]);
   const [error, setError] = useState<unknown>(undefined);
+  // Un error por acción y pintado junto a su botón. Antes había uno solo, arriba del todo, para
+  // tres acciones repartidas por la pantalla: quien pulsaba «Retirar mi aporte» al final de una
+  // lista larga recibía la explicación fuera de la vista, y con un lector de pantalla, en un sitio
+  // que no tiene nada que ver con lo que acababa de hacer.
+  const [errorMePasa, setErrorMePasa] = useState<unknown>(undefined);
   const [errorAporte, setErrorAporte] = useState<unknown>(undefined);
+  const [errorRetiro, setErrorRetiro] = useState<{ id: string; fallo: unknown } | undefined>(
+    undefined,
+  );
   const [aporte, setAporte] = useState('');
   const [certeza, setCerteza] = useState<Certeza>('visto');
+  const [retirando, setRetirando] = useState<string | undefined>(undefined);
+  const { enCurso, ejecutar, olvidar } = useAccionUnica();
 
   const recargar = useCallback(() => {
+    setError(undefined);
     traer<ProblemaDetalle>(`/problemas/${id}`).then(setProblema).catch(setError);
     traer<PropuestaResumen[]>(`/propuestas?problema=${id}`)
       .then(setPropuestas)
@@ -38,50 +51,65 @@ export default function DetalleProblema(): ReactNode {
   useEffect(recargar, [recargar]);
 
   async function mePasa(): Promise<void> {
-    setErrorAporte(undefined);
-    try {
-      setProblema(
-        await enviar<ProblemaDetalle>(`/problemas/${id}/me-pasa`, { requestId: nuevoRequestId() }),
-      );
-    } catch (fallo) {
-      setErrorAporte(fallo);
-    }
+    setErrorMePasa(undefined);
+    const resultado = await ejecutar('me-pasa', {}, (requestId) =>
+      enviar<ProblemaDetalle>(`/problemas/${id}/me-pasa`, { requestId }),
+    );
+    if (resultado.estado === 'hecho') setProblema(resultado.valor);
+    else if (resultado.estado === 'fallo') setErrorMePasa(resultado.error);
   }
 
   async function aportar(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setErrorAporte(undefined);
-    try {
-      setProblema(
-        await enviar<ProblemaDetalle>(`/problemas/${id}/evidencia`, {
-          requestId: nuevoRequestId(),
-          certeza,
-          cuerpo: aporte,
-        }),
-      );
+    const resultado = await ejecutar('aportar', { certeza, cuerpo: aporte }, (requestId) =>
+      enviar<ProblemaDetalle>(`/problemas/${id}/evidencia`, {
+        requestId,
+        certeza,
+        cuerpo: aporte,
+      }),
+    );
+    if (resultado.estado === 'hecho') {
+      setProblema(resultado.valor);
       setAporte('');
-    } catch (fallo) {
-      setErrorAporte(fallo);
+    } else if (resultado.estado === 'fallo') setErrorAporte(resultado.error);
+  }
+
+  async function retirar(evidenciaId: string, motivo: string): Promise<void> {
+    setErrorRetiro(undefined);
+    const resultado = await ejecutar(`retirar-${evidenciaId}`, { motivo }, (requestId) =>
+      enviar<ProblemaDetalle>(`/problemas/${id}/evidencia/${evidenciaId}/retirar`, {
+        requestId,
+        motivo,
+      }),
+    );
+    if (resultado.estado === 'hecho') {
+      setProblema(resultado.valor);
+      setRetirando(undefined);
+    } else if (resultado.estado === 'fallo') {
+      setErrorRetiro({ id: evidenciaId, fallo: resultado.error });
+      setRetirando(undefined);
     }
   }
 
-  async function retirar(evidenciaId: string): Promise<void> {
-    setErrorAporte(undefined);
-    const motivo = window.prompt('¿Por qué lo retirás? Queda escrito en el historial.');
-    if (motivo === null || motivo.trim() === '') return;
-    try {
-      setProblema(
-        await enviar<ProblemaDetalle>(`/problemas/${id}/evidencia/${evidenciaId}/retirar`, {
-          requestId: nuevoRequestId(),
-          motivo,
-        }),
-      );
-    } catch (fallo) {
-      setErrorAporte(fallo);
-    }
+  // Un error de carga sin salida es un callejón: la pantalla quedaba con el aviso y nada más, ni
+  // manera de reintentar ni manera de volver. Las dos cosas van acá.
+  if (error !== undefined) {
+    return (
+      <>
+        <h1>No pudimos abrir este problema</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button className="boton" type="button" onClick={recargar}>
+            Volver a intentar
+          </button>{' '}
+          <Link className="boton secundario" href="/problemas">
+            Ver todos los problemas
+          </Link>
+        </p>
+      </>
+    );
   }
-
-  if (error !== undefined) return <ErrorVisible error={error} />;
   if (problema === undefined) return <Cargando que="el problema" />;
 
   return (
@@ -94,8 +122,6 @@ export default function DetalleProblema(): ReactNode {
 
       <p style={{ whiteSpace: 'pre-wrap' }}>{problema.cuerpo}</p>
 
-      <ErrorVisible error={errorAporte} />
-
       <section aria-labelledby="me-pasa-titulo">
         <h2 id="me-pasa-titulo">¿A vos también te pasa?</h2>
         <p>
@@ -103,13 +129,19 @@ export default function DetalleProblema(): ReactNode {
           {problema.lesPasaLoMismo === 1 ? 'persona más le pasa' : 'personas más les pasa'} lo
           mismo. No se muestra quiénes: es un colectivo formándose, no una lista de nombres.
         </p>
+        <ErrorVisible error={errorMePasa} />
         {problema.yaDijeQueMePasa ? (
           <p>
             <span aria-hidden="true">✓ </span>Ya dijiste que te pasa. No se cuenta dos veces.
           </p>
         ) : (
-          <button className="boton secundario" type="button" onClick={() => void mePasa()}>
-            A mí también me pasa
+          <button
+            className="boton secundario"
+            type="button"
+            disabled={enCurso !== undefined}
+            onClick={() => void mePasa()}
+          >
+            {enCurso === 'me-pasa' ? 'Guardando…' : 'A mí también me pasa'}
           </button>
         )}
       </section>
@@ -139,13 +171,22 @@ export default function DetalleProblema(): ReactNode {
                     <p className="suave">Fuente: {evidencia.fuente}</p>
                   )}
                   {evidencia.esMia && (
-                    <button
-                      className="boton secundario"
-                      type="button"
-                      onClick={() => void retirar(evidencia.id)}
-                    >
-                      Retirar mi aporte
-                    </button>
+                    <>
+                      {errorRetiro?.id === evidencia.id && (
+                        <ErrorVisible error={errorRetiro.fallo} />
+                      )}
+                      <button
+                        className="boton secundario"
+                        type="button"
+                        disabled={enCurso !== undefined}
+                        onClick={() => {
+                          setErrorRetiro(undefined);
+                          setRetirando(evidencia.id);
+                        }}
+                      >
+                        {enCurso === `retirar-${evidencia.id}` ? 'Retirando…' : 'Retirar mi aporte'}
+                      </button>
+                    </>
                   )}
                 </>
               ) : (
@@ -158,6 +199,24 @@ export default function DetalleProblema(): ReactNode {
             </li>
           ))}
         </ul>
+
+        <DialogoTexto
+          abierto={retirando !== undefined}
+          titulo="Retirar tu aporte"
+          etiqueta="¿Por qué lo retirás?"
+          ayuda="Queda escrito en el historial, junto al hueco que deja. El aporte no se borra: se marca como retirado con este motivo."
+          confirmar="Retirar el aporte"
+          cancelar="Dejarlo como está"
+          trabajando={retirando !== undefined && enCurso === `retirar-${retirando}`}
+          onConfirmar={(motivo) => {
+            if (retirando !== undefined) void retirar(retirando, motivo);
+          }}
+          onCancelar={() => {
+            // Cancelar es cambiar de intención: la clave de idempotencia guardada ya no vale.
+            if (retirando !== undefined) olvidar(`retirar-${retirando}`);
+            setRetirando(undefined);
+          }}
+        />
 
         {sesion !== undefined && (
           <form onSubmit={(e) => void aportar(e)} noValidate>
@@ -196,8 +255,9 @@ export default function DetalleProblema(): ReactNode {
                 </div>
               ))}
             </fieldset>
-            <button className="boton" type="submit">
-              Aportar
+            <ErrorVisible error={errorAporte} />
+            <button className="boton" type="submit" disabled={enCurso !== undefined}>
+              {enCurso === 'aportar' ? 'Aportando…' : 'Aportar'}
             </button>
           </form>
         )}
