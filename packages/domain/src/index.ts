@@ -340,6 +340,9 @@ export {
 // ── Agregados de trabajo: problemas y propuestas ────────────────────────────────────────────────
 export * from './workspace/index.js';
 
+// ── Deliberación estructurada por etapas ────────────────────────────────────────────────────────
+export * from './deliberation/index.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,

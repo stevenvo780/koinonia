@@ -3,32 +3,44 @@
  *
  * Aquí no se comprueba que el camino feliz funcione: se generan deliberaciones enteras al azar
  * —cuántos aportes, de qué tipo, de quién, en qué instante de la ventana, con avance manual o por
- * plazo— y se exige que **todo** historial resultante cumpla las diez invariantes del diseño. La
+ * plazo— y se exige que **todo** historial resultante cumpla las ocho invariantes del diseño. La
  * semilla es fija (`30_000_821`, como el resto del repo) para que un contraejemplo se pueda volver a
  * mirar mañana.
+ *
+ * ═══ Propiedades retiradas en ADR-0049, y por qué ═══
+ *
+ * Siete pruebas, que eran las cuatro invariantes del sellado criptográfico:
+ *
+ *  - **INV-D5** (1 prueba) «el evento sellado no contiene el `authorId`»: ahora lo contiene a
+ *    propósito, y lo que se protege es su lectura, no su presencia. La sustituye la nueva INV-D5.
+ *  - **INV-D6** (3 pruebas) «el compromiso ata la autoría»: no hay compromiso. La reautorización en
+ *    el replay ocupa su lugar en la nueva INV-D6, y es una garantía que el compromiso **no daba**.
+ *  - **INV-D7** (2 pruebas) «se revela exactamente una vez y no antes de tiempo»: no hay revelación.
+ *  - **INV-D8** (1 prueba) «no se sale de `perspectivas_revelando` con aportes sin destapar»: no hay
+ *    etapa de revelación, y esa invariante era justamente el modo de fallo permanente que ADR-0049
+ *    elimina.
+ *
+ * Las otras seis invariantes —ventanas, tabla de etapas, aristas, aciclicidad, orden de presentación
+ * y transiciones— siguen aquí sin recortes, con los números renumerados a la cadena de seis etapas.
  */
 
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import type { Actor } from '../../src/access.js';
-import { hashCanonical } from '../../src/canonical.js';
+import { type Actor, can, type ResourceRef } from '../../src/access.js';
 import {
   advanceStage,
   assertBodyAllowedInStage,
-  type AuthorNonce,
-  authorNonce,
-  authorCommitment,
-  buildAuthorOpening,
+  authorizeAuthorshipRead,
   CONTRIBUTION_KINDS,
   type ContributionBody,
   type ContributionId,
   contributionId,
   type ContributionKind,
+  contributionsOfAuthorInStage,
   DELIBERATION_STAGES,
   type DeliberationCommandMeta,
   type DeliberationLog,
-  deliberationNonce,
   type DeliberationStage,
   type DeliberationState,
   deliberationId,
@@ -38,9 +50,9 @@ import {
   type PresentationSeed,
   presentationSeed,
   presentationOrder,
+  readContributionAuthor,
   referencesOf,
   replayDeliberation,
-  revealContributionAuthor,
   stageAdmits,
   stageRule,
   submitContribution,
@@ -63,14 +75,12 @@ import {
 const hex32 = (n: number): string => n.toString(16).padStart(32, '0');
 
 const DELIB = deliberationId(hex32(0xd0));
-const DELIBERATION_NONCE = deliberationNonce(hex32(0xd2));
 const CIRCLE = circleId(hex32(0xc1));
 const PROBLEM = hex32(0xb1);
 
 const mid = (n: number): MemberId => memberId(hex32(0x1000 + n));
 const ev = (n: number): EventId => eventId(hex32(0x6000 + n));
 const cid = (n: number): ContributionId => contributionId(hex32(0x7000 + n));
-const nonceAt = (n: number): AuthorNonce => authorNonce(hex32(0x9000 + n));
 const seedAt = (n: number): PresentationSeed => presentationSeed(hex32(0xa000 + n));
 
 const facilitador: Actor = { memberId: mid(1), roles: ['facilitator'], circles: [CIRCLE] };
@@ -122,23 +132,18 @@ const arbPlan: fc.Arbitrary<Plan> = fc.record({
 const ESPINA: Readonly<Record<number, readonly ContributionKind[]>> = {
   0: ['posicion', 'razon', 'evidencia'],
   1: ['posicion', 'razon'],
-  3: ['alternativa'],
-  4: ['riesgo'],
-  5: ['alternativa'],
+  2: ['alternativa'],
+  3: ['riesgo'],
+  4: ['alternativa'],
 };
-
-interface Apertura {
-  readonly authorId: MemberId;
-  readonly nonce: AuthorNonce;
-}
-
-interface Construccion {
-  readonly log: DeliberationLog;
-  readonly aperturas: ReadonlyMap<ContributionId, Apertura>;
-}
 
 function meta(log: DeliberationLog, at: Instant, actor: Actor): DeliberationCommandMeta {
   return { eventId: ev(log.length + 1), at, actor };
+}
+
+/** El recurso tal como lo arma el dominio: la etapa sale del estado plegado, no del llamante. */
+function refDe(estado: DeliberationState): ResourceRef {
+  return { kind: 'deliberation', stage: estado.stage, circleId: estado.circleId };
 }
 
 /**
@@ -148,9 +153,8 @@ function meta(log: DeliberationLog, at: Instant, actor: Actor): DeliberationComm
  * dispone. Lo que se prueba no es que el generador sepa las reglas, sino que el historial resultante
  * las cumpla todas.
  */
-async function construir(plan: Plan, hasta: DeliberationStage): Promise<Construccion> {
+async function construir(plan: Plan, hasta: DeliberationStage): Promise<DeliberationLog> {
   const objetivo = indexOfStage(hasta);
-  const aperturas = new Map<ContributionId, Apertura>();
   const porTipo = new Map<ContributionKind, ContributionId[]>();
   let contador = 0;
   let cursor = 0;
@@ -244,53 +248,25 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Construc
     contador += 1;
     const id = cid(contador);
     const at = instant(T0 + i * HOUR + Math.floor((frac * (HOUR / 2)) / 1000));
-    const sellada = stage === 'perspectivas';
-    const nonce = nonceAt(contador);
     log = await submitContribution(log, meta(log, at, autor), {
       contributionId: id,
       body: armado.body,
       ...(armado.supersedes === undefined ? {} : { supersedesContributionId: armado.supersedes }),
-      ...(sellada ? { nonce, deliberationNonce: DELIBERATION_NONCE } : {}),
     });
-    if (sellada && autor.memberId !== undefined) {
-      aperturas.set(id, { authorId: autor.memberId, nonce });
-    }
     const lista = porTipo.get(kind);
     if (lista === undefined) porTipo.set(kind, [id]);
     else lista.push(id);
   };
 
-  for (let i = 0; i <= 6; i++) {
+  for (let i = 0; i <= 5; i++) {
     const stage = DELIBERATION_STAGES[i];
     if (stage === undefined) break;
 
     const espina = ESPINA[i] ?? [];
-    const indiceExtra = [0, 1, -1, 2, 3, 4, -1][i] ?? -1;
-    const extras = indiceExtra < 0 ? [] : (plan.extras[indiceExtra] ?? []);
+    const extras = plan.extras[i] ?? [];
     for (const kind of [...espina, ...extras]) await escribir(stage, kind);
 
-    // Se para ANTES de destapar autorías: `construir(plan, 'perspectivas_revelando')` tiene que
-    // devolver la etapa con sus perspectivas todavía selladas, que es lo que INV-D7 e INV-D8 miran.
     if (i >= objetivo) break;
-
-    if (stage === 'perspectivas_revelando') {
-      const estado = await replayDeliberation(log);
-      for (const aporte of estado.contributions) {
-        if (aporte.authorship.mode !== 'sealed') continue;
-        const apertura = aperturas.get(aporte.contributionId);
-        if (apertura === undefined) continue;
-        log = await revealContributionAuthor(
-          log,
-          meta(log, instant(T0 + i * HOUR + 1000), garantias),
-          {
-            contributionId: aporte.contributionId,
-            authorId: apertura.authorId,
-            nonce: apertura.nonce,
-            deliberationNonce: DELIBERATION_NONCE,
-          },
-        );
-      }
-    }
 
     const siguiente = DELIBERATION_STAGES[i + 1];
     if (siguiente === undefined) break;
@@ -305,7 +281,7 @@ async function construir(plan: Plan, hasta: DeliberationStage): Promise<Construc
     });
   }
 
-  return { log, aperturas };
+  return log;
 }
 
 /** Cuerpo mínimo de cada tipo, con aristas cualesquiera: para probar la TABLA, no el estado. */
@@ -340,23 +316,22 @@ function cuerpoLibre(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// Las diez propiedades
+// Las ocho propiedades
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-describe('INV-D1 · ninguna escritura en las etapas que no admiten escritura', () => {
-  it('ningún `ContributionSubmitted` en `perspectivas_revelando` ni en `listo_para_decidir`', async () => {
+describe('INV-D1 · ninguna escritura en la etapa que no admite escritura', () => {
+  it('ningún `ContributionSubmitted` en `listo_para_decidir`', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'listo_para_decidir');
+        const log = await construir(plan, 'listo_para_decidir');
         for (const evento of log) {
           if (evento.payload.type !== 'ContributionSubmitted') continue;
-          expect(evento.payload.stage).not.toBe('perspectivas_revelando');
           expect(evento.payload.stage).not.toBe('listo_para_decidir');
         }
-        const estado = await replayDeliberation(log);
+        const estado = replayDeliberation(log);
         expect(estado.stage).toBe('listo_para_decidir');
         for (const aporte of estado.contributions) {
-          expect(['perspectivas_revelando', 'listo_para_decidir']).not.toContain(aporte.stage);
+          expect(aporte.stage).not.toBe('listo_para_decidir');
         }
       }),
       runs(50),
@@ -402,7 +377,7 @@ describe('INV-D2 · cada `body.kind` pertenece a la tabla de su etapa', () => {
   it('todo aporte de un historial generado está tabulado en su etapa', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const estado = await replayDeliberation((await construir(plan, 'listo_para_decidir')).log);
+        const estado = replayDeliberation(await construir(plan, 'listo_para_decidir'));
         for (const aporte of estado.contributions) {
           expect(stageAdmits(aporte.stage, aporte.body.kind)).toBe(true);
         }
@@ -416,7 +391,7 @@ describe('INV-D3 · `submittedAt ∈ [opensAt, closesAt)`', () => {
   it('ningún aporte cae fuera de la ventana de su etapa', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'listo_para_decidir');
+        const log = await construir(plan, 'listo_para_decidir');
         let opensAt = 0;
         let closesAt = 0;
         for (const evento of log) {
@@ -426,7 +401,6 @@ describe('INV-D3 · `submittedAt ∈ [opensAt, closesAt)`', () => {
             closesAt = p.closesAt;
             continue;
           }
-          if (p.type !== 'ContributionSubmitted') continue;
           expect(evento.occurredAt).toBeGreaterThanOrEqual(opensAt);
           expect(evento.occurredAt).toBeLessThan(closesAt);
         }
@@ -438,7 +412,7 @@ describe('INV-D3 · `submittedAt ∈ [opensAt, closesAt)`', () => {
   it('un aporte en `closesAt` exacto nunca entra', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'preguntas_aclaratorias');
+        const log = await construir(plan, 'preguntas_aclaratorias');
         await expect(
           submitContribution(log, meta(log, closesAtOf(0), MIEMBROS[0]!), {
             contributionId: cid(999),
@@ -455,7 +429,7 @@ describe('INV-D4 · toda referencia apunta hacia atrás y el grafo es acíclico'
   it('cada arista apunta a un `seq` estrictamente menor', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const estado = await replayDeliberation((await construir(plan, 'listo_para_decidir')).log);
+        const estado = replayDeliberation(await construir(plan, 'listo_para_decidir'));
         const seqPorId = new Map(estado.contributions.map((c) => [c.contributionId, c.seq]));
         for (const aporte of estado.contributions) {
           for (const ref of referencesOf(aporte.body, aporte.supersedesContributionId)) {
@@ -472,7 +446,7 @@ describe('INV-D4 · toda referencia apunta hacia atrás y el grafo es acíclico'
   it('el grafo resultante es acíclico', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const estado = await replayDeliberation((await construir(plan, 'listo_para_decidir')).log);
+        const estado = replayDeliberation(await construir(plan, 'listo_para_decidir'));
         expect(isAcyclic(estado)).toBe(true);
       }),
       runs(50),
@@ -482,7 +456,7 @@ describe('INV-D4 · toda referencia apunta hacia atrás y el grafo es acíclico'
   it('y el historial verifica cadena y plegado', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'listo_para_decidir');
+        const log = await construir(plan, 'listo_para_decidir');
         await expect(verifyDeliberationLog(log)).resolves.toBeDefined();
       }),
       runs(25),
@@ -490,236 +464,98 @@ describe('INV-D4 · toda referencia apunta hacia atrás y el grafo es acíclico'
   });
 });
 
-describe('INV-D5 · el evento sellado no contiene el `authorId`', () => {
-  it('ninguna serialización del `ContributionSubmitted` sellado revela a su autora', async () => {
+describe('INV-D5 · la autoría no se lee mientras `perspectivas` sea la etapa vigente', () => {
+  it('con la etapa abierta se deniega a TODO actor, y cerrada se concede a los mismos', async () => {
     await fc.assert(
-      fc.asyncProperty(arbPlan, async (plan) => {
-        const { log, aperturas } = await construir(plan, 'perspectivas');
-        let sellados = 0;
-        for (const evento of log) {
-          const p = evento.payload;
-          if (p.type !== 'ContributionSubmitted' || p.authorship.mode !== 'sealed') continue;
-          sellados += 1;
-          const apertura = aperturas.get(p.contributionId);
-          expect(apertura).toBeDefined();
-          const serializado = JSON.stringify(evento);
-          expect(serializado).not.toContain(apertura!.authorId);
-          expect(serializado).not.toContain(apertura!.nonce);
-          expect(serializado).not.toContain('authorId');
-          expect(evento.actor).toBe('system');
-        }
-        expect(sellados).toBeGreaterThan(0);
-      }),
-      runs(50),
-    );
-  });
-});
+      fc.asyncProperty(arbPlan, fc.integer({ min: 0, max: 3 }), async (plan, quien) => {
+        const abierta = replayDeliberation(await construir(plan, 'perspectivas'));
+        expect(abierta.stage).toBe('perspectivas');
+        expect(abierta.contributions.some((c) => c.stage === 'perspectivas')).toBe(true);
 
-describe('INV-D6 · el compromiso ata la autoría', () => {
-  it('`hashCanonical(apertura) === authorCommitment` en toda revelación válida', async () => {
-    await fc.assert(
-      fc.asyncProperty(arbPlan, async (plan) => {
-        const { log, aperturas } = await construir(plan, 'construccion_alternativas');
-        const estado = await replayDeliberation(log);
-        let revelados = 0;
-        for (const aporte of estado.contributions) {
-          if (aporte.authorship.mode !== 'sealed') continue;
-          revelados += 1;
-          expect(aporte.revealedAuthorId).toBeDefined();
-          expect(aporte.revealedNonce).toBeDefined();
-          const opening = buildAuthorOpening({
-            deliberationId: DELIB,
-            contributionId: aporte.contributionId,
-            authorId: aporte.revealedAuthorId!,
-            nonce: aporte.revealedNonce!,
-          });
-          expect(await hashCanonical(opening)).toBe(aporte.authorship.authorCommitment);
-          const apertura = aperturas.get(aporte.contributionId);
-          expect(apertura?.authorId).toBe(aporte.revealedAuthorId);
-        }
-        expect(revelados).toBeGreaterThan(0);
-      }),
-      runs(50),
-    );
-  });
-
-  it('una revelación con otro `authorId` o con otro nonce SIEMPRE lanza', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        arbPlan,
-        fc.integer({ min: 0, max: 3 }),
-        fc.integer({ min: 500, max: 520 }),
-        async (plan, otroAutor, otroNonce) => {
-          const { log, aperturas } = await construir(plan, 'perspectivas_revelando');
-          const estado = await replayDeliberation(log);
-          const sellado = estado.contributions.find((c) => c.authorship.mode === 'sealed');
-          expect(sellado).toBeDefined();
-          const apertura = aperturas.get(sellado!.contributionId);
-          expect(apertura).toBeDefined();
-
-          const impostor = MIEMBROS[otroAutor]?.memberId;
-          if (impostor !== undefined && impostor !== apertura!.authorId) {
-            await expect(
-              revealContributionAuthor(log, meta(log, opensAtOf(2), garantias), {
-                contributionId: sellado!.contributionId,
-                authorId: impostor,
-                nonce: apertura!.nonce,
-                deliberationNonce: DELIBERATION_NONCE,
-              }),
-            ).rejects.toMatchObject({ code: 'COMMITMENT_MISMATCH' });
+        // Miembro cualquiera, quien facilita y garantías: la denegación es la misma para los tres.
+        const actores: readonly Actor[] = [MIEMBROS[quien]!, facilitador, garantias];
+        for (const actor of actores) {
+          expect(can(actor, 'deliberation:read-authorship', refDe(abierta))).toBe(false);
+          expect(() => {
+            authorizeAuthorshipRead(abierta, actor);
+          }).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }));
+          for (const aporte of abierta.contributions) {
+            expect(() => readContributionAuthor(abierta, actor, aporte.contributionId)).toThrow(
+              expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }),
+            );
           }
+        }
 
-          const nonceFalso = nonceAt(otroNonce);
-          if (nonceFalso !== apertura!.nonce) {
-            await expect(
-              revealContributionAuthor(log, meta(log, opensAtOf(2), garantias), {
-                contributionId: sellado!.contributionId,
-                authorId: apertura!.authorId,
-                nonce: nonceFalso,
-                deliberationNonce: DELIBERATION_NONCE,
-              }),
-            ).rejects.toMatchObject({ code: 'COMMITMENT_MISMATCH' });
+        const cerrada = replayDeliberation(await construir(plan, 'construccion_alternativas'));
+        for (const actor of actores) {
+          expect(() => {
+            authorizeAuthorshipRead(cerrada, actor);
+          }).not.toThrow();
+          for (const aporte of cerrada.contributions) {
+            expect(readContributionAuthor(cerrada, actor, aporte.contributionId)).toBe(
+              aporte.authorId,
+            );
           }
-
-          // Y con la apertura correcta sí entra: la propiedad no es «todo falla».
-          await expect(
-            revealContributionAuthor(log, meta(log, opensAtOf(2), garantias), {
-              contributionId: sellado!.contributionId,
-              authorId: apertura!.authorId,
-              nonce: apertura!.nonce,
-              deliberationNonce: DELIBERATION_NONCE,
-            }),
-          ).resolves.toBeDefined();
-        },
-      ),
+        }
+      }),
       runs(25),
     );
   });
 
-  it('el compromiso separa dominios: cambiar cualquier campo lo cambia', async () => {
+  it('en las demás etapas la autoría se lee, y en ninguna la concede la facilitación por su rol', async () => {
     await fc.assert(
-      fc.asyncProperty(
-        fc.integer({ min: 1, max: 60 }),
-        fc.integer({ min: 1, max: 60 }),
-        fc.integer({ min: 0, max: 3 }),
-        fc.integer({ min: 0, max: 3 }),
-        async (c1, c2, a1, a2) => {
-          const base = {
-            deliberationId: DELIB,
-            contributionId: cid(c1),
-            authorId: mid(10 + a1),
-            nonce: nonceAt(c1),
-          };
-          const otro = {
-            deliberationId: DELIB,
-            contributionId: cid(c2),
-            authorId: mid(10 + a2),
-            nonce: nonceAt(c2),
-          };
-          const iguales = c1 === c2 && a1 === a2;
-          const mismo = (await authorCommitment(base)) === (await authorCommitment(otro));
-          expect(mismo).toBe(iguales);
-        },
-      ),
-      runs(200),
+      fc.asyncProperty(arbPlan, fc.constantFrom(...DELIBERATION_STAGES), async (plan, parada) => {
+        const estado = replayDeliberation(await construir(plan, parada));
+        const permitido = estado.stage !== 'perspectivas';
+        for (const actor of [MIEMBROS[0]!, facilitador, garantias]) {
+          expect(can(actor, 'deliberation:read-authorship', refDe(estado))).toBe(permitido);
+        }
+      }),
+      runs(25),
     );
   });
 });
 
-describe('INV-D7 · se revela exactamente una vez, y no antes de cerrar la escritura a ciegas', () => {
-  it('cada sellado tiene exactamente un `ContributionAuthorRevealed`', async () => {
+describe('INV-D6 · el autor del aporte es el actor del sobre, y nadie supera su tope', () => {
+  it('cada `ContributionSubmitted` nombra a quien lo firmó', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'listo_para_decidir');
-        const cuenta = new Map<string, number>();
+        const log = await construir(plan, 'listo_para_decidir');
+        let aportes = 0;
         for (const evento of log) {
-          if (evento.payload.type !== 'ContributionAuthorRevealed') continue;
-          const id = evento.payload.contributionId;
-          cuenta.set(id, (cuenta.get(id) ?? 0) + 1);
+          if (evento.payload.type !== 'ContributionSubmitted') continue;
+          aportes += 1;
+          expect(evento.payload.authorId).toBe(evento.actor);
         }
-        const estado = await replayDeliberation(log);
-        const sellados = estado.contributions.filter((c) => c.authorship.mode === 'sealed');
-        expect(sellados.length).toBeGreaterThan(0);
-        for (const aporte of sellados) {
-          expect(cuenta.get(aporte.contributionId)).toBe(1);
-        }
-        expect([...cuenta.values()].every((n) => n === 1)).toBe(true);
+        expect(aportes).toBeGreaterThan(0);
       }),
       runs(50),
     );
   });
 
-  it('revelar dos veces se rechaza, y revelar durante `perspectivas` también', async () => {
+  it('ninguna persona escribe más de `maxContributionsPerAuthorPerStage` en una etapa', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, async (plan) => {
-        const enPerspectivas = await construir(plan, 'perspectivas');
-        const estadoP = await replayDeliberation(enPerspectivas.log);
-        const selladoP = estadoP.contributions.find((c) => c.authorship.mode === 'sealed');
-        expect(selladoP).toBeDefined();
-        const aperturaP = enPerspectivas.aperturas.get(selladoP!.contributionId);
-        await expect(
-          revealContributionAuthor(
-            enPerspectivas.log,
-            meta(enPerspectivas.log, opensAtOf(1), garantias),
-            {
-              contributionId: selladoP!.contributionId,
-              authorId: aperturaP!.authorId,
-              nonce: aperturaP!.nonce,
-              deliberationNonce: DELIBERATION_NONCE,
-            },
-          ),
-        ).rejects.toMatchObject({ code: 'REVEAL_OUT_OF_STAGE' });
-
-        const { log, aperturas } = await construir(plan, 'perspectivas_revelando');
-        const estado = await replayDeliberation(log);
-        const sellado = estado.contributions.find((c) => c.authorship.mode === 'sealed');
-        const apertura = aperturas.get(sellado!.contributionId);
-        const unaVez = await revealContributionAuthor(log, meta(log, opensAtOf(2), garantias), {
-          contributionId: sellado!.contributionId,
-          authorId: apertura!.authorId,
-          nonce: apertura!.nonce,
-          deliberationNonce: DELIBERATION_NONCE,
-        });
-        await expect(
-          revealContributionAuthor(unaVez, meta(unaVez, opensAtOf(2), garantias), {
-            contributionId: sellado!.contributionId,
-            authorId: apertura!.authorId,
-            nonce: apertura!.nonce,
-            deliberationNonce: DELIBERATION_NONCE,
-          }),
-        ).rejects.toMatchObject({ code: 'ALREADY_REVEALED' });
-      }),
-      runs(25),
-    );
-  });
-});
-
-describe('INV-D8 · no se sale de `perspectivas_revelando` con aportes sin destapar', () => {
-  it('el avance se rechaza mientras quede una sola perspectiva sellada', async () => {
-    await fc.assert(
-      fc.asyncProperty(arbPlan, async (plan) => {
-        const { log } = await construir(plan, 'perspectivas_revelando');
-        const estado = await replayDeliberation(log);
-        expect(estado.stage).toBe('perspectivas_revelando');
-        expect(estado.contributions.some((c) => c.authorship.mode === 'sealed')).toBe(true);
-        for (const causa of ['manual', 'deadline'] as const) {
-          await expect(
-            advanceStage(log, meta(log, closesAtOf(2), facilitador), {
-              to: 'construccion_alternativas',
-              cause: causa,
-              opensAt: opensAtOf(3),
-              closesAt: closesAtOf(3),
-              presentationSeed: seedAt(3),
-            }),
-          ).rejects.toMatchObject({ code: 'UNREVEALED_AUTHORSHIP' });
+        const estado: DeliberationState = replayDeliberation(
+          await construir(plan, 'listo_para_decidir'),
+        );
+        const limite = estado.maxContributionsPerAuthorPerStage;
+        expect(limite).toBeDefined();
+        for (const stage of DELIBERATION_STAGES) {
+          for (const actor of MIEMBROS) {
+            if (actor.memberId === undefined) continue;
+            expect(
+              contributionsOfAuthorInStage(estado, actor.memberId, stage).length,
+            ).toBeLessThanOrEqual(limite!);
+          }
         }
       }),
-      runs(25),
+      runs(50),
     );
   });
 });
 
-describe('INV-D9 · el orden de presentación es una permutación determinista', () => {
+describe('INV-D7 · el orden de presentación es una permutación determinista', () => {
   it('mismos `(presentationSeed, viewerId)` ⇒ mismo orden; distinta lectora ⇒ mismo conjunto', async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -752,9 +588,7 @@ describe('INV-D9 · el orden de presentación es una permutación determinista',
   it('sobre un historial real el orden no pierde ni inventa aportes', async () => {
     await fc.assert(
       fc.asyncProperty(arbPlan, fc.integer({ min: 0, max: 40 }), async (plan, lectora) => {
-        const estado: DeliberationState = await replayDeliberation(
-          (await construir(plan, 'objeciones')).log,
-        );
+        const estado: DeliberationState = replayDeliberation(await construir(plan, 'objeciones'));
         const ids = estado.contributions.map((c) => c.contributionId);
         const orden = await presentationOrder({
           deliberationId: DELIB,
@@ -769,7 +603,7 @@ describe('INV-D9 · el orden de presentación es una permutación determinista',
   });
 });
 
-describe('INV-D10 · ninguna transición ilegal de etapa es aceptada', () => {
+describe('INV-D8 · ninguna transición ilegal de etapa es aceptada', () => {
   it('sobre un historial real, sólo el sucesor exacto avanza', async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -777,10 +611,8 @@ describe('INV-D10 · ninguna transición ilegal de etapa es aceptada', () => {
         fc.constantFrom(...DELIBERATION_STAGES),
         fc.constantFrom(...DELIBERATION_STAGES),
         async (plan, parada, destino) => {
-          // `perspectivas_revelando` tiene su propia guarda (INV-D8) y se prueba allí.
-          if (parada === 'perspectivas_revelando') return;
-          const { log } = await construir(plan, parada);
-          const estado = await replayDeliberation(log);
+          const log = await construir(plan, parada);
+          const estado = replayDeliberation(log);
           const i = indexOfStage(estado.stage);
           const orden = advanceStage(log, meta(log, closesAtOf(i), facilitador), {
             to: destino,

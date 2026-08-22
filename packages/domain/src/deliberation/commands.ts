@@ -8,56 +8,45 @@
  * diferencia entre una fase y un rótulo: si el cierre dependiera de que alguien pulse un botón, la
  * ventana duraría hasta que alguien se acordara. Un aporte tardío **falla**: no se encola, no se
  * reubica en la etapa siguiente y no se guarda «para después». Reubicarlo sería peor que perderlo,
- * porque una perspectiva escrita a ciegas que reaparece en la etapa de objeciones ya se escribió
- * sabiendo cosas que sus vecinas no sabían.
+ * porque una perspectiva escrita sin ver las demás que reaparece en la etapa de objeciones ya se
+ * escribió sabiendo cosas que sus vecinas no sabían.
  *
  * ═══ Dónde está la autorización ═══
  *
  * Toda orden llama a `authorize` **antes** de construir el evento, igual que en `workspace/`. No hay
- * ninguna variante «sin comprobar»: la orden es la puerta.
+ * ninguna variante «sin comprobar»: la orden es la puerta. Y la lectura de la autoría tiene su
+ * propia puerta, `readContributionAuthor`, porque leer quién escribió una perspectiva es un acto
+ * autorizado mientras `perspectivas` siga vigente (ADR-0049).
  *
- * ═══ Acciones propias en la matriz ═══
+ * ═══ El autor va en el evento, y por eso el replay puede revalidar ═══
  *
- * Cada orden usa su propia `Action` de `access.ts`: abrir y avanzar son de facilitación o garantías
- * dentro del círculo; aportar exige membresía del círculo; revelar es sólo de garantías. Así ninguna
- * regla de deliberación vive como excepción local y `tech-admin` no obtiene escritura alguna.
+ * `ContributionSubmitted` lleva `authorId` y el `actor` del sobre es esa misma persona. El plegado
+ * comprueba que coincidan (`NOT_THE_AUTHOR`), así que un historial fabricado a mano que atribuya un
+ * aporte a otra persona no se pliega. El esquema sellado que ADR-0049 retira **no podía hacer esto**:
+ * escribía `actor: 'system'` y el replay se quedaba sin `Actor` que reautorizar.
  *
- * ═══ Consecuencia declarada: `perspectivas_revelando` puede atascarse ═══
+ * ═══ El tope por persona y etapa ═══
  *
- * No se sale de esa etapa mientras quede un aporte sellado sin revelar, y la apertura vive fuera del
- * dominio. Si la apertura se pierde, la deliberación se queda ahí. Es el precio de que la autoría no
- * se pueda falsificar: cualquier «salida de emergencia» sería una vía para cerrar la etapa dejando
- * perspectivas cuya autoría nadie tendrá que asumir nunca. Se reporta como consecuencia conocida, no
- * se tapa con una válvula.
+ * Se cuenta sobre el `authorId`, en el dominio y en toda etapa. Es la detección de inundación que el
+ * sellado había perdido: allí sólo se podía contar por un seudónimo derivado de un secreto sin dueño.
  */
 
 import { type Actor, authorize } from '../access.js';
 import { InvalidIdError, PreconditionError } from '../errors.js';
 import { type CircleId, type EventId, ID_PATTERN, type Instant, type MemberId } from '../ids.js';
 import { appendChained, verifyChain } from '../workspace/chain.js';
-import {
-  assertAuthorCommitment,
-  assertAuthorPseudonym,
-  authorCommitment,
-  authorPseudonym,
-} from './authorship.js';
 import { assertReferences } from './graph.js';
-import {
-  assertBodyAllowedInStage,
-  assertStageTransition,
-  stageSealsAuthorship,
-} from './state-machine.js';
+import { assertBodyAllowedInStage, assertStageTransition } from './state-machine.js';
 import {
   assertContributionBody,
-  type AuthorNonce,
   type ContributionBody,
   type ContributionId,
   type ContributionRecord,
+  contributionsOfAuthorInStage,
   type DeliberationEvent,
   deliberationId as toDeliberationId,
   type DeliberationId,
   type DeliberationLog,
-  type DeliberationNonce,
   type DeliberationPayload,
   type DeliberationStage,
   type DeliberationState,
@@ -65,12 +54,11 @@ import {
   initialDeliberationState,
   type PresentationSeed,
   type StageAdvanceCause,
-  unrevealedContributions,
 } from './types.js';
 
 /**
- * Diez aportes permiten un hilo corto de postura, razón y evidencia sin que una etapa anónima
- * quede ilimitada. Cada apertura puede fijar un límite menor o mayor, que queda en el ledger.
+ * Diez aportes permiten un hilo corto de postura, razón y evidencia sin que una etapa quede
+ * ilimitada. Cada apertura puede fijar un límite menor o mayor, que queda en el ledger.
  */
 export const DEFAULT_MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE = 10;
 
@@ -145,14 +133,14 @@ function assertContributionLimit(value: number): void {
 /**
  * Pliega un evento. Rechaza y deja el estado del llamante intacto si algo no cuadra.
  *
- * Es `async` porque revelar autoría exige **recomputar el compromiso**, y hashear es asíncrono. Que
- * la comprobación viva aquí y no sólo en la orden es lo que impide que un historial fabricado a mano
- * cuele una autoría falsa: el replay lo rechaza igual.
+ * Es **síncrono**, como `applyProblem`, `applyProposal` y `applyInitiative`: plegar un historial de
+ * deliberación no exige hashear nada. Lo exigía mientras hubo que recomputar el compromiso de
+ * autoría en cada revelación; retirado el sellado (ADR-0049), la asincronía sobraba.
  */
-export async function applyDeliberation(
+export function applyDeliberation(
   state: DeliberationState,
   event: DeliberationEvent,
-): Promise<DeliberationState> {
+): DeliberationState {
   if (event.aggregateId !== state.deliberationId) {
     throw new PreconditionError(
       'WRONG_AGGREGATE',
@@ -213,117 +201,38 @@ export async function applyDeliberation(
       assertBodyAllowedInStage(state.stage, payload.body, payload.supersedesContributionId);
       assertReferences(state, event.seq, payload.body, payload.supersedesContributionId);
 
-      const mustSeal = stageSealsAuthorship(state.stage);
-      if (payload.authorship.mode === 'sealed') {
-        if (!mustSeal) {
-          throw new PreconditionError(
-            'AUTHORSHIP_MODE_MISMATCH',
-            `la etapa ${state.stage} no sella la autoría: fuera de perspectivas el autor es público`,
-          );
-        }
-        if (event.actor !== 'system') {
-          // El sobre encadenado lleva `actor`. Si ahí fuera el autor, el compromiso sería un adorno
-          // sobre un dato que ya está en claro dos líneas más arriba.
-          throw new PreconditionError(
-            'SEALED_AUTHOR_LEAKED',
-            'un aporte sellado se escribe con actor `system`: el autor sólo existe en el compromiso',
-          );
-        }
-        const limit = state.maxContributionsPerAuthorPerStage;
-        if (limit === undefined) {
-          throw new PreconditionError(
-            'DELIBERATION_NOT_OPEN',
-            'la deliberación no declara un límite de aportes por seudónimo',
-          );
-        }
-        const pseudonym = payload.authorship.authorPseudonym;
-        const submittedByPseudonym = state.contributions.filter(
-          (contribution) =>
-            contribution.stage === state.stage &&
-            contribution.authorship.mode === 'sealed' &&
-            contribution.authorship.authorPseudonym === pseudonym,
-        ).length;
-        if (submittedByPseudonym >= limit) {
-          throw new PreconditionError(
-            'MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE_REACHED',
-            `el seudónimo ya alcanzó el máximo de ${String(limit)} aportes en ${state.stage}`,
-          );
-        }
-      } else {
-        if (mustSeal) {
-          throw new PreconditionError(
-            'AUTHORSHIP_MODE_MISMATCH',
-            'en perspectivas la autoría se sella: un aporte con autor en claro rompe la etapa a ciegas',
-          );
-        }
-        if (event.actor !== payload.authorship.authorId) {
-          throw new PreconditionError(
-            'NOT_THE_AUTHOR',
-            'el aporte se atribuye a alguien que no es quien lo escribió',
-          );
-        }
+      // Reautorización en el replay: el sobre y el aporte tienen que nombrar a la misma persona.
+      if (event.actor !== payload.authorId) {
+        throw new PreconditionError(
+          'NOT_THE_AUTHOR',
+          'el aporte se atribuye a alguien que no es quien lo escribió',
+        );
+      }
+
+      const limit = state.maxContributionsPerAuthorPerStage;
+      if (limit === undefined) {
+        throw new PreconditionError(
+          'DELIBERATION_NOT_OPEN',
+          'la deliberación no declara un límite de aportes por persona y etapa',
+        );
+      }
+      if (contributionsOfAuthorInStage(state, payload.authorId, state.stage).length >= limit) {
+        throw new PreconditionError(
+          'MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE_REACHED',
+          `esa persona ya alcanzó el máximo de ${String(limit)} aportes en ${state.stage}`,
+        );
       }
 
       const record: ContributionRecord = {
         contributionId: payload.contributionId,
         stage: payload.stage,
         body: payload.body,
-        authorship: payload.authorship,
+        authorId: payload.authorId,
         supersedesContributionId: payload.supersedesContributionId,
         submittedAt: event.occurredAt,
         seq: event.seq,
-        revealedAuthorId: undefined,
-        revealedNonce: undefined,
       };
       return { ...base, contributions: [...state.contributions, record] };
-    }
-
-    case 'ContributionAuthorRevealed': {
-      requireExists(state);
-      if (state.stage !== 'perspectivas_revelando') {
-        throw new PreconditionError(
-          'REVEAL_OUT_OF_STAGE',
-          'la autoría se destapa en perspectivas_revelando, después de cerrar la escritura a ciegas',
-        );
-      }
-      const record = findContribution(state, payload.contributionId);
-      if (record === undefined) {
-        throw new PreconditionError(
-          'UNKNOWN_CONTRIBUTION',
-          'ese aporte no existe en esta deliberación',
-        );
-      }
-      if (record.authorship.mode !== 'sealed') {
-        throw new PreconditionError(
-          'CONTRIBUTION_NOT_SEALED',
-          'ese aporte ya tenía autoría pública: no hay nada que destapar',
-        );
-      }
-      if (record.revealedAuthorId !== undefined) {
-        throw new PreconditionError(
-          'ALREADY_REVEALED',
-          'la autoría de un aporte se destapa exactamente una vez',
-        );
-      }
-      await assertAuthorCommitment(record.authorship.authorCommitment, {
-        deliberationId: state.deliberationId,
-        contributionId: payload.contributionId,
-        authorId: payload.authorId,
-        nonce: payload.nonce,
-      });
-      await assertAuthorPseudonym(record.authorship.authorPseudonym, {
-        deliberationId: state.deliberationId,
-        authorId: payload.authorId,
-        deliberationNonce: payload.deliberationNonce,
-      });
-      return {
-        ...base,
-        contributions: state.contributions.map((c) =>
-          c.contributionId === payload.contributionId
-            ? { ...c, revealedAuthorId: payload.authorId, revealedNonce: payload.nonce }
-            : c,
-        ),
-      };
     }
 
     case 'StageAdvanced': {
@@ -335,16 +244,6 @@ export async function applyDeliberation(
         );
       }
       assertStageTransition(payload.from, payload.to);
-      if (payload.from === 'perspectivas_revelando') {
-        const pending = unrevealedContributions(state);
-        if (pending.length > 0) {
-          throw new PreconditionError(
-            'UNREVEALED_AUTHORSHIP',
-            `quedan ${String(pending.length)} perspectivas sin autoría destapada: salir de la ` +
-              'etapa de revelación dejaría aportes que nadie tendría que asumir nunca',
-          );
-        }
-      }
       if (payload.cause === 'deadline') {
         if (state.closesAt === undefined || event.occurredAt < state.closesAt) {
           throw new PreconditionError(
@@ -367,7 +266,7 @@ export async function applyDeliberation(
 }
 
 /** Pliega el historial completo. El orden canónico es por `seq`. */
-export async function replayDeliberation(log: DeliberationLog): Promise<DeliberationState> {
+export function replayDeliberation(log: DeliberationLog): DeliberationState {
   const first = log[0];
   if (first === undefined) {
     throw new PreconditionError(
@@ -376,7 +275,7 @@ export async function replayDeliberation(log: DeliberationLog): Promise<Delibera
     );
   }
   let state = initialDeliberationState(toDeliberationId(first.aggregateId));
-  for (const event of log) state = await applyDeliberation(state, event);
+  for (const event of log) state = applyDeliberation(state, event);
   return state;
 }
 
@@ -384,6 +283,47 @@ export async function replayDeliberation(log: DeliberationLog): Promise<Delibera
 export async function verifyDeliberationLog(log: DeliberationLog): Promise<DeliberationState> {
   await verifyChain(log);
   return replayDeliberation(log);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Lectura de la autoría. Tiene puerta propia porque su permiso depende de la etapa.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Autoriza leer la autoría de esta deliberación, o lanza `UnauthorizedError`.
+ *
+ * La etapa **se deriva del estado plegado**, nunca la aporta quien llama. Si el llamante pudiera
+ * declararla, la regla se saltaría escribiendo otro nombre de etapa en el cuerpo de la petición, que
+ * es exactamente la forma en que se cuela la escalada horizontal en `access.ts`.
+ */
+export function authorizeAuthorshipRead(state: DeliberationState, actor: Actor): void {
+  authorize(actor, 'deliberation:read-authorship', {
+    kind: 'deliberation',
+    stage: state.stage,
+    ...(state.circleId === undefined ? {} : { circleId: state.circleId }),
+  });
+}
+
+/**
+ * Quién escribió ese aporte. **Única** lectura de autoría del dominio.
+ *
+ * Mientras `perspectivas` sea la etapa vigente lanza `UNAUTHORIZED_STAGE_STILL_OPEN` para cualquier
+ * actor, incluida la facilitación. Cerrada la etapa, la lee cualquier miembro del círculo.
+ */
+export function readContributionAuthor(
+  state: DeliberationState,
+  actor: Actor,
+  id: ContributionId,
+): MemberId {
+  authorizeAuthorshipRead(state, actor);
+  const record = findContribution(state, id);
+  if (record === undefined) {
+    throw new PreconditionError(
+      'UNKNOWN_CONTRIBUTION',
+      'ese aporte no existe en esta deliberación',
+    );
+  }
+  return record.authorId;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -410,7 +350,7 @@ async function emit(
   state: DeliberationState,
   aggregateId: DeliberationId,
   meta: DeliberationCommandMeta,
-  actor: MemberId | 'system',
+  actor: MemberId,
   payload: DeliberationPayload,
 ): Promise<DeliberationLog> {
   const event = await appendChained<DeliberationPayload>(log, {
@@ -423,7 +363,7 @@ async function emit(
   // Se pliega antes de devolver: una orden que produce un historial que `replayDeliberation`
   // rechazaría es un historial ya roto en el momento de escribirse, y el error aparecería en la
   // siguiente lectura —quizá en la auditoría— con el evento ya encadenado e imposible de retirar.
-  await applyDeliberation(state, event);
+  applyDeliberation(state, event);
   return [...log, event];
 }
 
@@ -443,7 +383,7 @@ export async function openDeliberation(
   meta: DeliberationCommandMeta,
   input: OpenDeliberationInput,
 ): Promise<DeliberationLog> {
-  authorize(meta.actor, 'deliberation:open', { kind: 'decision', circleId: input.circleId });
+  authorize(meta.actor, 'deliberation:open', { kind: 'deliberation', circleId: input.circleId });
   const author = requireIdentity(meta);
   return emit(
     [],
@@ -469,127 +409,35 @@ export interface SubmitContributionInput {
   readonly contributionId: ContributionId;
   readonly body: ContributionBody;
   readonly supersedesContributionId?: ContributionId | undefined;
-  /**
-   * 128 bits de apertura. **Obligatorio** en `perspectivas` y prohibido fuera de ella.
-   *
-   * Nunca entra al evento: sólo se usa para construir el compromiso. Quien lo guarde es la capa de
-   * aplicación (ADR-0045); este paquete lo recibe, lo usa y lo olvida.
-   */
-  readonly nonce?: AuthorNonce | undefined;
-  /** Secreto por deliberación desde la bóveda; nunca entra al evento sellado. */
-  readonly deliberationNonce?: DeliberationNonce | undefined;
 }
 
 /**
- * Escribe un aporte en la ventana vigente.
+ * Escribe un aporte en la ventana vigente, con su autor en claro y en todas las etapas.
  *
- * En `perspectivas` el evento se firma con actor `system` y la autoría viaja sellada; en el resto de
- * las etapas el autor es público y el actor del sobre es esa misma persona.
+ * Que en `perspectivas` la autoría no se muestre no cambia nada de aquí: lo que cambia es que
+ * `deliberation:read-authorship` esté denegada mientras esa etapa siga vigente.
  */
 export async function submitContribution(
   log: DeliberationLog,
   meta: DeliberationCommandMeta,
   input: SubmitContributionInput,
 ): Promise<DeliberationLog> {
-  const state = await replayDeliberation(log);
+  const state = replayDeliberation(log);
   authorize(meta.actor, 'deliberation:contribute', {
-    kind: 'evidence',
+    kind: 'deliberation',
     ...(state.circleId === undefined ? {} : { circleId: state.circleId }),
   });
   const author = requireIdentity(meta);
 
-  const sealed = stageSealsAuthorship(state.stage);
-  if (sealed && input.nonce === undefined) {
-    throw new PreconditionError(
-      'SEALED_NONCE_REQUIRED',
-      'en perspectivas la autoría se sella y el compromiso exige un nonce de 128 bits, que entra ' +
-        'como dato',
-    );
-  }
-  if (sealed && input.deliberationNonce === undefined) {
-    throw new PreconditionError(
-      'SEALED_DELIBERATION_NONCE_REQUIRED',
-      'en perspectivas el seudónimo exige el nonce secreto de la deliberación, que entra como dato',
-    );
-  }
-  if (!sealed && input.nonce !== undefined) {
-    throw new PreconditionError(
-      'NONCE_NOT_APPLICABLE',
-      'fuera de perspectivas la autoría es pública: un nonce ahí sugiere una protección que no hay',
-    );
-  }
-  if (!sealed && input.deliberationNonce !== undefined) {
-    throw new PreconditionError(
-      'DELIBERATION_NONCE_NOT_APPLICABLE',
-      'fuera de perspectivas no se deriva seudónimo: el nonce de deliberación no corresponde',
-    );
-  }
-
-  const payload: DeliberationPayload = {
+  return emit(log, state, state.deliberationId, meta, author, {
     type: 'ContributionSubmitted',
     contributionId: input.contributionId,
     stage: state.stage,
     body: input.body,
-    authorship:
-      sealed && input.nonce !== undefined && input.deliberationNonce !== undefined
-        ? {
-            mode: 'sealed',
-            authorCommitment: await authorCommitment({
-              deliberationId: state.deliberationId,
-              contributionId: input.contributionId,
-              authorId: author,
-              nonce: input.nonce,
-            }),
-            authorPseudonym: await authorPseudonym({
-              deliberationId: state.deliberationId,
-              authorId: author,
-              deliberationNonce: input.deliberationNonce,
-            }),
-          }
-        : { mode: 'public', authorId: author },
+    authorId: author,
     ...(input.supersedesContributionId === undefined
       ? {}
       : { supersedesContributionId: input.supersedesContributionId }),
-  };
-
-  return emit(log, state, state.deliberationId, meta, sealed ? 'system' : author, payload);
-}
-
-export interface RevealContributionAuthorInput {
-  readonly contributionId: ContributionId;
-  readonly authorId: MemberId;
-  readonly nonce: AuthorNonce;
-  readonly deliberationNonce: DeliberationNonce;
-}
-
-/**
- * Destapa la autoría de un aporte sellado.
- *
- * **Sólo `guarantees`.** No hay ninguna `Action` existente cuya regla sea exactamente esa, así que se
- * usa la más próxima y se cierra la diferencia con una denegación explícita. Aflojar la regla habría
- * concedido a la facilitación la capacidad de destapar autorías, que es la que el §7 le niega.
- *
- * No se comprueba la ventana de `perspectivas_revelando`: si se comprobara, un plazo vencido con
- * aportes sin destapar dejaría la deliberación atascada sin salida posible, porque tampoco se puede
- * avanzar con aportes sin revelar.
- */
-export async function revealContributionAuthor(
-  log: DeliberationLog,
-  meta: DeliberationCommandMeta,
-  input: RevealContributionAuthorInput,
-): Promise<DeliberationLog> {
-  const state = await replayDeliberation(log);
-  authorize(meta.actor, 'deliberation:reveal-authorship', {
-    kind: 'decision',
-    ...(state.circleId === undefined ? {} : { circleId: state.circleId }),
-  });
-  const author = requireIdentity(meta);
-  return emit(log, state, state.deliberationId, meta, author, {
-    type: 'ContributionAuthorRevealed',
-    contributionId: input.contributionId,
-    authorId: input.authorId,
-    nonce: input.nonce,
-    deliberationNonce: input.deliberationNonce,
   });
 }
 
@@ -610,15 +458,19 @@ export interface AdvanceStageInput {
  * discrecionalidad. `manual` la tiene y por eso queda registrada como tal; `deadline` no la tiene y
  * el dominio comprueba el plazo. Que el avance por plazo tenga que escribirlo alguien no debilita la
  * ventana: la ventana ya cerró sola en `submitContribution`, este evento sólo lo hace constar.
+ *
+ * Salir de `perspectivas` es además lo que **concede** la lectura de la autoría. No hay ninguna
+ * condición que pueda dejar el avance bloqueado para siempre: es la diferencia con el esquema
+ * retirado, donde una sola apertura perdida congelaba la deliberación (ADR-0049).
  */
 export async function advanceStage(
   log: DeliberationLog,
   meta: DeliberationCommandMeta,
   input: AdvanceStageInput,
 ): Promise<DeliberationLog> {
-  const state = await replayDeliberation(log);
+  const state = replayDeliberation(log);
   authorize(meta.actor, 'deliberation:advance-stage', {
-    kind: 'decision',
+    kind: 'deliberation',
     ...(state.circleId === undefined ? {} : { circleId: state.circleId }),
   });
   const author = requireIdentity(meta);

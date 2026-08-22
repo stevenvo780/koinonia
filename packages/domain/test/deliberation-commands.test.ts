@@ -3,7 +3,16 @@
  *
  * Lo que se fuerza aquí es lo que un sistema de fases decorativo pasaría sin enterarse: un aporte
  * escrito un milisegundo después del cierre, una evidencia colgada de una posición en vez de una
- * razón, un `tech-admin` escribiendo, y una etapa que avanza dejando perspectivas sin dueño.
+ * razón, un `tech-admin` escribiendo, y un aporte atribuido a quien no lo escribió.
+ *
+ * ═══ Pruebas retiradas en ADR-0049, y por qué ═══
+ *
+ * Cuatro, todas del sellado criptográfico y de la etapa `perspectivas_revelando` que existía sólo
+ * para destaparlo: «quien facilita NO destapa autorías: sólo garantías», «garantías sí destapa», «no
+ * se sale de `perspectivas_revelando` con perspectivas sin destapar» y «destapadas todas, ya se
+ * puede avanzar». No hay revelación ni etapa de revelación que probar. La quinta prueba que las
+ * mencionaba —«`tech-admin` no aporta, no avanza y no revela»— **no se retiró**: se le quitó la
+ * parte de revelar y sigue comprobando lo que sí sigue vivo.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -11,16 +20,14 @@ import { describe, expect, it } from 'vitest';
 import type { Actor } from '../src/access.js';
 import {
   advanceStage,
-  type AuthorNonce,
-  authorNonce,
   type ContributionBody,
   type ContributionId,
   contributionId,
+  contributionsOfAuthorInStage,
   currentContributions,
   DELIBERATION_STAGES,
   type DeliberationCommandMeta,
   type DeliberationEvent,
-  deliberationNonce,
   deliberationId,
   type DeliberationLog,
   type DeliberationStage,
@@ -30,7 +37,6 @@ import {
   type PresentationSeed,
   presentationSeed,
   replayDeliberation,
-  revealContributionAuthor,
   submitContribution,
   verifyDeliberationLog,
 } from '../src/deliberation/index.js';
@@ -48,7 +54,6 @@ import {
 const hex32 = (n: number): string => n.toString(16).padStart(32, '0');
 
 const DELIB = deliberationId(hex32(0xd0));
-const DELIBERATION_NONCE = deliberationNonce(hex32(0xd2));
 const CIRCLE = circleId(hex32(0xc1));
 const OTHER_CIRCLE = circleId(hex32(0xc2));
 const PROBLEM = hex32(0xb1);
@@ -56,11 +61,9 @@ const PROBLEM = hex32(0xb1);
 const mid = (n: number): MemberId => memberId(hex32(0x1000 + n));
 const ev = (n: number): EventId => eventId(hex32(0x6000 + n));
 const cid = (n: number): ContributionId => contributionId(hex32(0x7000 + n));
-const nonce = (n: number): AuthorNonce => authorNonce(hex32(0x9000 + n));
 const seed = (n: number): PresentationSeed => presentationSeed(hex32(0xa000 + n));
 
 const facilitator: Actor = { memberId: mid(1), roles: ['facilitator'], circles: [CIRCLE] };
-const garantias: Actor = { memberId: mid(2), roles: ['guarantees'], circles: [CIRCLE] };
 const daniela: Actor = { memberId: mid(3), roles: ['member'], circles: [CIRCLE] };
 const julian: Actor = { memberId: mid(4), roles: ['member'], circles: [CIRCLE] };
 const admin: Actor = { memberId: mid(5), roles: ['tech-admin'], circles: [CIRCLE] };
@@ -80,7 +83,7 @@ function meta(log: DeliberationLog, at: Instant, actor: Actor): DeliberationComm
 
 const TEXT = 'Un aporte de prueba con longitud más que suficiente para el mínimo del historial.';
 
-async function abrir(actor: Actor = facilitator): Promise<DeliberationLog> {
+async function abrir(actor: Actor = facilitator, maximo?: number): Promise<DeliberationLog> {
   return openDeliberation(
     { eventId: ev(1), at: opensAtOf(0), actor },
     {
@@ -90,13 +93,14 @@ async function abrir(actor: Actor = facilitator): Promise<DeliberationLog> {
       opensAt: opensAtOf(0),
       closesAt: closesAtOf(0),
       presentationSeed: seed(0),
+      ...(maximo === undefined ? {} : { maxContributionsPerAuthorPerStage: maximo }),
     },
   );
 }
 
 /** Avanza una etapa por plazo vencido, abriendo la ventana siguiente justo al cerrar la anterior. */
 async function avanzar(log: DeliberationLog, actor: Actor = facilitator): Promise<DeliberationLog> {
-  const state = await replayDeliberation(log);
+  const state = replayDeliberation(log);
   const i = indexOfStage(state.stage) + 1;
   const to = DELIBERATION_STAGES[i];
   if (to === undefined) throw new Error('no hay etapa siguiente');
@@ -114,15 +118,13 @@ async function aportar(
   actor: Actor,
   id: ContributionId,
   body: ContributionBody,
-  extra: { readonly nonce?: AuthorNonce; readonly supersedes?: ContributionId } = {},
+  extra: { readonly supersedes?: ContributionId } = {},
 ): Promise<DeliberationLog> {
-  const state = await replayDeliberation(log);
+  const state = replayDeliberation(log);
   const at = midOf(indexOfStage(state.stage));
   return submitContribution(log, meta(log, at, actor), {
     contributionId: id,
     body,
-    ...(extra.nonce === undefined ? {} : { nonce: extra.nonce }),
-    ...(extra.nonce === undefined ? {} : { deliberationNonce: DELIBERATION_NONCE }),
     ...(extra.supersedes === undefined ? {} : { supersedesContributionId: extra.supersedes }),
   });
 }
@@ -158,34 +160,12 @@ async function guion(objetivo: DeliberationStage): Promise<DeliberationLog> {
   log = await avanzar(log);
   if (objetivo === 'perspectivas') return log;
 
-  log = await aportar(
-    log,
-    daniela,
-    cid(4),
-    { kind: 'posicion', mode: 'afirmacion', text: TEXT },
-    { nonce: nonce(4) },
-  );
-  log = await aportar(
-    log,
-    julian,
-    cid(5),
-    { kind: 'razon', relation: 'sostiene', positionId: cid(4), text: TEXT },
-    { nonce: nonce(5) },
-  );
-  log = await avanzar(log);
-  if (objetivo === 'perspectivas_revelando') return log;
-
-  log = await revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-    contributionId: cid(4),
-    authorId: mid(3),
-    nonce: nonce(4),
-    deliberationNonce: DELIBERATION_NONCE,
-  });
-  log = await revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-    contributionId: cid(5),
-    authorId: mid(4),
-    nonce: nonce(5),
-    deliberationNonce: DELIBERATION_NONCE,
+  log = await aportar(log, daniela, cid(4), { kind: 'posicion', mode: 'afirmacion', text: TEXT });
+  log = await aportar(log, julian, cid(5), {
+    kind: 'razon',
+    relation: 'sostiene',
+    positionId: cid(4),
+    text: TEXT,
   });
   log = await avanzar(log);
   if (objetivo === 'construccion_alternativas') return log;
@@ -221,7 +201,7 @@ async function guion(objetivo: DeliberationStage): Promise<DeliberationLog> {
 
 describe('apertura', () => {
   it('abre en `preguntas_aclaratorias` con su ventana y su semilla', async () => {
-    const state = await replayDeliberation(await abrir());
+    const state = replayDeliberation(await abrir());
     expect(state.exists).toBe(true);
     expect(state.stage).toBe('preguntas_aclaratorias');
     expect(state.opensAt).toBe(opensAtOf(0));
@@ -284,7 +264,7 @@ describe('apertura', () => {
 
 describe('la ventana de escritura es real', () => {
   it('un aporte dentro de la ventana entra', async () => {
-    const state = await replayDeliberation(await guion('preguntas_aclaratorias'));
+    const state = replayDeliberation(await guion('preguntas_aclaratorias'));
     expect(state.contributions).toHaveLength(1);
     expect(state.contributions[0]?.submittedAt).toBe(midOf(0));
   });
@@ -301,7 +281,7 @@ describe('la ventana de escritura es real', () => {
 
   it('la ventana cierra sola: el aporte tardío falla aunque el avance NO se haya escrito', async () => {
     const log = await abrir();
-    const state = await replayDeliberation(log);
+    const state = replayDeliberation(log);
     // La etapa vigente sigue siendo la primera: nadie escribió `StageAdvanced`.
     expect(state.stage).toBe('preguntas_aclaratorias');
     await expect(
@@ -324,7 +304,7 @@ describe('la ventana de escritura es real', () => {
 
   it('un aporte tardío no se reubica en la etapa siguiente: simplemente no está', async () => {
     const log = await guion('perspectivas');
-    const state = await replayDeliberation(log);
+    const state = replayDeliberation(log);
     expect(state.stage).toBe('perspectivas');
     // Nada de la etapa anterior quedó pendiente ni se arrastró.
     expect(state.contributions.map((c) => c.stage)).toEqual([
@@ -371,13 +351,11 @@ describe('grafo tipado', () => {
   it('un supuesto sin destinos no es un supuesto', async () => {
     const log = await guion('perspectivas');
     await expect(
-      aportar(
-        log,
-        daniela,
-        cid(9),
-        { kind: 'supuesto', appliesToContributionIds: [], text: TEXT },
-        { nonce: nonce(9) },
-      ),
+      aportar(log, daniela, cid(9), {
+        kind: 'supuesto',
+        appliesToContributionIds: [],
+        text: TEXT,
+      }),
     ).rejects.toMatchObject({ code: 'ASSUMPTION_WITHOUT_TARGET' });
   });
 
@@ -428,14 +406,14 @@ describe('grafo tipado', () => {
   });
 
   it('el original permanece cuando otro aporte lo supersede', async () => {
-    const state = await replayDeliberation(await guion('listo_para_decidir'));
+    const state = replayDeliberation(await guion('listo_para_decidir'));
     expect(state.contributions.map((c) => c.contributionId)).toContain(cid(6));
     expect(currentContributions(state).map((c) => c.contributionId)).not.toContain(cid(6));
     expect(currentContributions(state).map((c) => c.contributionId)).toContain(cid(8));
   });
 
   it('el grafo resultante es acíclico', async () => {
-    const state = await replayDeliberation(await guion('listo_para_decidir'));
+    const state = replayDeliberation(await guion('listo_para_decidir'));
     expect(state.contributions.length).toBeGreaterThan(0);
     expect(isAcyclic(state)).toBe(true);
   });
@@ -444,7 +422,7 @@ describe('grafo tipado', () => {
     // En una cadena bien formada esto es inalcanzable: `seq` es denso y creciente, y el destino de
     // una arista siempre se escribió antes. La comprobación existe como segunda línea de defensa,
     // para que un historial fabricado a mano no cuele un ciclo aunque `verifyChain` no se llame.
-    const state = await replayDeliberation(await guion('preguntas_aclaratorias'));
+    const state = replayDeliberation(await guion('preguntas_aclaratorias'));
     const forjado: DeliberationEvent = {
       eventId: ev(90),
       aggregateId: DELIB,
@@ -457,19 +435,98 @@ describe('grafo tipado', () => {
         contributionId: cid(50),
         stage: 'preguntas_aclaratorias',
         body: { kind: 'razon', relation: 'responde', positionId: cid(1), text: TEXT },
-        authorship: { mode: 'public', authorId: mid(4) },
+        authorId: mid(4),
       },
       prevHash: hash('0'.repeat(64)),
       hash: hash('1'.repeat(64)),
     };
-    await expect(applyDeliberation(state, forjado)).rejects.toMatchObject({
-      code: 'FORWARD_REFERENCE',
+    expect(() => applyDeliberation(state, forjado)).toThrow(
+      expect.objectContaining({ code: 'FORWARD_REFERENCE' }),
+    );
+  });
+});
+
+describe('el autor está en el evento: revalidación y tope', () => {
+  it('un aporte atribuido a otra persona no se pliega', async () => {
+    // Esto es exactamente lo que el esquema sellado NO podía comprobar: escribía `actor: system` y
+    // el replay se quedaba sin identidad que reautorizar.
+    const state = replayDeliberation(await guion('preguntas_aclaratorias'));
+    const forjado: DeliberationEvent = {
+      eventId: ev(91),
+      aggregateId: DELIB,
+      seq: 3,
+      occurredAt: midOf(0),
+      actor: mid(4),
+      payload: {
+        type: 'ContributionSubmitted',
+        contributionId: cid(51),
+        stage: 'preguntas_aclaratorias',
+        body: { kind: 'posicion', mode: 'pregunta_aclaratoria', text: TEXT },
+        // El sobre lo firma Julián y el aporte se atribuye a Daniela.
+        authorId: mid(3),
+      },
+      prevHash: hash('0'.repeat(64)),
+      hash: hash('1'.repeat(64)),
+    };
+    expect(() => applyDeliberation(state, forjado)).toThrow(
+      expect.objectContaining({ code: 'NOT_THE_AUTHOR' }),
+    );
+  });
+
+  it('todo aporte queda contado contra su autora, y el tope frena la inundación', async () => {
+    let log = await abrir(facilitator, 2);
+    log = await aportar(log, daniela, cid(1), {
+      kind: 'posicion',
+      mode: 'pregunta_aclaratoria',
+      text: TEXT,
     });
+    log = await aportar(log, daniela, cid(2), {
+      kind: 'posicion',
+      mode: 'pregunta_aclaratoria',
+      text: TEXT,
+    });
+
+    const state = replayDeliberation(log);
+    expect(contributionsOfAuthorInStage(state, mid(3), 'preguntas_aclaratorias')).toHaveLength(2);
+    expect(contributionsOfAuthorInStage(state, mid(4), 'preguntas_aclaratorias')).toHaveLength(0);
+
+    const antes = log.length;
+    await expect(
+      aportar(log, daniela, cid(3), {
+        kind: 'posicion',
+        mode: 'pregunta_aclaratoria',
+        text: TEXT,
+      }),
+    ).rejects.toMatchObject({ code: 'MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE_REACHED' });
+    expect(log).toHaveLength(antes);
+
+    // El tope es POR PERSONA: que Daniela lo haya agotado no le quita el turno a Julián.
+    const conJulian = await aportar(log, julian, cid(4), {
+      kind: 'posicion',
+      mode: 'pregunta_aclaratoria',
+      text: TEXT,
+    });
+    expect(replayDeliberation(conJulian).contributions).toHaveLength(3);
+  });
+
+  it('el tope se cuenta por etapa: la siguiente empieza de cero', async () => {
+    let log = await abrir(facilitator, 1);
+    log = await aportar(log, daniela, cid(1), {
+      kind: 'posicion',
+      mode: 'pregunta_aclaratoria',
+      text: TEXT,
+    });
+    log = await avanzar(log);
+    log = await aportar(log, daniela, cid(2), { kind: 'posicion', mode: 'afirmacion', text: TEXT });
+    expect(replayDeliberation(log).contributions).toHaveLength(2);
+    await expect(
+      aportar(log, daniela, cid(3), { kind: 'posicion', mode: 'afirmacion', text: TEXT }),
+    ).rejects.toMatchObject({ code: 'MAX_CONTRIBUTIONS_PER_AUTHOR_PER_STAGE_REACHED' });
   });
 });
 
 describe('autorización', () => {
-  it('`tech-admin` no aporta, no avanza y no revela', async () => {
+  it('`tech-admin` no aporta y no avanza: no tiene ninguna capacidad de escritura', async () => {
     const log = await guion('preguntas_aclaratorias');
     await expect(
       aportar(log, admin, cid(20), { kind: 'posicion', mode: 'pregunta_aclaratoria', text: TEXT }),
@@ -477,15 +534,6 @@ describe('autorización', () => {
     await expect(avanzar(log, admin)).rejects.toMatchObject({
       code: 'UNAUTHORIZED_ROLE_NOT_GRANTED',
     });
-    const revelando = await guion('perspectivas_revelando');
-    await expect(
-      revealContributionAuthor(revelando, meta(revelando, midOf(2), admin), {
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED_ROLE_NOT_GRANTED' });
   });
 
   it('el observador anónimo no aporta', async () => {
@@ -517,32 +565,6 @@ describe('autorización', () => {
       code: 'UNAUTHORIZED_ROLE_NOT_GRANTED',
     });
   });
-
-  it('quien facilita NO destapa autorías: sólo garantías', async () => {
-    const log = await guion('perspectivas_revelando');
-    await expect(
-      revealContributionAuthor(log, meta(log, midOf(2), facilitator), {
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED_ROLE_NOT_GRANTED' });
-  });
-
-  it('garantías sí destapa', async () => {
-    const log = await guion('perspectivas_revelando');
-    const revelado = await revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-      deliberationNonce: DELIBERATION_NONCE,
-    });
-    const state = await replayDeliberation(revelado);
-    expect(state.contributions.find((c) => c.contributionId === cid(4))?.revealedAuthorId).toBe(
-      mid(3),
-    );
-  });
 });
 
 describe('avance de etapa', () => {
@@ -555,7 +577,7 @@ describe('avance de etapa', () => {
       closesAt: closesAtOf(1),
       presentationSeed: seed(1),
     });
-    expect((await replayDeliberation(avanzado)).stage).toBe('perspectivas');
+    expect(replayDeliberation(avanzado).stage).toBe('perspectivas');
   });
 
   it('el avance por plazo exige que la ventana haya vencido', async () => {
@@ -575,7 +597,7 @@ describe('avance de etapa', () => {
     const log = await guion('preguntas_aclaratorias');
     await expect(
       advanceStage(log, meta(log, opensAtOf(2), facilitator), {
-        to: 'perspectivas_revelando',
+        to: 'construccion_alternativas',
         cause: 'deadline',
         opensAt: opensAtOf(2),
         closesAt: closesAtOf(2),
@@ -584,34 +606,28 @@ describe('avance de etapa', () => {
     ).rejects.toMatchObject({ code: 'ILLEGAL_TRANSITION' });
   });
 
-  it('no se sale de `perspectivas_revelando` con perspectivas sin destapar', async () => {
-    const log = await guion('perspectivas_revelando');
-    await expect(avanzar(log)).rejects.toMatchObject({ code: 'UNREVEALED_AUTHORSHIP' });
-  });
-
-  it('destapadas todas, ya se puede avanzar', async () => {
-    const state = await replayDeliberation(await guion('construccion_alternativas'));
-    expect(state.stage).toBe('construccion_alternativas');
-    expect(state.contributions.filter((c) => c.authorship.mode === 'sealed')).toHaveLength(2);
-    for (const c of state.contributions.filter((x) => x.authorship.mode === 'sealed')) {
-      expect(c.revealedAuthorId).toBeDefined();
-    }
+  it('salir de `perspectivas` no depende de ninguna condición externa al historial', async () => {
+    // El esquema retirado exigía destapar cada aporte para poder avanzar, y una apertura perdida
+    // —o una supresión legal— dejaba la deliberación congelada para siempre.
+    const log = await guion('perspectivas');
+    const avanzado = await avanzar(log);
+    expect(replayDeliberation(avanzado).stage).toBe('construccion_alternativas');
   });
 
   it('`listo_para_decidir` es terminal y no admite nada', async () => {
     const log = await guion('listo_para_decidir');
-    const state = await replayDeliberation(log);
+    const state = replayDeliberation(log);
     expect(state.stage).toBe('listo_para_decidir');
     await expect(
       aportar(log, daniela, cid(30), { kind: 'posicion', mode: 'afirmacion', text: TEXT }),
     ).rejects.toMatchObject({ code: 'CONTRIBUTION_KIND_NOT_ALLOWED' });
     await expect(
-      advanceStage(log, meta(log, opensAtOf(7), facilitator), {
+      advanceStage(log, meta(log, opensAtOf(6), facilitator), {
         to: 'preguntas_aclaratorias',
         cause: 'manual',
-        opensAt: opensAtOf(7),
-        closesAt: closesAtOf(7),
-        presentationSeed: seed(7),
+        opensAt: opensAtOf(6),
+        closesAt: closesAtOf(6),
+        presentationSeed: seed(6),
       }),
     ).rejects.toMatchObject({ code: 'ILLEGAL_TRANSITION' });
   });
@@ -647,7 +663,7 @@ describe('integridad del historial', () => {
           contributionId: cid(99),
           stage: 'preguntas_aclaratorias' as const,
           body: { kind: 'posicion' as const, mode: 'pregunta_aclaratoria' as const, text: TEXT },
-          authorship: { mode: 'public' as const, authorId: mid(3) },
+          authorId: mid(3),
         },
       },
       ...log.slice(2),
@@ -655,7 +671,7 @@ describe('integridad del historial', () => {
     await expect(verifyDeliberationLog(manipulado)).rejects.toMatchObject({ code: 'BROKEN_LOG' });
   });
 
-  it('un historial vacío no identifica ninguna deliberación', async () => {
-    await expect(replayDeliberation([])).rejects.toMatchObject({ code: 'EMPTY_LOG' });
+  it('un historial vacío no identifica ninguna deliberación', () => {
+    expect(() => replayDeliberation([])).toThrow(expect.objectContaining({ code: 'EMPTY_LOG' }));
   });
 });

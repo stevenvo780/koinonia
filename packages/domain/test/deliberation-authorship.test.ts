@@ -1,37 +1,49 @@
 /**
- * Autoría temporalmente oculta y orden de presentación.
+ * Autoría con **alcance de etapa**, y orden de presentación.
  *
- * La prueba que importa aquí no es que el compromiso «funcione»: es que el `authorId` **no esté** en
- * el evento. Un campo oculto por la interfaz no está oculto, así que se serializa el evento entero
- * —con `JSON.stringify` y con la forma canónica que se hashea— y se busca la cadena a mano.
+ * Lo que se fuerza aquí es la regla entera de ADR-0049: con `perspectivas` vigente, `authorize`
+ * deniega leer la autoría **a todo el mundo** —incluida la facilitación, incluida garantías—, y en
+ * cuanto la etapa avanza la concede a cualquier miembro del círculo. La denegación no depende del
+ * rol: depende de la etapa. Por eso el intento se repite con cinco actores distintos y no con uno.
+ *
+ * ═══ Pruebas retiradas en ADR-0049, y por qué ═══
+ *
+ * De este fichero se retiraron **trece** pruebas al retirarse el sellado criptográfico, porque
+ * comprobaban un mecanismo que ya no existe y no había forma de reescribirlas sin inventarles otro
+ * objeto:
+ *
+ *  - las cinco de `el compromiso de autoría` (`hashCanonical` de la apertura, separación de
+ *    dominios, ausencia del `authorId` en el evento, ausencia en el historial entero y el estado
+ *    plegado sin autoría): no hay compromiso ni apertura que comprobar, y el `authorId` **sí** está
+ *    en el evento a propósito;
+ *  - las ocho de `la revelación` (recomputar el compromiso, `authorId` cambiado, nonce cambiado,
+ *    destapar una sola vez, destapar fuera de etapa, destapar un aporte inexistente, nonce prohibido
+ *    fuera de `perspectivas` y nonce obligatorio dentro): no hay revelación, porque no hay nada
+ *    tapado en el evento.
+ *
+ * Las seis de `orden de presentación` siguen aquí sin un solo cambio: el orden aleatorio por lectora
+ * no dependía del sellado y sigue siendo obligatorio.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import type { Actor } from '../src/access.js';
-import { canonicalBytes, hashCanonical } from '../src/canonical.js';
+import { type Actor, denialReason } from '../src/access.js';
 import {
   advanceStage,
-  type AuthorNonce,
-  authorNonce,
-  AUTHOR_COMMITMENT_DOMAIN,
-  authorCommitment,
-  buildAuthorOpening,
+  authorizeAuthorshipRead,
   type ContributionId,
   contributionId,
   deliberationId,
   type DeliberationCommandMeta,
-  deliberationNonce,
   type DeliberationLog,
-  isAuthorCommitmentValid,
   openDeliberation,
   orderContributionsForViewer,
   presentationOrder,
   type PresentationSeed,
   presentationSeed,
+  readContributionAuthor,
   readerSeed,
   replayDeliberation,
-  revealContributionAuthor,
   submitContribution,
 } from '../src/deliberation/index.js';
 import {
@@ -47,20 +59,23 @@ import {
 const hex32 = (n: number): string => n.toString(16).padStart(32, '0');
 
 const DELIB = deliberationId(hex32(0xd0));
-const DELIBERATION_NONCE = deliberationNonce(hex32(0xd2));
 const OTRA_DELIB = deliberationId(hex32(0xd1));
 const CIRCLE = circleId(hex32(0xc1));
+const OTHER_CIRCLE = circleId(hex32(0xc2));
 const PROBLEM = hex32(0xb1);
 
 const mid = (n: number): MemberId => memberId(hex32(0x1000 + n));
 const ev = (n: number): EventId => eventId(hex32(0x6000 + n));
 const cid = (n: number): ContributionId => contributionId(hex32(0x7000 + n));
-const nonce = (n: number): AuthorNonce => authorNonce(hex32(0x9000 + n));
 const seed = (n: number): PresentationSeed => presentationSeed(hex32(0xa000 + n));
 
 const facilitator: Actor = { memberId: mid(1), roles: ['facilitator'], circles: [CIRCLE] };
 const garantias: Actor = { memberId: mid(2), roles: ['guarantees'], circles: [CIRCLE] };
 const daniela: Actor = { memberId: mid(3), roles: ['member'], circles: [CIRCLE] };
+const julian: Actor = { memberId: mid(4), roles: ['member'], circles: [CIRCLE] };
+const admin: Actor = { memberId: mid(5), roles: ['tech-admin'], circles: [CIRCLE] };
+const forastera: Actor = { memberId: mid(8), roles: ['member'], circles: [OTHER_CIRCLE] };
+const observador: Actor = { memberId: undefined, roles: ['observer'], circles: [] };
 
 const T0 = 1_700_000_000_000;
 const HOUR = 3_600_000;
@@ -74,13 +89,8 @@ function meta(log: DeliberationLog, at: Instant, actor: Actor): DeliberationComm
   return { eventId: ev(log.length + 1), at, actor };
 }
 
-/**
- * Historial mínimo hasta `perspectivas`, con **una** perspectiva sellada de Daniela.
- *
- * Daniela no interviene en ningún otro evento: si su identificador aparece en el historial, aparece
- * por el sello y no por otra cosa. Eso es lo que hace concluyente la prueba de fuga.
- */
-async function selladoMinimo(): Promise<DeliberationLog> {
+/** Historial hasta `perspectivas`, con **una** perspectiva escrita por Daniela. */
+async function enPerspectivas(): Promise<DeliberationLog> {
   let log = await openDeliberation(
     { eventId: ev(1), at: opensAtOf(0), actor: facilitator },
     {
@@ -102,15 +112,14 @@ async function selladoMinimo(): Promise<DeliberationLog> {
   return submitContribution(log, meta(log, midOf(1), daniela), {
     contributionId: cid(4),
     body: { kind: 'posicion', mode: 'afirmacion', text: TEXT },
-    nonce: nonce(4),
-    deliberationNonce: DELIBERATION_NONCE,
   });
 }
 
-async function hastaRevelar(): Promise<DeliberationLog> {
-  const log = await selladoMinimo();
+/** El mismo historial, con la etapa `perspectivas` ya cerrada. */
+async function despuesDePerspectivas(): Promise<DeliberationLog> {
+  const log = await enPerspectivas();
   return advanceStage(log, meta(log, opensAtOf(2), facilitator), {
-    to: 'perspectivas_revelando',
+    to: 'construccion_alternativas',
     cause: 'deadline',
     opensAt: opensAtOf(2),
     closesAt: closesAtOf(2),
@@ -118,210 +127,96 @@ async function hastaRevelar(): Promise<DeliberationLog> {
   });
 }
 
-describe('el compromiso de autoría', () => {
-  it('es exactamente `hashCanonical` de la apertura declarada', async () => {
-    const opening = buildAuthorOpening({
-      deliberationId: DELIB,
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-    });
-    expect(opening.domain).toBe(AUTHOR_COMMITMENT_DOMAIN);
-    expect(opening).toEqual({
-      domain: 'koinonia/deliberation-author/v1',
-      deliberationId: DELIB,
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-    });
-    expect(
-      await authorCommitment({
-        deliberationId: DELIB,
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(4),
-      }),
-    ).toBe(await hashCanonical(opening));
-  });
+describe('leer la autoría tiene alcance de etapa', () => {
+  it('con `perspectivas` vigente se deniega, y NO por el rol: también a quien facilita', async () => {
+    const state = replayDeliberation(await enPerspectivas());
+    expect(state.stage).toBe('perspectivas');
 
-  it('separa dominios: el mismo autor y nonce dan compromisos distintos por aporte y por deliberación', async () => {
-    const base = {
-      deliberationId: DELIB,
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-    };
-    const c0 = await authorCommitment(base);
-    expect(await authorCommitment({ ...base, contributionId: cid(5) })).not.toBe(c0);
-    expect(await authorCommitment({ ...base, deliberationId: OTRA_DELIB })).not.toBe(c0);
-    expect(await authorCommitment({ ...base, authorId: mid(4) })).not.toBe(c0);
-    expect(await authorCommitment({ ...base, nonce: nonce(5) })).not.toBe(c0);
-  });
-
-  it('el evento sellado NO contiene el `authorId` ni el nonce, en ninguna serialización', async () => {
-    const log = await selladoMinimo();
-    const evento = log[log.length - 1];
-    expect(evento).toBeDefined();
-    if (evento === undefined) return;
-
-    const enJson = JSON.stringify(evento);
-    const enCanonico = new TextDecoder().decode(canonicalBytes(evento));
-    const autor = mid(3);
-
-    expect(enJson).not.toContain(autor);
-    expect(enCanonico).not.toContain(autor);
-    expect(enJson).not.toContain(nonce(4));
-    expect(enCanonico).not.toContain(nonce(4));
-    expect(enJson).not.toContain('authorId');
-
-    // Y lo que sí lleva: el compromiso, y el actor `system` en vez de la persona.
-    expect(evento.actor).toBe('system');
-    expect(enJson).toContain('authorCommitment');
-    expect(evento.payload.type).toBe('ContributionSubmitted');
-  });
-
-  it('el historial ENTERO de la etapa a ciegas tampoco filtra a la autora', async () => {
-    const log = await selladoMinimo();
-    expect(JSON.stringify(log)).not.toContain(mid(3));
-  });
-
-  it('el estado plegado guarda el compromiso y ninguna autoría', async () => {
-    const state = await replayDeliberation(await selladoMinimo());
-    const aporte = state.contributions[0];
-    expect(aporte).toBeDefined();
-    expect(aporte?.authorship.mode).toBe('sealed');
-    expect(aporte?.revealedAuthorId).toBeUndefined();
-  });
-});
-
-describe('la revelación', () => {
-  it('recomputa el compromiso y lo acepta cuando coincide', async () => {
-    const log = await hastaRevelar();
-    const revelado = await revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-      deliberationNonce: DELIBERATION_NONCE,
-    });
-    const state = await replayDeliberation(revelado);
-    const aporte = state.contributions[0];
-    expect(aporte?.revealedAuthorId).toBe(mid(3));
-    expect(aporte?.revealedNonce).toBe(nonce(4));
-    if (aporte?.authorship.mode === 'sealed') {
-      expect(
-        await isAuthorCommitmentValid(aporte.authorship.authorCommitment, {
-          deliberationId: DELIB,
-          contributionId: cid(4),
-          authorId: mid(3),
-          nonce: nonce(4),
-        }),
-      ).toBe(true);
+    // Cinco actores, tres roles distintos y una única razón de denegación: la etapa.
+    for (const actor of [daniela, julian, facilitator, garantias]) {
+      expect(() => {
+        authorizeAuthorshipRead(state, actor);
+      }).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }));
+      expect(() => readContributionAuthor(state, actor, cid(4))).toThrow(
+        expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }),
+      );
     }
   });
 
-  it('un `authorId` distinto SIEMPRE lanza: la autoría no se reescribe después', async () => {
-    const log = await hastaRevelar();
-    await expect(
-      revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-        contributionId: cid(4),
-        authorId: mid(4),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'COMMITMENT_MISMATCH' });
+  it('cerrada la etapa, la conceden exactamente los mismos actores', async () => {
+    const state = replayDeliberation(await despuesDePerspectivas());
+    expect(state.stage).toBe('construccion_alternativas');
+    for (const actor of [daniela, julian, facilitator, garantias]) {
+      expect(() => {
+        authorizeAuthorshipRead(state, actor);
+      }).not.toThrow();
+      expect(readContributionAuthor(state, actor, cid(4))).toBe(mid(3));
+    }
   });
 
-  it('un nonce distinto SIEMPRE lanza', async () => {
-    const log = await hastaRevelar();
-    await expect(
-      revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(7),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'COMMITMENT_MISMATCH' });
-  });
-
-  it('se destapa exactamente una vez', async () => {
-    const log = await hastaRevelar();
-    const revelado = await revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-      contributionId: cid(4),
-      authorId: mid(3),
-      nonce: nonce(4),
-      deliberationNonce: DELIBERATION_NONCE,
-    });
-    await expect(
-      revealContributionAuthor(revelado, meta(revelado, midOf(2), garantias), {
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'ALREADY_REVEALED' });
-  });
-
-  it('no se destapa mientras la escritura a ciegas sigue abierta', async () => {
-    const log = await selladoMinimo();
-    expect((await replayDeliberation(log)).stage).toBe('perspectivas');
-    await expect(
-      revealContributionAuthor(log, meta(log, midOf(1), garantias), {
-        contributionId: cid(4),
-        authorId: mid(3),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'REVEAL_OUT_OF_STAGE' });
-  });
-
-  it('no se destapa un aporte inexistente ni uno de autoría pública', async () => {
-    const log = await hastaRevelar();
-    await expect(
-      revealContributionAuthor(log, meta(log, midOf(2), garantias), {
-        contributionId: cid(90),
-        authorId: mid(3),
-        nonce: nonce(4),
-        deliberationNonce: DELIBERATION_NONCE,
-      }),
-    ).rejects.toMatchObject({ code: 'UNKNOWN_CONTRIBUTION' });
-  });
-
-  it('fuera de perspectivas la autoría es pública y no admite nonce', async () => {
-    const log = await openDeliberation(
-      { eventId: ev(1), at: opensAtOf(0), actor: facilitator },
-      {
-        deliberationId: DELIB,
-        problemId: PROBLEM,
-        circleId: CIRCLE,
-        opensAt: opensAtOf(0),
-        closesAt: closesAtOf(0),
-        presentationSeed: seed(0),
-      },
+  it('quien escribió la perspectiva tampoco se lee a sí misma antes de tiempo', async () => {
+    // Ni una excepción para el autor: el dominio no distingue, y si distinguiera, quien leyera la
+    // respuesta sabría que ese aporte es suyo.
+    const state = replayDeliberation(await enPerspectivas());
+    expect(() => readContributionAuthor(state, daniela, cid(4))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }),
     );
-    await expect(
-      submitContribution(log, meta(log, midOf(0), daniela), {
-        contributionId: cid(1),
-        body: { kind: 'posicion', mode: 'pregunta_aclaratoria', text: TEXT },
-        nonce: nonce(1),
-      }),
-    ).rejects.toMatchObject({ code: 'NONCE_NOT_APPLICABLE' });
-
-    const conAutor = await submitContribution(log, meta(log, midOf(0), daniela), {
-      contributionId: cid(1),
-      body: { kind: 'posicion', mode: 'pregunta_aclaratoria', text: TEXT },
-    });
-    const state = await replayDeliberation(conAutor);
-    expect(state.contributions[0]?.authorship).toEqual({ mode: 'public', authorId: mid(3) });
   });
 
-  it('en perspectivas el nonce es obligatorio', async () => {
-    const log = await selladoMinimo();
-    await expect(
-      submitContribution(log, meta(log, midOf(1), daniela), {
-        contributionId: cid(5),
-        body: { kind: 'posicion', mode: 'afirmacion', text: TEXT },
+  it('la etapa no es lo único que se comprueba: círculo, identidad y rol siguen vigentes', async () => {
+    const state = replayDeliberation(await despuesDePerspectivas());
+    expect(() => readContributionAuthor(state, forastera, cid(4))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_NOT_IN_CIRCLE' }),
+    );
+    expect(() => readContributionAuthor(state, observador, cid(4))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_NOT_AUTHENTICATED' }),
+    );
+    // `tech-admin` no obtiene la lectura por la matriz. Lo que sí puede hacer —leer la base de
+    // datos— queda fuera del alcance de esta regla, y ADR-0049 lo declara en vez de disimularlo.
+    expect(() => readContributionAuthor(state, admin, cid(4))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_ROLE_NOT_GRANTED' }),
+    );
+  });
+
+  it('un aporte inexistente sólo se distingue DESPUÉS de autorizar', async () => {
+    // El orden importa: si el «no existe» llegara antes que el permiso, una persona podría sondear
+    // qué identificadores hay durante la etapa a ciegas.
+    const abierta = replayDeliberation(await enPerspectivas());
+    expect(() => readContributionAuthor(abierta, daniela, cid(90))).toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }),
+    );
+    const cerrada = replayDeliberation(await despuesDePerspectivas());
+    expect(() => readContributionAuthor(cerrada, daniela, cid(90))).toThrow(
+      expect.objectContaining({ code: 'UNKNOWN_CONTRIBUTION' }),
+    );
+  });
+
+  it('la etapa la deriva el dominio del historial, no la declara quien llama', async () => {
+    const state = replayDeliberation(await enPerspectivas());
+    // Por la puerta del dominio no hay forma de mentir sobre la etapa…
+    expect(() => {
+      authorizeAuthorshipRead(state, daniela);
+    }).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED_STAGE_STILL_OPEN' }));
+    // …y si alguien construye el recurso a mano y omite la etapa, se falla cerrado.
+    expect(
+      denialReason(daniela, 'deliberation:read-authorship', {
+        kind: 'deliberation',
+        circleId: CIRCLE,
       }),
-    ).rejects.toMatchObject({ code: 'SEALED_NONCE_REQUIRED' });
+    ).toBe('STAGE_UNKNOWN');
+  });
+
+  it('el autor SÍ está en el evento: lo que la etapa cambia es quién puede leerlo', async () => {
+    const log = await enPerspectivas();
+    const evento = log[log.length - 1];
+    expect(evento).toBeDefined();
+    if (evento === undefined) return;
+    // Se afirma sin adornos, porque es lo que ADR-0049 declara: el dato está, y quien lee la base
+    // de datos lo ve. La protección es frente a los pares que pasan por el dominio, no frente a
+    // quien administra el servidor.
+    expect(evento.actor).toBe(mid(3));
+    expect(JSON.stringify(evento)).toContain('authorId');
+    expect(replayDeliberation(log).contributions[0]?.authorId).toBe(mid(3));
   });
 });
 
@@ -408,7 +303,7 @@ describe('orden de presentación', () => {
   });
 
   it('ordena los registros del estado sin perder ni duplicar ninguno', async () => {
-    const state = await replayDeliberation(await selladoMinimo());
+    const state = replayDeliberation(await enPerspectivas());
     const ordenados = await orderContributionsForViewer(state, mid(9));
     expect(ordenados).toHaveLength(state.contributions.length);
     expect(new Set(ordenados.map((c) => c.contributionId)).size).toBe(state.contributions.length);

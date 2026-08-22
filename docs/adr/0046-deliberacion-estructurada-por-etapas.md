@@ -1,6 +1,17 @@
 # ADR-0046: Deliberación estructurada por etapas, con aportes tipados en grafo y autoría diferida
 
-- **Estado:** Aceptado
+- **Estado:** Aceptado, **parcialmente sustituido por [ADR-0049](0049-autoria-por-alcance-de-etapa.md)**
+  - **Cae:** todo el mecanismo de autoría sellada — el compromiso `authorCommitment`, el seudónimo
+    por deliberación con su `deliberationNonce`, el evento `ContributionAuthorRevealed` y la etapa
+    `perspectivas_revelando`. La autoría se protege ahora denegando su **lectura** mientras
+    `perspectivas` siga vigente, con una regla de la matriz de `access.ts`. Las secciones «La autoría
+    se oculta durante `perspectivas`…», «El seudónimo por deliberación» y el modo de fallo
+    «`perspectivas_revelando` puede atascarse» quedan **derogadas**; se conservan aquí porque un ADR
+    se sustituye, no se borra.
+  - **Sigue vivo:** las etapas como ventanas de escritura reales, la tabla de qué aporte admite cada
+    etapa, los seis tipos de aporte con aristas obligatorias, el grafo acíclico por construcción, la
+    corrección por sustitución, el orden de presentación determinista por lectora, la autorización en
+    el dominio y `tech-admin` sin ninguna capacidad de escritura.
 - **Fecha:** 2026-08-22
 - **Contexto de origen:** `PRODUCT.md` §4 (pantalla «Deliberaciones»); `GOVERNANCE.md` §3;
   `THREAT_MODEL.md` adversario nº 3 (el curioso interno); `03-deliberativa-sistemas-antipatrones.md`

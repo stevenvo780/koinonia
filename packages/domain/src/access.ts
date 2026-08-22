@@ -20,6 +20,17 @@
  * coincida con el actor. Si el recurso llega sin autor, se deniega —fallar cerrado—, en lugar de
  * dejar pasar por ausencia de dato, que es exactamente cómo se cuelan estos fallos.
  *
+ * ═══ Autorización con alcance de ETAPA ═══
+ *
+ * Hay un dato que no está prohibido ni permitido en abstracto, sino **hasta cierto momento**: quién
+ * escribió cada perspectiva. ADR-0049 lo resuelve aquí y no con criptografía: `deliberation:read-
+ * authorship` se deniega mientras la etapa vigente de la deliberación sea `perspectivas`, y se
+ * concede en cuanto la etapa cambia. Es una fila más de la matriz, con la misma forma que las demás,
+ * y **no depende del rol**: quien facilita tampoco lee la autoría antes de tiempo.
+ *
+ * Como toda regla de aquí, falla cerrado: si el recurso no declara etapa, se deniega. Un recurso sin
+ * etapa declarada no es «una deliberación cualquiera», es un dato que falta.
+ *
  * ═══ Qué NO decide este módulo ═══
  *
  * La elegibilidad para votar **no** es autorización: se decide contra el padrón congelado
@@ -28,6 +39,7 @@
  * Mezclar las dos cosas sería reintroducir el padrón móvil por la puerta de atrás.
  */
 
+import type { DeliberationStage } from './deliberation/types.js';
 import { DomainError } from './errors.js';
 import type { CircleId, MemberId } from './ids.js';
 
@@ -95,7 +107,7 @@ export type Action =
   | 'deliberation:open'
   | 'deliberation:contribute'
   | 'deliberation:advance-stage'
-  | 'deliberation:reveal-authorship'
+  | 'deliberation:read-authorship'
   | 'initiative:plan'
   | 'task:offer'
   | 'task:reoffer'
@@ -132,7 +144,7 @@ export const ACTIONS: readonly Action[] = [
   'deliberation:open',
   'deliberation:contribute',
   'deliberation:advance-stage',
-  'deliberation:reveal-authorship',
+  'deliberation:read-authorship',
   'initiative:plan',
   'task:offer',
   'task:reoffer',
@@ -153,7 +165,15 @@ export const ACTIONS: readonly Action[] = [
 ];
 
 export type ResourceKind =
-  'circle' | 'problem' | 'evidence' | 'proposal' | 'decision' | 'initiative' | 'task' | 'ledger';
+  | 'circle'
+  | 'problem'
+  | 'evidence'
+  | 'proposal'
+  | 'decision'
+  | 'deliberation'
+  | 'initiative'
+  | 'task'
+  | 'ledger';
 
 /**
  * El recurso sobre el que se actúa.
@@ -169,6 +189,14 @@ export interface ResourceRef {
   /** Identidades que pueden abrir un material privado; nunca se incluyen en errores. */
   readonly authorizedReaders?: readonly MemberId[] | undefined;
   readonly circleId?: CircleId | undefined;
+  /**
+   * Etapa **vigente** de la deliberación a la que pertenece el recurso.
+   *
+   * Sólo la miran las acciones con alcance de etapa. Se toma del estado plegado del agregado, nunca
+   * de lo que diga quien llama: por eso el dominio ofrece `authorizeAuthorshipRead`, que la deriva
+   * del historial y no admite que el llamante la invente.
+   */
+  readonly stage?: DeliberationStage | undefined;
 }
 
 export type DenialReason =
@@ -187,7 +215,11 @@ export type DenialReason =
   /** El actor no pertenece al círculo competente (§3, subsidiariedad). */
   | 'NOT_IN_CIRCLE'
   /** El recurso llegó sin autor declarado y la acción lo exige: se falla cerrado. */
-  | 'OWNER_UNKNOWN';
+  | 'OWNER_UNKNOWN'
+  /** La etapa que oculta el dato sigue siendo la vigente. No depende del rol (ADR-0049). */
+  | 'STAGE_STILL_OPEN'
+  /** El recurso no declara etapa vigente y la acción se decide por etapa: se falla cerrado. */
+  | 'STAGE_UNKNOWN';
 
 /** Denegación de autorización. Lleva el código estable y ni un dato personal. */
 export class UnauthorizedError extends DomainError {
@@ -215,6 +247,13 @@ interface Rule {
   readonly readerOnly: boolean;
   /** ¿Exige pertenecer al círculo competente? */
   readonly circleOnly: boolean;
+  /**
+   * Etapa cuya vigencia **deniega** la acción; `undefined` ⇒ la acción no depende de ninguna etapa.
+   *
+   * Es lo que da alcance temporal a un permiso sin inventar un mecanismo aparte: el dato existe
+   * desde el primer momento y lo que cambia con el tiempo es quién puede leerlo.
+   */
+  readonly deniedDuringStage: DeliberationStage | undefined;
 }
 
 const OPEN: Rule = {
@@ -224,6 +263,7 @@ const OPEN: Rule = {
   subjectOnly: false,
   readerOnly: false,
   circleOnly: false,
+  deniedDuringStage: undefined,
 };
 
 const MEMBER: Rule = {
@@ -233,6 +273,7 @@ const MEMBER: Rule = {
   subjectOnly: false,
   readerOnly: false,
   circleOnly: false,
+  deniedDuringStage: undefined,
 };
 
 const CIRCLE_MEMBER: Rule = { ...MEMBER, circleOnly: true };
@@ -281,6 +322,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     readerOnly: false,
     circleOnly: true,
+    deniedDuringStage: undefined,
   },
   'decision:close': {
     roles: ['facilitator', 'guarantees'],
@@ -289,6 +331,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     readerOnly: false,
     circleOnly: true,
+    deniedDuringStage: undefined,
   },
   'decision:ratify': {
     roles: ['facilitator', 'guarantees'],
@@ -297,6 +340,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     readerOnly: false,
     circleOnly: true,
+    deniedDuringStage: undefined,
   },
   'deliberation:open': {
     roles: ['facilitator', 'guarantees'],
@@ -305,6 +349,7 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     readerOnly: false,
     circleOnly: true,
+    deniedDuringStage: undefined,
   },
   'deliberation:contribute': CIRCLE_MEMBER,
   'deliberation:advance-stage': {
@@ -314,15 +359,15 @@ const RULES: Readonly<Record<Action, Rule>> = {
     subjectOnly: false,
     readerOnly: false,
     circleOnly: true,
+    deniedDuringStage: undefined,
   },
-  'deliberation:reveal-authorship': {
-    roles: ['guarantees'],
-    authenticated: true,
-    ownerOnly: false,
-    subjectOnly: false,
-    readerOnly: false,
-    circleOnly: true,
-  },
+
+  // ADR-0049. La única regla de la matriz con alcance temporal, y por eso la más fácil de leer mal:
+  // lo que deniega **no es el rol**, es la etapa. Mientras `perspectivas` sea la etapa vigente nadie
+  // lee la autoría de nada —ni quien facilita, ni garantías—, y en cuanto la etapa avanza la lee
+  // cualquier miembro del círculo. La protección es frente a los pares, incluido quien llame a la
+  // API saltándose la interfaz; **no** frente a quien administra el servidor y lee la base de datos.
+  'deliberation:read-authorship': { ...CIRCLE_MEMBER, deniedDuringStage: 'perspectivas' },
 
   // ADR-0044: descomponer la iniciativa y volver a ofrecer trabajo pertenece a quien asumió el plan.
   'initiative:plan': OWNER_IN_CIRCLE,
@@ -426,6 +471,27 @@ export function authorize(actor: Actor, action: Action, resource: ResourceRef): 
         'NOT_IN_CIRCLE',
         action,
         'quien cuida el procedimiento de un círculo tiene que pertenecer a ese círculo (§3)',
+      );
+    }
+  }
+
+  // Después del círculo: quien no pertenece al círculo no debe enterarse de en qué etapa va una
+  // deliberación ajena por el motivo de su denegación.
+  if (rule.deniedDuringStage !== undefined) {
+    if (resource.stage === undefined) {
+      throw new UnauthorizedError(
+        'STAGE_UNKNOWN',
+        action,
+        'el recurso no declara la etapa vigente y esta acción se decide por etapa: sin ese dato ' +
+          'se deniega, porque la ausencia de política nunca concede acceso',
+      );
+    }
+    if (resource.stage === rule.deniedDuringStage) {
+      throw new UnauthorizedError(
+        'STAGE_STILL_OPEN',
+        action,
+        `mientras la etapa ${rule.deniedDuringStage} siga vigente este dato no se lee, y no hay ` +
+          'ningún rol que lo cambie: la regla es de etapa, no de jerarquía',
       );
     }
   }

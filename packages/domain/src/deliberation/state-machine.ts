@@ -2,9 +2,9 @@
  * Máquina de etapas de una deliberación, y la tabla de qué se puede escribir en cada una.
  *
  * ```
- *   preguntas_aclaratorias ─▶ perspectivas ─▶ perspectivas_revelando ─▶ construccion_alternativas
- *                                                                                  │
- *                          listo_para_decidir ◀── enmiendas ◀── objeciones ◀────────┘
+ *   preguntas_aclaratorias ─▶ perspectivas ─▶ construccion_alternativas
+ *                                                        │
+ *              listo_para_decidir ◀── enmiendas ◀── objeciones ◀───────┘
  * ```
  *
  * ═══ Las dos tablas son datos, no cadenas de `if` ═══
@@ -17,8 +17,16 @@
  * ═══ No se salta ninguna etapa ═══
  *
  * `STAGE_TRANSITIONS` sólo contiene el sucesor exacto. Ir de `perspectivas` a `objeciones` «porque ya
- * está claro» no es un atajo: es saltarse la revelación de autoría, que es justamente la etapa cuyo
- * salto haría inútil todo el compromiso.
+ * está claro» no es un atajo: es saltarse la ventana en la que se construyen las alternativas, con
+ * lo que la etapa de objeciones no tendría nada legítimo que objetar.
+ *
+ * ═══ Esta tabla NO dice quién puede leer la autoría ═══
+ *
+ * Lo dice `access.ts`, con la acción `deliberation:read-authorship`, que se deniega mientras la
+ * etapa vigente sea `perspectivas` (ADR-0049). Aquí sólo se decide **qué se puede escribir**. Tener
+ * la regla de lectura en un único sitio evita el fallo clásico de dos tablas que se contradicen: si
+ * esta declarara además «esta etapa oculta autoría», habría dos fuentes de verdad y una acabaría
+ * desactualizada.
  *
  * ═══ `listo_para_decidir` es terminal ═══
  *
@@ -54,13 +62,8 @@ export const STAGE_TRANSITIONS: readonly StageTransition[] = deepFreeze([
   },
   {
     from: 'perspectivas',
-    to: 'perspectivas_revelando',
-    note: 'cerrada la escritura a ciegas, se destapa quién escribió qué',
-  },
-  {
-    from: 'perspectivas_revelando',
     to: 'construccion_alternativas',
-    note: 'con la autoría ya pública se construyen alternativas',
+    note: 'cerrada la etapa, la autoría pasa a ser legible y se construyen alternativas',
   },
   {
     from: 'construccion_alternativas',
@@ -128,8 +131,6 @@ export interface StageRule {
   readonly reasonRelations: readonly ReasonRelation[];
   /** ¿Toda `alternativa` de esta etapa tiene que superseder a otra? (enmiendas). */
   readonly alternativeMustSupersede: boolean;
-  /** ¿La autoría se sella durante esta etapa? */
-  readonly sealsAuthorship: boolean;
 }
 
 const NO_WRITING: StageRule = {
@@ -137,15 +138,14 @@ const NO_WRITING: StageRule = {
   positionModes: [],
   reasonRelations: [],
   alternativeMustSupersede: false,
-  sealsAuthorship: false,
 };
 
 /**
  * La tabla del diseño, literal y como dato.
  *
- * Las dos filas vacías son tan normativas como las llenas: `perspectivas_revelando` existe para
- * destapar autoría y **nada más**; admitir un aporte ahí sería escribir con la autoría de la etapa
- * anterior todavía a medio destapar.
+ * La fila vacía es tan normativa como las llenas: en `listo_para_decidir` no se escribe **nada**, y
+ * eso es lo que convierte la compuerta entre deliberar y decidir en un estado del agregado en vez de
+ * en una afirmación de quien facilita.
  */
 export const STAGE_RULES: Readonly<Record<DeliberationStage, StageRule>> = deepFreeze({
   preguntas_aclaratorias: {
@@ -153,30 +153,24 @@ export const STAGE_RULES: Readonly<Record<DeliberationStage, StageRule>> = deepF
     positionModes: ['pregunta_aclaratoria'],
     reasonRelations: ['responde'],
     alternativeMustSupersede: false,
-    sealsAuthorship: false,
   },
   perspectivas: {
     kinds: ['posicion', 'razon', 'evidencia', 'supuesto'],
     positionModes: ['afirmacion'],
     reasonRelations: ['sostiene'],
     alternativeMustSupersede: false,
-    // La única etapa con autoría sellada. Ver `authorship.ts`.
-    sealsAuthorship: true,
   },
-  perspectivas_revelando: NO_WRITING,
   construccion_alternativas: {
     kinds: ['alternativa', 'posicion', 'razon', 'evidencia', 'supuesto'],
     positionModes: ['pregunta_aclaratoria', 'afirmacion'],
     reasonRelations: ['responde', 'sostiene'],
     alternativeMustSupersede: false,
-    sealsAuthorship: false,
   },
   objeciones: {
     kinds: ['riesgo', 'razon', 'evidencia', 'supuesto'],
     positionModes: [],
     reasonRelations: ['responde', 'sostiene'],
     alternativeMustSupersede: false,
-    sealsAuthorship: false,
   },
   enmiendas: {
     kinds: ['alternativa', 'razon', 'evidencia', 'supuesto'],
@@ -184,7 +178,6 @@ export const STAGE_RULES: Readonly<Record<DeliberationStage, StageRule>> = deepF
     reasonRelations: ['responde', 'sostiene'],
     // Una enmienda que no supersede nada es una alternativa nueva fuera de plazo.
     alternativeMustSupersede: true,
-    sealsAuthorship: false,
   },
   listo_para_decidir: NO_WRITING,
 } as const);
@@ -196,11 +189,6 @@ export function stageRule(stage: DeliberationStage): StageRule {
 /** ¿La etapa admite ese tipo de aporte? Sin mirar modos ni relaciones. */
 export function stageAdmits(stage: DeliberationStage, kind: ContributionKind): boolean {
   return STAGE_RULES[stage].kinds.includes(kind);
-}
-
-/** ¿La autoría se sella en esta etapa? Sólo `perspectivas`. */
-export function stageSealsAuthorship(stage: DeliberationStage): boolean {
-  return STAGE_RULES[stage].sealsAuthorship;
 }
 
 /** Etapas que no admiten ningún aporte. Para los tests exhaustivos y para la interfaz. */

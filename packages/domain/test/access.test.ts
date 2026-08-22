@@ -157,6 +157,62 @@ describe('autorización VERTICAL', () => {
   });
 });
 
+describe('autorización con alcance de ETAPA (ADR-0049)', () => {
+  const enPerspectivas = {
+    kind: 'deliberation' as const,
+    stage: 'perspectivas' as const,
+    circleId: CIRCULO,
+  };
+  const yaCerrada = {
+    kind: 'deliberation' as const,
+    stage: 'construccion_alternativas' as const,
+    circleId: CIRCULO,
+  };
+
+  it('mientras la etapa sigue vigente NADIE lee la autoría, ni siquiera quien facilita', () => {
+    // Lucía facilita y Gabriel es garantías: el rol más alto del círculo no adelanta el dato.
+    for (const actor of [daniela, julian, lucia, gabriel]) {
+      expect(denialReason(actor, 'deliberation:read-authorship', enPerspectivas)).toBe(
+        'STAGE_STILL_OPEN',
+      );
+    }
+  });
+
+  it('cerrada la etapa, la conceden exactamente los mismos actores', () => {
+    for (const actor of [daniela, julian, lucia, gabriel]) {
+      expect(can(actor, 'deliberation:read-authorship', yaCerrada)).toBe(true);
+    }
+  });
+
+  it('sin etapa declarada se DENIEGA: la ausencia de política nunca concede', () => {
+    expect(
+      denialReason(daniela, 'deliberation:read-authorship', {
+        kind: 'deliberation',
+        circleId: CIRCULO,
+      }),
+    ).toBe('STAGE_UNKNOWN');
+  });
+
+  it('la etapa no reemplaza las demás comprobaciones: identidad, rol y círculo siguen', () => {
+    expect(denialReason(ANONYMOUS, 'deliberation:read-authorship', yaCerrada)).toBe(
+      'NOT_AUTHENTICATED',
+    );
+    expect(denialReason(admin, 'deliberation:read-authorship', yaCerrada)).toBe('ROLE_NOT_GRANTED');
+    expect(
+      denialReason({ ...daniela, circles: [OTRO_CIRCULO] }, 'deliberation:read-authorship', {
+        ...yaCerrada,
+      }),
+    ).toBe('NOT_IN_CIRCLE');
+  });
+
+  it('es la ÚNICA acción con alcance temporal: ninguna otra mira la etapa', () => {
+    for (const accion of ACTIONS) {
+      const conEtapa = ruleFor(accion).deniedDuringStage !== undefined;
+      expect(conEtapa).toBe(accion === 'deliberation:read-authorship');
+    }
+  });
+});
+
 describe('autorización HORIZONTAL — el mismo rol, y aun así no', () => {
   it('Daniela y Julián tienen el mismo rol y distinta identidad', () => {
     expect(daniela.roles).toEqual(julian.roles);

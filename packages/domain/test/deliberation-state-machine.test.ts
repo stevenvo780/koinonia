@@ -4,6 +4,16 @@
  * Lo que se prueba aquí no es «el camino feliz avanza»: es que **toda** pareja ausente de la tabla
  * se rechaza. Por eso los recorridos son productos cartesianos completos y no una lista de casos
  * elegidos a mano: un caso elegido a mano prueba lo que quien lo escribió ya sospechaba.
+ *
+ * ═══ Prueba retirada en ADR-0049, y por qué ═══
+ *
+ * Una: «la autoría sólo se sella en `perspectivas`». Ya no hay sellado, y la tabla de etapas dejó de
+ * declarar nada sobre autoría a propósito —esa regla vive entera en `access.ts`, para que no haya
+ * dos fuentes de verdad que puedan contradecirse—. Lo que aquella prueba defendía se prueba ahora en
+ * `deliberation-authorship.test.ts` y en `access.test.ts`, sobre la regla de autorización.
+ *
+ * Las demás siguen aquí, con los números actualizados a **seis** etapas: desapareció
+ * `perspectivas_revelando`, que sólo existía para destapar autorías.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -26,7 +36,6 @@ import {
   STAGE_TRANSITIONS,
   stageAdmits,
   stageRule,
-  stageSealsAuthorship,
   stagesWithoutWriting,
   TERMINAL_STAGE,
 } from '../src/deliberation/index.js';
@@ -78,19 +87,17 @@ describe('máquina de etapas', () => {
   it('la cadena es exactamente la del diseño, sin atajos ni vueltas', () => {
     expect(STAGE_TRANSITIONS.map((t) => [t.from, t.to])).toEqual([
       ['preguntas_aclaratorias', 'perspectivas'],
-      ['perspectivas', 'perspectivas_revelando'],
-      ['perspectivas_revelando', 'construccion_alternativas'],
+      ['perspectivas', 'construccion_alternativas'],
       ['construccion_alternativas', 'objeciones'],
       ['objeciones', 'enmiendas'],
       ['enmiendas', 'listo_para_decidir'],
     ]);
   });
 
-  it('las siete etapas son las del diseño y en ese orden', () => {
+  it('las seis etapas son las del diseño y en ese orden', () => {
     expect(DELIBERATION_STAGES).toEqual([
       'preguntas_aclaratorias',
       'perspectivas',
-      'perspectivas_revelando',
       'construccion_alternativas',
       'objeciones',
       'enmiendas',
@@ -123,8 +130,8 @@ describe('máquina de etapas', () => {
         if (nextStage(from) !== to) ilegales.push([from, to]);
       }
     }
-    // 7 × 7 = 49 parejas, de las cuales 6 son legales.
-    expect(ilegales).toHaveLength(43);
+    // 6 × 6 = 36 parejas, de las cuales 5 son legales.
+    expect(ilegales).toHaveLength(31);
     for (const [from, to] of ilegales) {
       expect(() => {
         assertStageTransition(from, to);
@@ -143,7 +150,7 @@ describe('máquina de etapas', () => {
 
   it('no se puede volver atrás ni saltar dos etapas', () => {
     expect(isLegalStageTransition('perspectivas', 'preguntas_aclaratorias')).toBe(false);
-    expect(isLegalStageTransition('perspectivas', 'construccion_alternativas')).toBe(false);
+    expect(isLegalStageTransition('perspectivas', 'objeciones')).toBe(false);
     expect(isLegalStageTransition('preguntas_aclaratorias', 'listo_para_decidir')).toBe(false);
   });
 });
@@ -157,8 +164,6 @@ describe('tabla de qué admite cada etapa', () => {
     expect(STAGE_RULES.perspectivas.kinds).toEqual(['posicion', 'razon', 'evidencia', 'supuesto']);
     expect(STAGE_RULES.perspectivas.positionModes).toEqual(['afirmacion']);
     expect(STAGE_RULES.perspectivas.reasonRelations).toEqual(['sostiene']);
-
-    expect(STAGE_RULES.perspectivas_revelando.kinds).toEqual([]);
 
     expect(STAGE_RULES.construccion_alternativas.kinds).toEqual([
       'alternativa',
@@ -176,14 +181,8 @@ describe('tabla de qué admite cada etapa', () => {
     expect(STAGE_RULES.listo_para_decidir.kinds).toEqual([]);
   });
 
-  it('las dos etapas sin escritura son las del diseño', () => {
-    expect(stagesWithoutWriting()).toEqual(['perspectivas_revelando', 'listo_para_decidir']);
-  });
-
-  it('la autoría sólo se sella en `perspectivas`', () => {
-    for (const stage of DELIBERATION_STAGES) {
-      expect(stageSealsAuthorship(stage)).toBe(stage === 'perspectivas');
-    }
+  it('la única etapa sin escritura es la terminal', () => {
+    expect(stagesWithoutWriting()).toEqual(['listo_para_decidir']);
   });
 
   it('la tabla está congelada: nadie le añade un tipo en tiempo de ejecución', () => {
@@ -217,7 +216,7 @@ describe('tabla de qué admite cada etapa', () => {
         }
       }
     }
-    // 3 + 4 + 0 + 5 + 4 + 4 + 0 = 20 combinaciones admitidas de 42.
+    // 3 + 4 + 5 + 4 + 4 + 0 = 20 combinaciones admitidas de 36.
     expect(admitidos).toBe(20);
   });
 
@@ -269,13 +268,11 @@ describe('tabla de qué admite cada etapa', () => {
     }).not.toThrow();
   });
 
-  it('las dos etapas sin escritura rechazan los seis tipos', () => {
-    for (const stage of ['perspectivas_revelando', 'listo_para_decidir'] as const) {
-      for (const kind of CONTRIBUTION_KINDS) {
-        expect(() => {
-          assertBodyAllowedInStage(stage, bodyOf(kind, 'afirmacion'), cid(9));
-        }).toThrow(expect.objectContaining({ code: 'CONTRIBUTION_KIND_NOT_ALLOWED' }));
-      }
+  it('la etapa terminal rechaza los seis tipos', () => {
+    for (const kind of CONTRIBUTION_KINDS) {
+      expect(() => {
+        assertBodyAllowedInStage('listo_para_decidir', bodyOf(kind, 'afirmacion'), cid(9));
+      }).toThrow(expect.objectContaining({ code: 'CONTRIBUTION_KIND_NOT_ALLOWED' }));
     }
   });
 });

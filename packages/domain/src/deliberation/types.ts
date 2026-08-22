@@ -29,14 +29,7 @@
  */
 
 import { InvalidIdError, PreconditionError } from '../errors.js';
-import {
-  type Brand,
-  type CircleId,
-  type Hash,
-  ID_PATTERN,
-  type Instant,
-  type MemberId,
-} from '../ids.js';
+import { type Brand, type CircleId, ID_PATTERN, type Instant, type MemberId } from '../ids.js';
 import type { ChainedEvent, ChainedLog } from '../workspace/chain.js';
 import { assertLedgerText, MAX_BODY_LENGTH, MAX_TITLE_LENGTH } from '../workspace/text.js';
 
@@ -48,16 +41,6 @@ import { assertLedgerText, MAX_BODY_LENGTH, MAX_TITLE_LENGTH } from '../workspac
 export type DeliberationId = Brand<string, 'DeliberationId'>;
 /** Identificador opaco de un aporte. Es la clave de las aristas del grafo. */
 export type ContributionId = Brand<string, 'ContributionId'>;
-/**
- * 128 bits de la apertura del compromiso de autoría. **Entra como dato**: el dominio no produce
- * aleatoriedad (ADR-0001), igual que no lee relojes.
- */
-export type AuthorNonce = Brand<string, 'AuthorNonce'>;
-/**
- * 128 bits secretos por deliberación. Viven fuera del ledger hasta la revelación: sin ellos el
- * seudónimo público no admite ataques de diccionario sobre el padrón.
- */
-export type DeliberationNonce = Brand<string, 'DeliberationNonce'>;
 /**
  * 128 bits que fijan el orden de presentación de una etapa. Entra como dato en el evento que abre la
  * etapa, para que el orden sea recomputable por cualquiera que lea el historial.
@@ -80,16 +63,6 @@ export function contributionId(value: string): ContributionId {
   return value as ContributionId;
 }
 
-export function authorNonce(value: string): AuthorNonce {
-  assertOpaque('AuthorNonce', value);
-  return value as AuthorNonce;
-}
-
-export function deliberationNonce(value: string): DeliberationNonce {
-  assertOpaque('DeliberationNonce', value);
-  return value as DeliberationNonce;
-}
-
 export function presentationSeed(value: string): PresentationSeed {
   assertOpaque('PresentationSeed', value);
   return value as PresentationSeed;
@@ -100,15 +73,15 @@ export function presentationSeed(value: string): PresentationSeed {
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
- * Las siete ventanas de escritura, en el único orden en que pueden recorrerse.
+ * Las seis ventanas de escritura, en el único orden en que pueden recorrerse.
  *
- * `perspectivas_revelando` y `listo_para_decidir` **no admiten ningún aporte**: la primera existe
- * para destapar la autoría de lo escrito a ciegas, y la segunda es terminal.
+ * `listo_para_decidir` **no admite ningún aporte**: es terminal. No hay ninguna etapa intermedia
+ * dedicada a destapar autorías porque ya no hay nada que destapar (ADR-0049): el autor viaja en el
+ * evento desde el principio y lo que cambia con la etapa es **quién puede leerlo**.
  */
 export type DeliberationStage =
   | 'preguntas_aclaratorias'
   | 'perspectivas'
-  | 'perspectivas_revelando'
   | 'construccion_alternativas'
   | 'objeciones'
   | 'enmiendas'
@@ -117,7 +90,6 @@ export type DeliberationStage =
 export const DELIBERATION_STAGES: readonly DeliberationStage[] = [
   'preguntas_aclaratorias',
   'perspectivas',
-  'perspectivas_revelando',
   'construccion_alternativas',
   'objeciones',
   'enmiendas',
@@ -217,31 +189,6 @@ export type ContributionBody =
   PositionBody | ReasonBody | EvidenceBody | AssumptionBody | RiskBody | AlternativeBody;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// Autoría
-// ═════════════════════════════════════════════════════════════════════════════════════════════
-
-/**
- * Autoría sellada: en el evento sólo viaja el compromiso.
- *
- * `authorId`, `nonce` y `deliberationNonce` **no están aquí y no pueden estarlo**: el evento es
- * público en el historial y un campo «oculto por la interfaz» no oculta nada. Ver `authorship.ts`.
- */
-export interface SealedAuthorship {
-  readonly mode: 'sealed';
-  readonly authorCommitment: Hash;
-  /** Atribución estable sólo dentro de esta deliberación; no identifica al autor. */
-  readonly authorPseudonym: Hash;
-}
-
-/** Autoría pública: el autor viaja en claro, como en el resto de los agregados de trabajo. */
-export interface PublicAuthorship {
-  readonly mode: 'public';
-  readonly authorId: MemberId;
-}
-
-export type Authorship = SealedAuthorship | PublicAuthorship;
-
-// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Eventos
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -267,16 +214,15 @@ export type DeliberationPayload =
       /** La etapa en la que se escribió. El replay comprueba que coincide con la del agregado. */
       readonly stage: DeliberationStage;
       readonly body: ContributionBody;
-      readonly authorship: Authorship;
-      readonly supersedesContributionId?: ContributionId | undefined;
-    }
-  | {
-      readonly type: 'ContributionAuthorRevealed';
-      readonly contributionId: ContributionId;
+      /**
+       * Quien lo escribió, en claro y en todas las etapas.
+       *
+       * Tiene que coincidir con el `actor` del sobre encadenado, y el replay lo comprueba: por eso
+       * la autorización del acto se puede **reejecutar** sobre el historial, cosa que el esquema
+       * sellado no permitía (ADR-0049).
+       */
       readonly authorId: MemberId;
-      readonly nonce: AuthorNonce;
-      /** Se publica sólo al destapar la autoría para comprobar también el seudónimo. */
-      readonly deliberationNonce: DeliberationNonce;
+      readonly supersedesContributionId?: ContributionId | undefined;
     }
   | {
       readonly type: 'StageAdvanced';
@@ -299,15 +245,12 @@ export interface ContributionRecord {
   readonly contributionId: ContributionId;
   readonly stage: DeliberationStage;
   readonly body: ContributionBody;
-  readonly authorship: Authorship;
+  /** Quien lo escribió. Leerlo exige `deliberation:read-authorship`, que la etapa puede denegar. */
+  readonly authorId: MemberId;
   readonly supersedesContributionId: ContributionId | undefined;
   readonly submittedAt: Instant;
   /** Posición en la cadena. Toda referencia de este aporte apunta a un `seq` menor que éste. */
   readonly seq: number;
-  /** Autoría destapada; `undefined` mientras el compromiso siga sellado. */
-  readonly revealedAuthorId: MemberId | undefined;
-  /** Apertura publicada en la revelación. Permite a cualquiera recomputar el compromiso. */
-  readonly revealedNonce: AuthorNonce | undefined;
 }
 
 export interface DeliberationState {
@@ -349,11 +292,19 @@ export function findContribution(
   return state.contributions.find((c) => c.contributionId === id);
 }
 
-/** Aportes sellados que todavía no destaparon su autoría. */
-export function unrevealedContributions(state: DeliberationState): readonly ContributionRecord[] {
-  return state.contributions.filter(
-    (c) => c.authorship.mode === 'sealed' && c.revealedAuthorId === undefined,
-  );
+/**
+ * Lo que esa persona ya escribió en esa etapa. Es la base del tope anti-inundación.
+ *
+ * Se cuenta sobre el `authorId` del aporte, que es el mismo dato que el `actor` del sobre. Contar
+ * sobre un seudónimo derivado —lo que exigía el esquema retirado— obligaba a un secreto por
+ * deliberación sin dueño natural para conseguir exactamente este número (ADR-0049).
+ */
+export function contributionsOfAuthorInStage(
+  state: DeliberationState,
+  authorId: MemberId,
+  stage: DeliberationStage,
+): readonly ContributionRecord[] {
+  return state.contributions.filter((c) => c.authorId === authorId && c.stage === stage);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
