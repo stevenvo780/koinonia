@@ -43,15 +43,24 @@ function particion(asignaciones: ReadonlyArray<number>): Map<number, number[]> {
 }
 
 describe('tope de grupos', () => {
-  it('sigue la fórmula min(12, ⌊√(n/2)⌋) y nunca baja de 2', () => {
+  it('sigue la fórmula min(5, ⌊√(n/2)⌋) y nunca baja de 2', () => {
     expect(kMaximoPara(2)).toBe(2);
     expect(kMaximoPara(8)).toBe(2);
     expect(kMaximoPara(18)).toBe(3);
     expect(kMaximoPara(32)).toBe(4);
     expect(kMaximoPara(50)).toBe(5);
-    expect(kMaximoPara(200)).toBe(10);
-    // El tope duro: por muchos participantes que haya, no se pasa de 12 grupos.
-    expect(kMaximoPara(5000)).toBe(12);
+    // El tope duro es 5, y lo manda ADR-0038 («`k` por silueta en 2..5»). Antes era 12: con
+    // doce grupos el mapa deja de ser legible, que es lo único para lo que se dibuja.
+    expect(kMaximoPara(200)).toBe(5);
+    expect(kMaximoPara(5000)).toBe(5);
+  });
+
+  it('ningún tamaño de asamblea se sale del rango 2..5', () => {
+    for (let n = 2; n <= 3000; n++) {
+      const k = kMaximoPara(n);
+      expect(k).toBeGreaterThanOrEqual(2);
+      expect(k).toBeLessThanOrEqual(5);
+    }
   });
 });
 
@@ -79,7 +88,7 @@ describe('grupos deterministas', () => {
       12,
       555,
     );
-    const r = kmeansDeterminista(X, 3);
+    const r = kmeansDeterminista(X, { kPreferido: 3 });
     expect(r.k).toBe(3);
     const p = particion(r.asignaciones);
     expect(p.size).toBe(3);
@@ -138,7 +147,7 @@ describe('grupos deterministas', () => {
       5,
       1,
     );
-    const r = kmeansDeterminista(X, 99);
+    const r = kmeansDeterminista(X, { kPreferido: 99 });
     expect(r.k).toBe(kMaximoPara(10));
   });
 });
@@ -156,7 +165,7 @@ describe('etiquetado estable', () => {
       10,
       2024,
     );
-    const r = kmeansDeterminista(X, 3);
+    const r = kmeansDeterminista(X, { kPreferido: 3 });
     const primeras = r.centroides.map((c) => c[0] ?? 0);
     for (let g = 1; g < primeras.length; g++) {
       expect(primeras[g] ?? 0).toBeGreaterThanOrEqual(primeras[g - 1] ?? 0);
@@ -177,7 +186,7 @@ describe('etiquetado estable', () => {
         10,
         7,
       ),
-      2,
+      { kPreferido: 2 },
     );
     const b = kmeansDeterminista(
       nube(
@@ -188,10 +197,151 @@ describe('etiquetado estable', () => {
         10,
         7,
       ),
-      2,
+      { kPreferido: 2 },
     );
     expect((a.centroides[0]?.[0] ?? 0) < (a.centroides[1]?.[0] ?? 0)).toBe(true);
     expect((b.centroides[0]?.[0] ?? 0) < (b.centroides[1]?.[0] ?? 0)).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ADR-0038 — histéresis entre instantáneas
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe('histéresis entre instantáneas', () => {
+  it('conserva el número de grupos anterior cuando la mejora es pequeña', () => {
+    // Tres nubes, la tercera pegada a la segunda: k=3 gana por poco a k=2. Sin histéresis el
+    // mapa se redibujaría con un grupo más cada vez que la ventaja cambia de signo, y ese
+    // vaivén es exactamente lo que ADR-0038 manda evitar.
+    const X = nube(
+      [
+        [0, 0],
+        [6, 0],
+        [7.5, 1],
+      ],
+      10,
+      4242,
+    );
+    const libre = kmeansDeterminista(X);
+    const conAnterior = kmeansDeterminista(X, {
+      kAnterior: 2,
+      centrosAnteriores: [
+        [0, 0],
+        [6.75, 0.5],
+      ],
+    });
+    // El caso está elegido para que sin histéresis salgan más de dos grupos.
+    expect(libre.k).toBeGreaterThan(2);
+    expect(libre.kConservadoPorHisteresis).toBe(false);
+    // Y con instantánea anterior se queda en dos, diciéndolo.
+    expect(conAnterior.k).toBe(2);
+    expect(conAnterior.kConservadoPorHisteresis).toBe(true);
+    // La separación máxima que se publica sigue siendo la del MEJOR k, no la del conservado:
+    // el umbral de no-facción pregunta si existe algún agrupamiento bueno, no si lo es el que
+    // acabamos de elegir.
+    expect(conAnterior.separacionMaxima).toBeCloseTo(libre.separacionMaxima, 12);
+  });
+
+  it('pero cede ante una mejora clara: la histéresis no es un candado', () => {
+    // Tres nubes bien separadas: k=3 es indiscutiblemente mejor que k=2, así que el `k` anterior
+    // no se conserva. Si se conservara, el mapa se quedaría congelado en una foto vieja y la
+    // histéresis dejaría de ser prudencia para ser ceguera.
+    const X = nube(
+      [
+        [0, 0],
+        [20, 0],
+        [10, 20],
+      ],
+      12,
+      99,
+    );
+    const r = kmeansDeterminista(X, {
+      kAnterior: 2,
+      centrosAnteriores: [
+        [0, 0],
+        [15, 10],
+      ],
+    });
+    expect(r.k).toBe(3);
+    expect(r.kConservadoPorHisteresis).toBe(false);
+  });
+
+  it('hereda la numeración de la instantánea anterior en vez de reordenar por la coordenada', () => {
+    // Dos nubes; los centros anteriores están cruzados respecto del orden por coordenada. Sin
+    // herencia, la nube de la izquierda sería el grupo 0; con herencia, conserva el nombre que
+    // ya tenía. Es lo que hace que «Grupo 2» siga nombrando al mismo grupo entre dos corridas.
+    const X = nube(
+      [
+        [0, 0],
+        [10, 0],
+      ],
+      10,
+      77,
+    );
+    const sinHerencia = kmeansDeterminista(X, { kPreferido: 2 });
+    const conHerencia = kmeansDeterminista(X, {
+      kPreferido: 2,
+      centrosAnteriores: [
+        [10.2, 0.1],
+        [-0.3, 0.2],
+      ],
+    });
+    // Sin herencia: el grupo 0 es el de la izquierda (primera coordenada menor).
+    expect(sinHerencia.centroides[0]?.[0] ?? 0).toBeLessThan(sinHerencia.centroides[1]?.[0] ?? 0);
+    // Con herencia: el grupo 0 es el que estaba cerca del centro anterior número 0, o sea el de
+    // la derecha. Los nombres se han quedado con su grupo.
+    expect(conHerencia.centroides[0]?.[0] ?? 0).toBeGreaterThan(
+      conHerencia.centroides[1]?.[0] ?? 0,
+    );
+    // Y las etiquetas de cada punto se han invertido en consecuencia, no revuelto.
+    for (let i = 0; i < X.length; i++) {
+      expect(conHerencia.asignaciones[i]).toBe(1 - (sinHerencia.asignaciones[i] ?? 0));
+    }
+  });
+
+  it('si el número de grupos cambió, no hereda nada y vuelve a ordenar por la coordenada', () => {
+    // Emparejar tres grupos con dos obligaría a decidir cuál «hereda» un nombre y cuál lo
+    // estrena, y esa continuidad no está en los datos. Se prefiere la regla simple y declarada.
+    const X = nube(
+      [
+        [0, 0],
+        [10, 0],
+        [20, 0],
+      ],
+      8,
+      5,
+    );
+    const r = kmeansDeterminista(X, {
+      kPreferido: 3,
+      centrosAnteriores: [
+        [20, 0],
+        [0, 0],
+      ],
+    });
+    const primeras = r.centroides.map((c) => c[0] ?? 0);
+    for (let g = 1; g < primeras.length; g++) {
+      expect(primeras[g] ?? 0).toBeGreaterThanOrEqual(primeras[g - 1] ?? 0);
+    }
+  });
+
+  it('la histéresis no introduce azar: dos corridas con la misma instantánea coinciden', () => {
+    const X = nube(
+      [
+        [0, 0],
+        [3, 3],
+        [6, 0],
+      ],
+      9,
+      31,
+    );
+    const opciones = {
+      kAnterior: 2,
+      centrosAnteriores: [
+        [0.1, 0.1],
+        [4.5, 1.5],
+      ],
+    };
+    expect(kmeansDeterminista(X, opciones)).toEqual(kmeansDeterminista(X, opciones));
   });
 });
 
@@ -210,9 +360,9 @@ describe('casos límite', () => {
     // Once puntos juntos y uno lejísimos: al pedir cuatro grupos, alguno se queda vacío en el
     // camino. Debe repoblarse con el punto más alejado, y el resultado seguir siendo estable.
     const X: Matrix = [...Array.from({ length: 11 }, () => [0, 0]), [100, 100]];
-    const r = kmeansDeterminista(X, 4);
+    const r = kmeansDeterminista(X, { kPreferido: 4 });
     expect(r.asignaciones).toHaveLength(12);
-    expect(kmeansDeterminista(X, 4)).toEqual(r);
+    expect(kmeansDeterminista(X, { kPreferido: 4 })).toEqual(r);
     expect(Number.isFinite(r.inercia)).toBe(true);
   });
 

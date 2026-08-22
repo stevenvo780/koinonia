@@ -47,10 +47,15 @@ recalculable, compromiso irrevocable.
 
 ### El cálculo, y por qué cada pieza es la que es
 
-- **PCA de 2 componentes por *power iteration* determinista**, con deflación de Hotelling para la
-  segunda. El vector inicial es fijo —`1/√m` en cada posición—, no aleatorio, y el signo de cada
-  autovector se **canonicaliza**: el signo de un autovector es arbitrario, así que sin canonizar dos
-  ejecuciones equivalentes podrían devolver el mapa espejado. La regla es `s = Σ v_i`; si `|s|` es
+- **Factorización enmascarada de 2 factores** (ADR-0038), por mínimos cuadrados alternados: el
+  modelo es `y_ij ≈ u_i · v_j` sobre los residuos `voto − media de la afirmación`, y **la pérdida se
+  evalúa sólo sobre las celdas observadas**. El arranque son los dos ejes de una *power iteration*
+  determinista sobre el segundo momento por pares completos `G_ab = Σ_{i: a y b observadas} y_ia·y_ib`;
+  el vector inicial de esa iteración es fijo —`1/√m` en cada posición—, no aleatorio. El par de
+  factores está determinado sólo salvo una transformación 2×2, así que se fija una parametrización
+  canónica: ejes ortonormales, girados a los de mayor dispersión de las coordenadas, y con el signo
+  **canonicalizado** —el signo de un eje es arbitrario, así que sin canonizar dos ejecuciones
+  equivalentes podrían devolver el mapa espejado—. La regla es `s = Σ v_i`; si `|s|` es
   significativo, `v *= sign(s)`; si no, manda la componente de mayor magnitud, con desempate por
   índice menor.
 - **k-means con inicialización *furthest-first* (Gonzalez), no k-means++.** No es una preferencia
@@ -60,6 +65,21 @@ recalculable, compromiso irrevocable.
 - **Etiquetado estable**: al terminar Lloyd, los grupos se renumeran ordenando por la primera
   componente. Sin eso, «Grupo 1» sería un accidente del orden de inicialización y cambiaría de
   significado entre dos ejecuciones idénticas.
+- **`k` por silueta en 2..5** y **umbral de no-facción**, los dos de ADR-0038. El tope de 5 no es
+  estadístico: por encima de cinco, un mapa de facciones deja de ser legible, y este análisis existe
+  para que alguien lo lea. Por debajo del umbral no se publican grupos: se publica
+  `FaccionesNoDetectadas`, que es un **desenlace normal y no un error**, y por eso viaja como
+  variante de una unión discriminada —con un campo opcional se podría ignorar; así el compilador
+  obliga a contemplarlo—. Sin facciones se sigue publicando el consenso: la población entera es el
+  único grupo y el `GIC` sobre ese grupo único es el acuerdo general.
+- **Histéresis entre instantáneas** (ADR-0038): con la instantánea anterior delante se conserva el
+  `k` anterior salvo mejora clara de la separación, y los grupos **heredan su numeración** por
+  emparejamiento con los centros anteriores. Lo segundo no es un adorno de lo primero: la numeración
+  por defecto ordena los grupos por su primera coordenada, así que un desplazamiento mínimo que cruce
+  dos centros los intercambia de nombre y el mapa parece haber cambiado cuando no ha cambiado nada.
+  ADR-0038 pide además «semilla fija por snapshot»; aquí **no hay semilla en absoluto**, que es una
+  garantía estrictamente más fuerte. La instantánea entra y sale como dato: el paquete no guarda
+  estado.
 - **Estadísticos con suavizado de Laplace α = 1**: `p̂ = (acuerdos + 1) / (observaciones + 2)`, que
   garantiza `0 < p̂ < 1` por construcción y evita que un grupo pequeño con dos respuestas produzca un
   `0` o un `1` que dominen el producto.
@@ -68,9 +88,17 @@ recalculable, compromiso irrevocable.
   con la que vetar. **Es el producto y no la media**, y ese es el punto entero: un `p̂` cercano a cero
   arrastra todo el `GIC` hacia cero, de modo que basta un grupo disidente para que la afirmación deje
   de ser puente. La media perdonaría al grupo disidente si los demás son entusiastas.
-- El silencio se distingue de la ausencia: `paso` es un dato observado y `null` es «no lo vio». Los
-  huecos se imputan por la media de la columna sobre las observaciones; **`paso` nunca se imputa**,
-  porque la persona lo vio y eligió no pronunciarse.
+- **Filtro de significación `z₁ > 1,2816`** (ADR-0038), con `z₁ = 2·√n_v·(p̂ − 0,5)` y exigido en
+  **todos** los grupos que observaron la afirmación. El suavizado de Laplace mantiene `p̂` lejos de
+  los extremos pero no dice nada del tamaño de la muestra: tres acuerdos de tres dan `p̂ = 0,8`,
+  y sin filtro una afirmación que vieron seis personas encabeza la lista por delante de una que
+  votaron doscientas. Esa lista es la que ADR-0038 convierte en agenda congelada de la asamblea. Se
+  publican las dos: la lista **filtrada**, que es la que va a pantalla, y la **tabla completa** con
+  el `GIC`, el `z₁` mínimo y si cumple el filtro, para que quien recompute vea también lo descartado.
+- El silencio se distingue de la ausencia: `paso` es un dato observado y `null` es «no lo vio». La
+  celda ausente **no se imputa**: queda fuera de la máscara y por tanto fuera de la pérdida. `paso`
+  entra en la máscara como observación de pleno derecho, porque la persona lo vio y eligió no
+  pronunciarse.
 
 ### Determinismo: una parte es demostración y la otra es evidencia
 
@@ -133,26 +161,70 @@ Cumple ADR-0041: **ninguna cadena visible dice «PCA», «k-means», «clúster�
 que la capa de presentación los pruebe como literales en vez de reescribirlos. El detalle técnico de
 los errores va en sus campos, no en el mensaje, porque el mensaje puede acabar en pantalla.
 
-## Divergencias con ADR-0038, declaradas y sin resolver
+## Divergencias con ADR-0038: las cinco, cerradas
 
-ADR-0038 no se reabre aquí. Se registra que **la implementación no coincide con cinco puntos de su
-sección de decisión**, para que la discrepancia esté a la vista y la decida el arquitecto, en lugar de
-quedar enterrada en el código:
+Las cinco divergencias que este ADR declaró abiertas **se han cerrado corrigiendo el paquete**. La
+regla de precedencia del proyecto es `GOVERNANCE.md → THREAT_MODEL.md → docs/adr/ → research/`, así
+que manda ADR-0038 y se corrige el código: **ADR-0038 no se ha tocado**.
 
-| ADR-0038 manda | El paquete hace |
-|---|---|
-| Factorización enmascarada de 2 factores, **no imputación por la media** | Imputación por la media de la columna sobre las observaciones |
-| `k` por silueta **en 2..5** | `k` por silueta en `2 .. min(12, ⌊√(n/2)⌋)` |
-| **Histéresis** entre snapshots, conservando el `k` anterior salvo mejora clara | Sin histéresis: no hay noción de snapshot anterior en el paquete |
-| **Umbral de no-facción**: silueta máxima < ~0,25 ⇒ `FaccionesNoDetectadas` | No existe. El único desenlace sin grupos es `SinVariacion`, que es un caso distinto y mucho más estrecho |
-| Filtro `z₁ > 1,2816` sobre las afirmaciones puente | No existe; el ranking sale por `GIC` sin filtro de significación |
+| ADR-0038 manda | Qué hacía el paquete | Qué hace ahora |
+|---|---|---|
+| Factorización enmascarada de 2 factores, **no imputación por la media** | Rellenaba cada hueco con la media de la columna y proyectaba la fila entera | Mínimos cuadrados alternados sobre las celdas **observadas**; el hueco no recibe valor (`src/factorizacion.ts`) |
+| `k` por silueta **en 2..5** | `2 .. min(12, ⌊√(n/2)⌋)` | `2 .. min(5, ⌊√(n/2)⌋)` |
+| **Histéresis** entre snapshots, conservando el `k` anterior salvo mejora clara | No existía la noción de instantánea anterior | `opciones.anterior` conserva el `k` salvo mejora clara y hace **heredar la numeración** de los grupos |
+| **Umbral de no-facción**: silueta máxima < ~0,25 ⇒ `FaccionesNoDetectadas` | No existía; siempre se publicaban grupos | Desenlace `FaccionesNoDetectadas` como variante del resultado, con el acuerdo general publicado |
+| Filtro `z₁ > 1,2816` sobre las afirmaciones puente | No existía | `z₁ = 2·√n_v·(p̂ − 0,5)` exigido en todos los grupos con observaciones |
 
-Las tres primeras son elecciones de implementación discutibles. **Las dos últimas son huecos
-funcionales:** sin umbral de no-facción, el paquete siempre encuentra grupos, incluso donde no los
-hay, y la pantalla «Consenso» de `PRODUCT.md` §4 promete literalmente «no hay grupos claros» como
-resultado posible. Sin el filtro de significación, una afirmación con poquísimas observaciones puede
-encabezar el ranking de puentes por el suavizado de Laplace. **Hasta que se cierren, la salida no
-debe presentarse a la asamblea.**
+**El determinismo sobrevive intacto**, que era la condición de todo el cambio. La invariancia frente
+a permutar participantes sigue siendo **exacta y por construcción**: la factorización enmascarada
+opera sobre la matriz canónica, que es idéntica bit a bit bajo cualquier permutación de filas, y
+todo lo que se ajusta después es una función de esa matriz y de nada más. Las pruebas de propiedad de
+`test/props/determinismo.test.ts` siguen en verde, con `numRuns: 1000` en la de participantes, y se
+han **reforzado**: ahora exigen además que el propio *desenlace* —grupos, «no hay grupos claros» o
+fallo tipado— no dependa del orden de llegada, en vez de saltarse el caso sin comprobar nada.
+
+### El sesgo que la máscara quita, medido
+
+Es la razón por la que ADR-0038 pide la vía enmascarada («no introduce sesgo contra quien votó
+poco»). Sobre `matrizConFacciones(60, 24, 3, ·)`, borrando votos a una misma persona y midiendo
+cuánto se encoge su distancia al centro del mapa (mediana sobre 40 semillas):
+
+| Vota | Con imputación por la media | Con factorización enmascarada |
+|---|---|---|
+| 75 % | 0,759 | 1,011 |
+| 50 % | 0,498 | 1,044 |
+| 25 % | 0,269 | 1,368 |
+
+La imputación encogía la posición de cada quien **exactamente a la fracción que había votado**: no
+era un detalle numérico, era una penalización silenciosa a quien menos participa, que lo empujaba
+hacia el grupo del centro. La máscara quita el sesgo; **no quita la incertidumbre**, y la fila del
+25 % lo enseña: con pocos votos la estimación es legítimamente más ruidosa.
+
+## Un hallazgo que ADR-0038 tendrá que decidir: el umbral de 0,25 casi nunca se alcanza
+
+El umbral de no-facción está implementado **tal como lo escribe ADR-0038** (`< ~0,25`), y esa cifra
+no se ha cambiado: un ADR no se reabre desde el código. Pero al implementarlo se midió, y el
+resultado hay que dejarlo escrito porque afecta a lo que la pantalla puede llegar a decir.
+
+Sobre **3 000 matrices sin facciones** —ruido simétrico, acuerdo dominante, continuo de opinión en
+una y en dos dimensiones latentes, y densidades del 10 % al 100 %, con `n` de 30 a 300—
+**ninguna** bajó de 0,25; el mínimo observado fue 0,2794. La causa es estructural, no del código: la
+silueta media del mejor `k-means` sobre una nube de dos dimensiones sin estructura ronda 0,35, y
+tomar el **máximo sobre `k ∈ 2..5`** eleva todavía más ese suelo. El umbral queda por debajo del
+suelo del propio estadístico.
+
+Dónde sí se alcanza: cuando `⌊√(n/2)⌋ < 3`, es decir con **17 participantes o menos**, sólo se
+examina `k = 2` y el suelo baja; ahí el ruido cae por debajo de 0,25 en torno al 10 % de los casos.
+Por eso las pruebas del umbral usan asambleas pequeñas: son las únicas en las que la regla, tal
+como está escrita, se activa.
+
+**Consecuencia práctica, sin adornos:** con un sondeo del tamaño para el que se diseñó el módulo
+(`n ≈ 300`), `FaccionesNoDetectadas` no se emitirá casi nunca, y la promesa de `PRODUCT.md` §4 de
+que la pantalla pueda decir «no hay grupos claros» sigue siendo, en la práctica, inalcanzable. El
+mecanismo existe, está probado y funciona; lo que no discrimina es el número. **Corregirlo exige un
+ADR nuevo que revise el umbral de ADR-0038** —o que lo sustituya por un criterio con un suelo
+conocido, como comparar la silueta observada contra la que da una permutación aleatoria de los mismos
+votos—. No se ha hecho aquí porque no es una decisión que corresponda tomar al implementar.
 
 ## Alternativas consideradas
 
@@ -195,7 +267,18 @@ debe presentarse a la asamblea.**
 - **El mapa será leído como verdad** por mucha gente, como ya advertía ADR-0038. Que la salida sea
   agenda es una decisión de gobierno, no una propiedad del cálculo, y depende de que la interfaz y el
   procedimiento la sostengan.
-- **Cinco divergencias con ADR-0038 quedan abiertas** (arriba), dos de ellas funcionales.
+- **El umbral de no-facción de ADR-0038 no discrimina a la escala prevista** (arriba, con la
+  medición). El mecanismo está y funciona; el número necesita un ADR nuevo.
+- **La máscara quita el sesgo pero sube la varianza.** Quien vota poco ya no es arrastrado al centro,
+  pero su posición es más incierta y puede caer en el grupo equivocado. Es el intercambio que ADR-0038
+  elige, y conviene saber que es un intercambio: sobre datos con dos facciones y ruido, quien emitió
+  sólo 3 votos cae en su bloque el 72 % de las veces con máscara y el 82 % con imputación.
+  La compensación que la investigación describe —un mínimo de ~7 votos para entrar al agrupamiento,
+  que `PRODUCT.md` §4 ya promete como «todavía no podemos ubicarte en el mapa»— **no está
+  implementada** y no es competencia de este ADR.
+- **El margen de la histéresis lo fija la implementación, no el ADR.** ADR-0038 exige conservar el
+  `k` anterior «salvo mejora clara» y no dice cuánta. Se ha declarado 0,05 sobre una escala de −1 a 1,
+  en un solo sitio y con su razón escrita.
 - **No hay interfaz.** La pantalla «Consenso» no existe, y con ella no existen la siembra obligatoria
   de doce afirmaciones ni la exigencia de tres contrarias a la posición de quien convoca, que en
   ADR-0038 son parte de la validez del sondeo, no adornos.
@@ -213,9 +296,19 @@ debe presentarse a la asamblea.**
   afirmación —la comprobación que delata una permutación aplicada de más—;
 - `0 < p̂ < 1` estricto bajo Laplace;
 - el reparto en grupos es una partición: los tamaños suman el total y nadie queda en dos grupos;
-- `2 ≤ k ≤ kMáximo` y `kMáximo` es el de la fórmula;
+- `2 ≤ k ≤ kMáximo`, `kMáximo` es el de la fórmula y nunca pasa de 5;
 - el `GIC` es el **producto** y no la media, comprobado contra el cálculo directo, y el ranking no
   sube nunca;
+- la pérdida de la factorización se evalúa **sólo sobre lo observado**: el residuo de cada persona es
+  perpendicular a los ejes en sus celdas votadas y **no** lo es si se cuentan también los huecos —el
+  contraste que separa la máscara de la imputación—;
+- borrar votos a una persona no encoge su posición hacia el centro del mapa;
+- una entrada sin facciones reales produce `FaccionesNoDetectadas`, y la persona lee literalmente
+  **«No hay grupos claros»**; una entrada con dos bloques nítidos sigue encontrando los dos grupos;
+- el filtro `z₁` deja fuera la afirmación de mayor `GIC` cuando la vieron seis personas, y la tabla
+  completa la sigue mostrando con su `z₁` para poder auditar el descarte;
+- histéresis: dos instantáneas sucesivas con un cambio pequeño no cambian el número de grupos ni
+  renumeran a nadie, y la histéresis **cede** cuando la estructura cambia de verdad;
 - canonicalización de signo: o la suma es positiva, o manda la componente de mayor magnitud;
 - matriz sin ninguna variación y matriz con columnas constantes salvo una: desenlace estable y error
   correcto de los dos posibles;

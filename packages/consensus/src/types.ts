@@ -43,10 +43,47 @@ export interface AfirmacionPuntuada {
   readonly probabilidadesPorGrupo: ReadonlyArray<number>;
   /** Grupo con probabilidad mínima (en caso de empate dentro de los grupos con observaciones). */
   readonly grupoMinimo: number;
+  /**
+   * `z₁` mínimo entre los grupos con observaciones (ADR-0038).
+   *
+   * `z₁(g,c) = 2·√n_v · (p̂(g,c) − 0,5)`: cuánto se aleja el acuerdo de un grupo del puro azar
+   * (`H₀: p = ½`), en desviaciones típicas. Se guarda el **mínimo** porque el filtro del ADR
+   * exige que lo cumplan **todos** los grupos, así que el mínimo decide. Si ningún grupo
+   * observó la afirmación vale `-Infinity`, que nunca pasa el filtro.
+   */
+  readonly zMinimo: number;
+  /**
+   * ¿Supera el filtro de significación `z₁ > 1,2816` en TODOS los grupos con observaciones?
+   *
+   * Es lo que separa «acuerdo transversal» de «coincidencia de cuatro respuestas». Sin él, el
+   * suavizado de Laplace deja que una afirmación con tres votos encabece el ranking de puentes.
+   */
+  readonly cumpleFiltroZ: boolean;
 }
 
-/** Resultado completo del análisis. */
+/**
+ * Instantánea del cálculo anterior, para la histéresis (ADR-0038).
+ *
+ * Es lo único que el paquete necesita recordar entre dos corridas sucesivas. Se devuelve en el
+ * resultado y se vuelve a entrar como opción; el paquete no guarda estado por su cuenta.
+ */
+export interface Instantanea {
+  /** Número de grupos que se publicó la vez anterior. */
+  readonly k: number;
+  /** Centros de los grupos anteriores, en el orden de sus identificadores (grupo 1 primero). */
+  readonly centros: ReadonlyArray<ReadonlyArray<number>>;
+}
+
+/** Opciones del análisis. Sin opciones, el análisis no tiene memoria: cada corrida es la primera. */
+export interface OpcionesAnalisis {
+  /** Instantánea de la corrida anterior. Si se pasa, se aplica la histéresis de ADR-0038. */
+  readonly anterior?: Instantanea;
+}
+
+/** Resultado completo del análisis cuando SÍ se distinguen grupos. */
 export interface ResultadoConsenso {
+  /** Discriminante: hay grupos que publicar. */
+  readonly tipo: 'GruposDetectados';
   readonly grupos: ReadonlyArray<Grupo>;
   /**
    * `asignaciones[p]` es el `id` del grupo (desde 1, como lo ve la persona) del participante
@@ -64,8 +101,20 @@ export interface ResultadoConsenso {
    */
   readonly ordenCanonicoFilas: ReadonlyArray<number>;
   readonly k: number;
-  /** Afirmaciones puente en orden descendente por `GIC`. */
+  /**
+   * Afirmaciones puente **publicables**: las que superan el filtro `z₁ > 1,2816` en todos los
+   * grupos con observaciones, en orden descendente por `GIC` (ADR-0038).
+   *
+   * Ésta es la lista que va a pantalla. Puede quedar vacía, y quedarse vacía es un resultado:
+   * significa que ninguna afirmación reúne acuerdo transversal distinguible del azar.
+   */
   readonly afirmacionesPuente: ReadonlyArray<AfirmacionPuntuada>;
+  /**
+   * **Todas** las afirmaciones con su `GIC`, su `z₁` mínimo y si cumplen el filtro, en orden
+   * descendente por `GIC`. Es la tabla completa para auditar: quien recompute el análisis puede
+   * ver también lo que el filtro descartó y por qué. No es la lista de pantalla.
+   */
+  readonly afirmacionesPuntuadas: ReadonlyArray<AfirmacionPuntuada>;
   /** Afirmaciones divisivas en orden descendente por dispersión. */
   readonly afirmacionesDivisivas: ReadonlyArray<AfirmacionPuntuada>;
   /**
@@ -77,13 +126,66 @@ export interface ResultadoConsenso {
   readonly segundaComponente: ReadonlyArray<number>;
   /** `ordenCanonicoColumnas[j]` es el índice de entrada de la j-ésima columna canónica. */
   readonly ordenCanonicoColumnas: ReadonlyArray<number>;
-  /** `k` máximo considerado en la búsqueda por silhouette. */
+  /** `k` máximo considerado en la búsqueda del número de grupos (ADR-0038: nunca más de 5). */
   readonly kMaximo: number;
   /** Número de participantes efectivamente considerados. */
   readonly participantesConsiderados: number;
+  /**
+   * Mejor separación alcanzada entre grupos, sobre todos los `k` examinados. Va de −1 a 1.
+   * Por debajo del umbral de no-facción de ADR-0038 el análisis NO devuelve grupos: devuelve
+   * `FaccionesNoDetectadas`. Dato de auditoría, no de pantalla.
+   */
+  readonly separacionMaxima: number;
+  /** ¿Se conservó el número de grupos de la instantánea anterior por histéresis (ADR-0038)? */
+  readonly kConservadoPorHisteresis: boolean;
+  /** Lo que hay que devolver como `opciones.anterior` en la corrida siguiente. */
+  readonly instantanea: Instantanea;
   /** Texto de cada afirmación, indexado por `indiceOriginal`. */
   readonly textos: ReadonlyArray<string>;
 }
+
+/**
+ * Resultado del análisis cuando **no hay grupos claros** (ADR-0038, umbral de no-facción).
+ *
+ * ADR-0038 lo exige como «caso explícito y nunca ausencia de evento»: cuando la mejor separación
+ * alcanzable no llega al umbral, publicar dos grupos igualmente sería **fabricar facciones que
+ * los datos no muestran**, y ésa es precisamente la lectura que el ADR prohíbe («el riesgo, y por
+ * eso este ADR existe, es tratar el mapa resultante como un veredicto»).
+ *
+ * No es un error y por eso no es una excepción: es una de las dos formas normales de terminar, y
+ * `PRODUCT.md` §4 la promete literalmente en la pantalla «Consenso» —«no hay grupos claros», que
+ * es un resultado—. Se modela como variante de una unión discriminada para que el compilador
+ * obligue a quien consuma la salida a contemplarla: con un campo opcional se podría ignorar.
+ *
+ * Sigue publicándose el consenso: sin facciones, la población entera es el único grupo y el
+ * `GIC` sobre ese grupo único es exactamente el acuerdo general, con el mismo filtro `z₁`.
+ */
+export interface FaccionesNoDetectadas {
+  /** Discriminante: no hay grupos que publicar. */
+  readonly tipo: 'FaccionesNoDetectadas';
+  /** Mejor separación alcanzada, sobre todos los `k` examinados. Quedó por debajo del umbral. */
+  readonly separacionMaxima: number;
+  /** Umbral por debajo del cual no se publican grupos (ADR-0038). */
+  readonly umbral: number;
+  /** Valores de `k` que se examinaron antes de concluir que no hay facciones. */
+  readonly kExaminados: ReadonlyArray<number>;
+  /** Número de participantes efectivamente considerados. */
+  readonly participantesConsiderados: number;
+  /** Afirmaciones de acuerdo general que superan el filtro `z₁`, sobre la población entera. */
+  readonly afirmacionesPuente: ReadonlyArray<AfirmacionPuntuada>;
+  /** Todas las afirmaciones puntuadas sobre la población entera, para auditar. */
+  readonly afirmacionesPuntuadas: ReadonlyArray<AfirmacionPuntuada>;
+  /** Texto de cada afirmación, indexado por `indiceOriginal`. */
+  readonly textos: ReadonlyArray<string>;
+}
+
+/**
+ * Los dos desenlaces normales del análisis.
+ *
+ * Quien consuma esto **debe** discriminar por `tipo`. Los desenlaces anómalos (`SinVariacion`,
+ * `PcaNoConvergente`) siguen siendo excepciones, porque ahí no hay nada que publicar.
+ */
+export type ResultadoAnalisis = ResultadoConsenso | FaccionesNoDetectadas;
 
 /**
  * Error tipado: el cálculo de un eje de variación no se estabilizó.

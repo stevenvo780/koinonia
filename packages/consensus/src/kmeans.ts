@@ -16,14 +16,42 @@
  * Vacíos: si en una iteración un clúster queda sin puntos, lo **re-sembramos** con el punto
  * más lejano a su centroide más cercano, no reutilizando el centroide muerto.
  *
- * Selección de `k`: por silhouette promedio sobre `k ∈ [2, min(12, floor(sqrt(n/2)))]`. Empate
- * ⇒ el k menor (parsimonia).
+ * Selección de `k`: por silueta promedio sobre `k ∈ [2, min(5, floor(sqrt(n/2)))]`. Empate ⇒ el
+ * k menor (parsimonia). El tope de 5 lo fija ADR-0038 («`k` por silueta en 2..5»), y no es un
+ * detalle numérico: por encima de cinco, un mapa de facciones deja de ser legible para quien lo
+ * mira, y este análisis existe para que alguien lo lea.
+ *
+ * **Histéresis (ADR-0038).** Con una instantánea anterior, dos cosas se conservan salvo motivo:
+ *
+ *  1. el **número de grupos**: se mantiene el `k` anterior salvo mejora clara de la separación;
+ *  2. la **numeración**: los grupos se emparejan con los de la instantánea anterior por cercanía
+ *     de sus centros, de modo que «Grupo 2» siga nombrando al mismo grupo entre dos corridas.
+ *
+ * Sin lo segundo, lo primero no basta: la numeración por defecto ordena los grupos por su primera
+ * coordenada, así que un desplazamiento mínimo que cruce dos centros los intercambia de nombre y
+ * el mapa parece haber cambiado cuando no ha cambiado nada.
+ *
+ * ADR-0038 pide además «semilla fija por snapshot». Aquí **no hay semilla en absoluto**: ni la
+ * inicialización (Gonzalez) ni la asignación ni el desempate usan azar. Fijar una semilla sería
+ * una garantía más débil que no tener ninguna.
  */
 
 import type { Matrix } from './matrix.js';
 
 const FROBENIUS_EPSILON = 1e-10;
 const LLOYD_MAX = 100;
+
+/**
+ * Cuánto tiene que mejorar la separación para cambiar el número de grupos respecto de la
+ * instantánea anterior: la «mejora clara» de ADR-0038.
+ *
+ * El ADR exige la histéresis pero no fija el margen, así que el valor se declara aquí. `0,05`
+ * sobre una escala de −1 a 1 descarta el vaivén de un `k` que gana por un pelo —el problema que
+ * la histéresis viene a resolver: «un `k` que oscila entre corridas destruye la confianza en el
+ * mapa»— y deja pasar un cambio de estructura de verdad. No es un umbral de decisión de los que
+ * prohíbe ADR-0027: no aprueba ni rechaza nada, elige entre dos formas de dibujar el mismo mapa.
+ */
+const MEJORA_CLARA = 0.05;
 
 /**
  * Acceso defensivo a un índice. Evita el operador `!` (prohibido en producción por el linter):
@@ -40,13 +68,25 @@ function at<T>(xs: ArrayLike<T>, i: number, contexto: string): T {
 
 /**
  * Número máximo de grupos que se considera para `n` participantes:
- * `min(12, floor(sqrt(n/2)))`, nunca menor que 2.
+ * `min(5, floor(sqrt(n/2)))`, nunca menor que 2.
+ *
+ * El 5 lo manda ADR-0038 («`k` por silueta en 2..5»). El `floor(sqrt(n/2))` es un tope adicional
+ * por tamaño: con doce personas no se pueden distinguir cinco corrientes de opinión.
  *
  * Vive aquí, en un solo sitio, porque el resultado publica este valor y el buscador de `k` lo
  * usa como tope: si cada uno lo calculara por su cuenta podrían separarse sin que nada fallara.
  */
 export function kMaximoPara(n: number): number {
-  return Math.min(12, Math.max(2, Math.floor(Math.sqrt(n / 2))));
+  return Math.min(5, Math.max(2, Math.floor(Math.sqrt(n / 2))));
+}
+
+export interface OpcionesAgrupamiento {
+  /** Fuerza el número de grupos (se recorta al rango permitido). Para pruebas y casos dirigidos. */
+  readonly kPreferido?: number;
+  /** Número de grupos de la instantánea anterior: se conserva salvo mejora clara. */
+  readonly kAnterior?: number;
+  /** Centros de la instantánea anterior, en el orden de sus identificadores. */
+  readonly centrosAnteriores?: ReadonlyArray<ReadonlyArray<number>>;
 }
 
 export interface KMeansResultado {
@@ -55,10 +95,19 @@ export interface KMeansResultado {
   readonly centroides: ReadonlyArray<ReadonlyArray<number>>;
   readonly inercia: number;
   readonly silhouettePromedio: number;
+  /** Mejor separación alcanzada sobre TODOS los `k` examinados; decide el umbral de no-facción. */
+  readonly separacionMaxima: number;
+  /** Valores de `k` examinados, en orden creciente. */
+  readonly kExaminados: ReadonlyArray<number>;
+  /** ¿Se conservó el `k` anterior pese a que otro `k` daba algo más de separación? */
+  readonly kConservadoPorHisteresis: boolean;
 }
 
 /** Ejecuta k-means determinista sobre una matriz de participantes. */
-export function kmeansDeterminista(X: Matrix, kPreferido?: number): KMeansResultado {
+export function kmeansDeterminista(
+  X: Matrix,
+  opciones: OpcionesAgrupamiento = {},
+): KMeansResultado {
   const n = X.length;
   if (n === 0) {
     throw new Error('sin participantes');
@@ -68,12 +117,20 @@ export function kmeansDeterminista(X: Matrix, kPreferido?: number): KMeansResult
     throw new Error('sin dimensiones');
   }
   const kMax = kMaximoPara(n);
-  // Si se pasó kPreferido, lo usamos directamente (clampado). Si no, buscamos por silhouette.
-  if (kPreferido !== undefined) {
-    const k = clamp(kPreferido, 2, kMax);
-    return lloyd(X, k);
+  const centros = opciones.centrosAnteriores;
+
+  // Si se pasó kPreferido, lo usamos directamente (recortado al rango). Si no, buscamos.
+  if (opciones.kPreferido !== undefined) {
+    const k = clamp(opciones.kPreferido, 2, kMax);
+    const r = lloyd(X, k, centros);
+    return {
+      ...r,
+      separacionMaxima: r.silhouettePromedio,
+      kExaminados: [k],
+      kConservadoPorHisteresis: false,
+    };
   }
-  return seleccionarK(X, kMax);
+  return seleccionarK(X, kMax, opciones.kAnterior, centros);
 }
 
 function clamp(x: number, lo: number, hi: number): number {
@@ -82,21 +139,78 @@ function clamp(x: number, lo: number, hi: number): number {
   return x;
 }
 
-function seleccionarK(X: Matrix, kMax: number): KMeansResultado {
-  // Probar k desde 2 hasta kMax (k menor en empate). Guardamos cada resultado.
-  let mejor: KMeansResultado = lloyd(X, 2);
-  for (let k = 3; k <= kMax; k++) {
-    const r = lloyd(X, k);
-    if (r.silhouettePromedio > mejor.silhouettePromedio) {
-      mejor = r;
-    }
-    // Empate: k menor gana, no actualizamos.
+interface Candidato {
+  readonly k: number;
+  readonly resultado: ResultadoLloyd;
+}
+
+/**
+ * Recorre todos los `k` del rango, se queda con el de mejor separación (empate ⇒ `k` menor,
+ * parsimonia) y luego aplica la histéresis: si venimos de una instantánea con `k` anterior dentro
+ * del rango, se conserva **salvo mejora clara**.
+ *
+ * La separación máxima se calcula siempre sobre TODOS los `k` examinados, conserve o no la
+ * histéresis el `k` anterior: el umbral de no-facción de ADR-0038 pregunta si existe **algún**
+ * agrupamiento con separación suficiente, no si lo tiene el que acabamos de elegir.
+ */
+function seleccionarK(
+  X: Matrix,
+  kMax: number,
+  kAnterior: number | undefined,
+  centrosAnteriores: ReadonlyArray<ReadonlyArray<number>> | undefined,
+): KMeansResultado {
+  const candidatos: Candidato[] = [];
+  for (let k = 2; k <= kMax; k++) {
+    candidatos.push({ k, resultado: lloyd(X, k, centrosAnteriores) });
   }
-  return mejor;
+  const primero = candidatos[0];
+  if (primero === undefined) {
+    throw new Error('rango de número de grupos vacío');
+  }
+
+  let mejor = primero;
+  for (const c of candidatos) {
+    if (c.resultado.silhouettePromedio > mejor.resultado.silhouettePromedio) {
+      mejor = c;
+    }
+  }
+  const separacionMaxima = mejor.resultado.silhouettePromedio;
+
+  let elegido = mejor;
+  let conservado = false;
+  if (kAnterior !== undefined && kAnterior !== mejor.k) {
+    const previo = candidatos.find((c) => c.k === kAnterior);
+    if (previo !== undefined) {
+      const mejora = separacionMaxima - previo.resultado.silhouettePromedio;
+      if (!(mejora > MEJORA_CLARA)) {
+        elegido = previo;
+        conservado = true;
+      }
+    }
+  }
+
+  return {
+    ...elegido.resultado,
+    separacionMaxima,
+    kExaminados: candidatos.map((c) => c.k),
+    kConservadoPorHisteresis: conservado,
+  };
+}
+
+interface ResultadoLloyd {
+  readonly k: number;
+  readonly asignaciones: ReadonlyArray<number>;
+  readonly centroides: ReadonlyArray<ReadonlyArray<number>>;
+  readonly inercia: number;
+  readonly silhouettePromedio: number;
 }
 
 /** Lloyd completo: inicialización Gonzalez + asignación + actualización + relabeling estable. */
-function lloyd(X: Matrix, k: number): KMeansResultado {
+function lloyd(
+  X: Matrix,
+  k: number,
+  centrosAnteriores?: ReadonlyArray<ReadonlyArray<number>>,
+): ResultadoLloyd {
   const m = at(X, 0, 'primera fila').length;
   const semillas = gonzalez(X, k);
   let centroides: Float64Array[] = semillas.map((s) => new Float64Array(s));
@@ -112,9 +226,10 @@ function lloyd(X: Matrix, k: number): KMeansResultado {
     }
   }
 
-  const { asignaciones: reasignadas, centroides: reordenados } = relabelingEstable(
+  const { asignaciones: reasignadas, centroides: reordenados } = etiquetar(
     asignaciones,
     centroides,
+    centrosAnteriores,
   );
   const inercia = calcularInercia(X, reasignadas, reordenados);
   const sil = silhouettePromedio(X, reasignadas, k);
@@ -291,22 +406,27 @@ function frobenius(a: ReadonlyArray<Float64Array>, b: ReadonlyArray<Float64Array
 }
 
 /**
- * Renumera los grupos para que el ID estable sea la posición ascendente según la primera
- * componente del centroide.
+ * Numera los grupos.
+ *
+ * Sin instantánea anterior: por la primera coordenada del centro, ascendente. Es la regla que
+ * hace que «Grupo 1» signifique lo mismo en dos ejecuciones de la misma entrada.
+ *
+ * Con instantánea anterior **y el mismo número de grupos**: por emparejamiento con los centros
+ * anteriores, que es la histéresis de numeración de ADR-0038. Si el número de grupos cambió no se
+ * empareja nada y se vuelve a la primera coordenada: emparejar tres grupos con dos obligaría a
+ * decidir cuál de los nuevos «hereda» un nombre y cuál lo estrena, y ninguna regla automática
+ * puede hacer eso sin inventarse una continuidad que los datos no respaldan.
  */
-function relabelingEstable(
+function etiquetar(
   asignaciones: ReadonlyArray<number>,
   centroides: ReadonlyArray<Float64Array>,
+  centrosAnteriores: ReadonlyArray<ReadonlyArray<number>> | undefined,
 ): { asignaciones: number[]; centroides: Float64Array[] } {
   const k = centroides.length;
-  // Índice original de cada grupo: ordenar por centroide[0] ascendente.
-  const orden = Array.from({ length: k }, (_, i) => i);
-  orden.sort((a, b) => {
-    const ca = at(at(centroides, a, 'centroide'), 0, 'primera componente');
-    const cb = at(at(centroides, b, 'centroide'), 0, 'primera componente');
-    if (ca !== cb) return ca - cb;
-    return a - b;
-  });
+  const orden =
+    centrosAnteriores !== undefined && centrosAnteriores.length === k
+      ? ordenPorHerencia(centroides, centrosAnteriores)
+      : ordenPorPrimeraCoordenada(centroides);
   // Mapa viejo → nuevo.
   const mapa = new Array<number>(k);
   for (let nuevo = 0; nuevo < k; nuevo++) {
@@ -321,6 +441,80 @@ function relabelingEstable(
     nuevosCentroides.push(new Float64Array(at(centroides, at(orden, i, 'orden'), 'centroide')));
   }
   return { asignaciones: nuevasAsig, centroides: nuevosCentroides };
+}
+
+/** Orden por la primera coordenada del centro, ascendente; empate por índice menor. */
+function ordenPorPrimeraCoordenada(centroides: ReadonlyArray<Float64Array>): number[] {
+  const orden = Array.from({ length: centroides.length }, (_, i) => i);
+  orden.sort((a, b) => {
+    const ca = at(at(centroides, a, 'centroide'), 0, 'primera coordenada');
+    const cb = at(at(centroides, b, 'centroide'), 0, 'primera coordenada');
+    if (ca !== cb) return ca - cb;
+    return a - b;
+  });
+  return orden;
+}
+
+/**
+ * Orden que hereda la numeración anterior: la asignación que minimiza la suma de distancias entre
+ * cada centro nuevo y el centro anterior del mismo nombre.
+ *
+ * Se resuelve por fuerza bruta sobre todas las asignaciones posibles. Con `k ≤ 5` son a lo sumo
+ * 120, así que el óptimo exacto es más barato que razonar sobre una heurística voraz —que además
+ * podría emparejar mal y renombrar grupos justamente en el caso que la histéresis viene a evitar.
+ * El desempate es la primera asignación en orden lexicográfico, que es una función de los datos y
+ * no del orden de recorrido.
+ */
+function ordenPorHerencia(
+  centroides: ReadonlyArray<Float64Array>,
+  centrosAnteriores: ReadonlyArray<ReadonlyArray<number>>,
+): number[] {
+  const k = centroides.length;
+  const dims = at(centroides, 0, 'centroide').length;
+  let mejorOrden: number[] | undefined;
+  let mejorCoste = Number.POSITIVE_INFINITY;
+  for (const perm of permutaciones(k)) {
+    let coste = 0;
+    for (let nuevo = 0; nuevo < k; nuevo++) {
+      const centro = at(centroides, at(perm, nuevo, 'permutación'), 'centroide');
+      const anterior = at(centrosAnteriores, nuevo, 'centro anterior');
+      for (let d = 0; d < dims; d++) {
+        const delta = (centro[d] ?? 0) - (anterior[d] ?? 0);
+        coste += delta * delta;
+      }
+    }
+    // `<` estricto recorriendo en orden lexicográfico: ante un empate gana la primera, que ya
+    // está guardada. Es el mismo desempate que se usa en `gonzalez`.
+    if (coste < mejorCoste) {
+      mejorCoste = coste;
+      mejorOrden = perm;
+    }
+  }
+  return mejorOrden ?? ordenPorPrimeraCoordenada(centroides);
+}
+
+/** Todas las permutaciones de `0..k-1`, en orden lexicográfico. Sin azar y sin recursión oculta. */
+function permutaciones(k: number): number[][] {
+  if (k <= 0) return [[]];
+  const salida: number[][] = [];
+  const actual: number[] = [];
+  const usado = new Array<boolean>(k).fill(false);
+  const recorrer = (): void => {
+    if (actual.length === k) {
+      salida.push([...actual]);
+      return;
+    }
+    for (let i = 0; i < k; i++) {
+      if (usado[i] === true) continue;
+      usado[i] = true;
+      actual.push(i);
+      recorrer();
+      actual.pop();
+      usado[i] = false;
+    }
+  };
+  recorrer();
+  return salida;
 }
 
 function calcularInercia(

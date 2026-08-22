@@ -10,7 +10,7 @@
 
 import fc from 'fast-check';
 
-import type { Celda, MatrizVotos } from '../src/types.js';
+import type { Celda, MatrizVotos, ResultadoAnalisis, ResultadoConsenso } from '../src/types.js';
 
 /** Congruencial lineal (Numerical Recipes). Basta para generar datos; no se usa en producción. */
 export function lcg(semilla: number): () => number {
@@ -66,6 +66,69 @@ export function matrizConFacciones(
     filas.push(fila);
   }
   return filas;
+}
+
+/**
+ * Opiniones **homogéneas**: casi todo el mundo de acuerdo en casi todo, con ruido independiente
+ * celda a celda. No hay bloques: es el caso en el que la pantalla debe decir «no hay grupos
+ * claros» y publicar, aun así, el acuerdo general.
+ */
+export function matrizHomogenea(n: number, m: number, semilla: number): MatrizVotos {
+  const r = lcg(semilla);
+  const filas: Celda[][] = [];
+  for (let i = 0; i < n; i++) {
+    const fila: Celda[] = [];
+    for (let j = 0; j < m; j++) {
+      const u = r();
+      fila.push(u < 0.08 ? null : u < 0.16 ? 0 : u < 0.88 ? 1 : -1);
+    }
+    filas.push(fila);
+  }
+  return filas;
+}
+
+/**
+ * Dos bloques nítidos y enfrentados, con una parte de afirmaciones que comparten. Es la entrada
+ * que SIEMPRE tiene que producir dos grupos: si el análisis no los ve aquí, no sirve para nada.
+ *
+ * `votosCambiados` altera unos pocos votos con una semilla propia, para simular la instantánea
+ * siguiente de un sondeo que sigue abierto.
+ */
+export function dosBloques(n: number, m: number, votosCambiados = 0, semilla = 1): MatrizVotos {
+  const filas: Celda[][] = [];
+  for (let i = 0; i < n; i++) {
+    const bloque: 1 | -1 = i < n / 2 ? 1 : -1;
+    filas.push(
+      Array.from({ length: m }, (_, j): Celda =>
+        j % 4 === 3 ? 1 : j % 2 === 0 ? bloque : bloque === 1 ? -1 : 1,
+      ),
+    );
+  }
+  const r = lcg(semilla);
+  for (let c = 0; c < votosCambiados; c++) {
+    const i = Math.floor(r() * n);
+    const j = Math.floor(r() * m);
+    const fila = filas[i];
+    if (fila === undefined) continue;
+    fila[j] = fila[j] === 1 ? -1 : 1;
+  }
+  return filas;
+}
+
+/**
+ * Estrecha el resultado a la variante con grupos, fallando con un mensaje útil si no la tiene.
+ *
+ * Existe porque `analizarConsenso` devuelve una unión discriminada: sin esto, cada prueba
+ * repetiría el mismo `if` y, peor, la tentación sería escribir `as ResultadoConsenso` y perder
+ * justo la comprobación que la unión existe para forzar.
+ */
+export function conGrupos(r: ResultadoAnalisis): ResultadoConsenso {
+  if (r.tipo !== 'GruposDetectados') {
+    throw new Error(
+      `se esperaban grupos y salió «no hay grupos claros» (separación ${r.separacionMaxima.toString()})`,
+    );
+  }
+  return r;
 }
 
 /** Aplica una permutación: `permutar(xs, p)[i] === xs[p[i]]`. */

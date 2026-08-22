@@ -12,17 +12,24 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { centrar, imputarYOrdenar, vectorInicialPca, type Matrix } from '../src/matrix.js';
+import { prepararMatriz, vectorInicialPca, type Matrix } from '../src/matrix.js';
 import { pca2 } from '../src/pca.js';
 import { PcaNoConvergente, SinVariacion } from '../src/types.js';
 import type { MatrizVotos } from '../src/types.js';
 
 import { matrizAleatoria, matrizConFacciones } from './matrices.js';
 
-/** Prepara la matriz centrada tal como lo hace el análisis completo. */
-function centrada(M: MatrizVotos): Matrix {
-  const prep = imputarYOrdenar(M);
-  return centrar(prep.X, prep.medias);
+/**
+ * Residuos enmascarados, tal como los prepara el análisis completo.
+ *
+ * Antes esto imputaba los huecos con la media de la columna y luego centraba, con lo que el
+ * residuo de un hueco quedaba en cero. Ahora no se imputa nada: el hueco se marca como ausente
+ * y su residuo se guarda en cero **porque no participa en ninguna suma que lo mire**. El
+ * segundo momento por pares completos que consume `pca2` sale, celda a celda, idéntico; lo que
+ * cambia es que ya nadie usa ese cero como si fuera la opinión de esa persona.
+ */
+function residuos(M: MatrizVotos): Matrix {
+  return prepararMatriz(M).Y;
 }
 
 /**
@@ -97,7 +104,7 @@ describe('ejes de variación', () => {
       [-1, -1, 1, -1],
       [-1, -1, 1, -1],
     ];
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     // Las dos afirmaciones que no separan a nadie no pesan en el eje.
     const pesos = r.primeraComponente.map((x) => Math.abs(x));
     const separadoras = pesos.filter((p) => p > 0.4).length;
@@ -107,14 +114,14 @@ describe('ejes de variación', () => {
 
   it('devuelve vectores unitarios', () => {
     const M = matrizConFacciones(40, 9, 3, 12345);
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     expect(norma(r.primeraComponente)).toBeCloseTo(1, 12);
     expect(norma(r.segundaComponente)).toBeCloseTo(1, 12);
   });
 
   it('da dos ejes independientes entre sí', () => {
     const M = matrizConFacciones(60, 11, 3, 999);
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     // La deflación de Hotelling quita el primer eje antes de buscar el segundo: lo que queda es
     // perpendicular. Si no lo fuera, el «segundo» eje repetiría información del primero.
     expect(Math.abs(producto(r.primeraComponente, r.segundaComponente))).toBeLessThan(1e-8);
@@ -122,13 +129,13 @@ describe('ejes de variación', () => {
 
   it('el primer eje concentra al menos tanta variación como el segundo', () => {
     const M = matrizConFacciones(60, 11, 3, 4242);
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     expect(r.autovalor1).toBeGreaterThanOrEqual(r.autovalor2);
   });
 
   it('devuelve exactamente lo mismo al repetir el cálculo', () => {
     const M = matrizConFacciones(50, 10, 3, 777);
-    const Xc = centrada(M);
+    const Xc = residuos(M);
     expect(pca2(Xc)).toEqual(pca2(Xc));
   });
 });
@@ -143,7 +150,7 @@ describe('canonicalización de signo', () => {
           : matrizAleatoria(10 + (semilla % 20), 4 + (semilla % 7), semilla * 13);
       let r;
       try {
-        r = pca2(centrada(M));
+        r = pca2(residuos(M));
       } catch (e) {
         // Abortar es un desenlace legítimo; lo que no vale es devolver un signo suelto.
         expect(e instanceof PcaNoConvergente || e instanceof SinVariacion).toBe(true);
@@ -161,7 +168,7 @@ describe('canonicalización de signo', () => {
     // que el vector es realmente un eje de variación (y no un vector a medio converger), y que
     // el signo con el que se devuelve es coherente con el valor propio positivo, no el opuesto.
     const M = matrizConFacciones(40, 7, 3, 20260822);
-    const Xc = centrada(M);
+    const Xc = residuos(M);
     const r = pca2(Xc);
     const m = r.primeraComponente.length;
     const A = gramDe(Xc, m);
@@ -182,7 +189,7 @@ describe('canonicalización de signo', () => {
     // votos en la matriz de entrada es otra cosa —cambia los recuentos de acuerdo y desacuerdo
     // de cada afirmación y con ellos el orden canónico de columnas—, así que no serviría para
     // aislar la cuestión del signo.
-    const Xc = centrada(matrizConFacciones(36, 8, 3, 20260822));
+    const Xc = residuos(matrizConFacciones(36, 8, 3, 20260822));
     const negada: Matrix = Xc.map((fila) => fila.map((x) => -x));
     expect(pca2(negada)).toEqual(pca2(Xc));
   });
@@ -194,9 +201,9 @@ describe('lo que no se puede calcular no se inventa', () => {
     const M: MatrizVotos = Array.from({ length: 8 }, () =>
       Array.from({ length: 5 }, () => 1 as const),
     );
-    expect(() => pca2(centrada(M))).toThrow(SinVariacion);
+    expect(() => pca2(residuos(M))).toThrow(SinVariacion);
     try {
-      pca2(centrada(M));
+      pca2(residuos(M));
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(SinVariacion);
@@ -207,7 +214,7 @@ describe('lo que no se puede calcular no se inventa', () => {
 
   it('sin nadie que responda tampoco inventa ejes', () => {
     const M: MatrizVotos = Array.from({ length: 6 }, () => Array.from({ length: 4 }, () => null));
-    expect(() => pca2(centrada(M))).toThrow(SinVariacion);
+    expect(() => pca2(residuos(M))).toThrow(SinVariacion);
   });
 
   it('cuando toda la discrepancia cabe en un eje, el segundo es nulo y no un fallo', () => {
@@ -221,7 +228,7 @@ describe('lo que no se puede calcular no se inventa', () => {
       [-1, -1, -1, -1],
       [-1, -1, -1, -1],
     ];
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     expect(r.segundaComponente).toEqual([0, 0, 0, 0]);
     expect(r.autovalor2).toBe(0);
     expect(norma(r.primeraComponente)).toBeCloseTo(1, 12);
@@ -235,9 +242,9 @@ describe('lo que no se puede calcular no se inventa', () => {
     // máxima discrepancia no está determinada por los datos, y devolver una cualquiera sería
     // presentar como hallazgo algo que depende de dónde se corte la iteración.
     const M = matrizAleatoria(24, 12, 16);
-    expect(() => pca2(centrada(M))).toThrow(PcaNoConvergente);
+    expect(() => pca2(residuos(M))).toThrow(PcaNoConvergente);
     try {
-      pca2(centrada(M));
+      pca2(residuos(M));
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(PcaNoConvergente);
@@ -253,8 +260,8 @@ describe('lo que no se puede calcular no se inventa', () => {
 
   it('el fallo de convergencia es reproducible: la misma entrada falla igual', () => {
     const M = matrizAleatoria(24, 12, 16);
-    const uno = desenlaceDe(() => pca2(centrada(M)));
-    const dos = desenlaceDe(() => pca2(centrada(M)));
+    const uno = desenlaceDe(() => pca2(residuos(M)));
+    const dos = desenlaceDe(() => pca2(residuos(M)));
     expect(dos).toEqual(uno);
     expect(uno.error).toBe('PcaNoConvergente');
   });
@@ -272,7 +279,7 @@ describe('lo que no se puede calcular no se inventa', () => {
       [1, -1],
       [-1, 1],
     ];
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     expect(norma(r.primeraComponente)).toBeCloseTo(1, 12);
     expect(Math.abs(r.primeraComponente[0] ?? 0)).toBeCloseTo(Math.SQRT1_2, 12);
     expect(Math.abs(r.primeraComponente[1] ?? 0)).toBeCloseTo(Math.SQRT1_2, 12);
@@ -291,14 +298,14 @@ describe('lo que no se puede calcular no se inventa', () => {
       [1, -1],
       [-1, 1],
     ];
-    const r = pca2(centrada(M));
+    const r = pca2(residuos(M));
     const suma = (r.primeraComponente[0] ?? 0) + (r.primeraComponente[1] ?? 0);
     expect(Math.abs(suma)).toBeLessThanOrEqual(1e-12);
     // Con la suma anulada manda la componente de mayor magnitud (la primera, al empatar), que
     // se deja positiva.
     expect(r.primeraComponente[0] ?? 0).toBeGreaterThan(0);
     expect(cumpleCanonicalizacionDeSigno(r.primeraComponente)).toBe(true);
-    expect(pca2(centrada(M))).toEqual(r);
+    expect(pca2(residuos(M))).toEqual(r);
   });
 
   it('exige al menos dos participantes y dos afirmaciones', () => {

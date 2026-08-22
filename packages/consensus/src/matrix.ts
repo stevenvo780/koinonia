@@ -3,17 +3,31 @@
  *
  * Tres responsabilidades:
  *
- *  1. **Imputación de ausentes (`null`)**: se reemplazan por la media de la columna sobre los
- *     votos observados; si no hay ninguno, 0. La imputación sólo rellena huecos, **nunca** la
- *     observación `paso` (0), porque `paso` es información: la persona vio la afirmación y
- *     eligió no pronunciarse.
+ *  1. **Residuos y máscara, sin imputar nada** (ADR-0038: «factorización enmascarada de 2
+ *     factores, **no imputación por la media**»). Se calcula la media de cada columna sobre los
+ *     votos con postura y se devuelven dos cosas: el residuo `voto − media` de cada celda
+ *     **observada**, y una `mascara` que dice qué celdas lo están. La celda no observada no
+ *     recibe ningún valor: queda fuera de la máscara y, por tanto, fuera de la función de
+ *     pérdida que ajusta los factores (ver `factorizacion.ts`).
+ *
+ *     Aquí está la diferencia con la versión anterior, que sí imputaba. El residuo de una celda
+ *     ausente se guarda como `0` —hay que guardar algo en un hueco de un `Float64Array`—, pero
+ *     eso **no** es «imputar la media»: el `0` nunca se usa como dato. Sólo aparece dentro de
+ *     sumas de la forma `Σᵢ y_ia·y_ib` donde el término correspondiente vale cero de todas
+ *     formas porque el factor está ausente, es decir, en el segundo momento **por pares
+ *     completos** `G_ab = Σ_{i: a y b observadas} y_ia·y_ib`. Es una propiedad de esa suma, no un
+ *     valor atribuido a nadie. Todo lo que sí depende del valor de la celda —el ajuste de los
+ *     factores de cada persona y de cada afirmación— consulta la máscara y salta las ausentes.
+ *
+ *     `paso` (0) **no** es una ausencia: entra en la máscara como observación de pleno derecho,
+ *     porque la persona vio la afirmación y eligió no pronunciarse.
  *  2. **Cálculo de estadísticos por grupo**: cuenta de acuerdos y observaciones por par
  *     (grupo, afirmación), sin tocar `paso` ni ausentes.
  *  3. **Orden canónico** de filas y columnas ANTES del cálculo, con un mapa inverso para
  *     restaurar los índices originales. El orden canónico es una permutación estable: aunque la
- *     entrada esté desordenada, el PCA y el k-means reciben exactamente la misma secuencia de
- *     filas y columnas. Esto, sumado a la canonicalización de signo, es lo que hace bit-bit
- *     determinista la ejecución.
+ *     entrada esté desordenada, la factorización y el agrupamiento reciben exactamente la misma
+ *     secuencia de filas y columnas. Esto, sumado a la canonicalización de signo, es lo que hace
+ *     bit-bit determinista la ejecución.
  */
 
 import type { Celda, MatrizVotos } from './types.js';
@@ -32,22 +46,27 @@ function at<T>(xs: ArrayLike<T>, i: number, contexto: string): T {
   return x;
 }
 
-export interface MatrizImputada {
-  /** Matriz densa en orden canónico de filas. Cada celda ∈ {-1, 0, 1}. */
-  readonly X: Matrix;
+export interface MatrizPreparada {
+  /**
+   * Residuos `voto − media_columna` en orden canónico de filas y columnas. En las celdas **no
+   * observadas** vale `0` y ese `0` no es un dato: hay que consultar `mascara` antes de usarlo.
+   */
+  readonly Y: Matrix;
+  /** `mascara[i][j]` es `true` si la celda (i,j) canónica se observó (incluye `paso`). */
+  readonly mascara: ReadonlyArray<ReadonlyArray<boolean>>;
   /** Permutación de filas en orden canónico: `filas[i]` es el índice de la i-ésima fila canónica en la entrada. */
   readonly filas: ReadonlyArray<number>;
   /** Permutación de columnas en orden canónico. */
   readonly columnas: ReadonlyArray<number>;
-  /** Media de cada columna (sobre las observaciones, no sobre la matriz imputada). */
+  /** Media de cada columna sobre los votos con postura, en orden canónico de columnas. */
   readonly medias: ReadonlyArray<number>;
 }
 
 /** Matriz densa mutable internamente. */
 export type Matrix = ReadonlyArray<ReadonlyArray<number>>;
 
-/** Construye la matriz imputada y los órdenes canónicos. */
-export function imputarYOrdenar(matriz: MatrizVotos): MatrizImputada {
+/** Construye los residuos enmascarados y los órdenes canónicos. */
+export function prepararMatriz(matriz: MatrizVotos): MatrizPreparada {
   if (matriz.length === 0) {
     throw new Error('matriz vacía: al menos un participante');
   }
@@ -97,20 +116,25 @@ export function imputarYOrdenar(matriz: MatrizVotos): MatrizImputada {
     medias[j] = n > 0 ? at(medias, j, 'medias') / n : 0;
   }
 
-  // 2. Imputación. Construimos la matriz densa en una copia mutable.
-  const Xcruda: number[][] = [];
+  // 2. Residuos y máscara. Sin imputar: la celda ausente no recibe valor, se marca como ausente.
+  const Ycruda: number[][] = [];
+  const mascaraCruda: boolean[][] = [];
   for (let i = 0; i < matriz.length; i++) {
     const filaOriginal = at(matriz, i, 'fila');
-    const filaImp: number[] = new Array<number>(mCols);
+    const filaRes: number[] = new Array<number>(mCols);
+    const filaMasc: boolean[] = new Array<boolean>(mCols);
     for (let j = 0; j < mCols; j++) {
       const c = at(filaOriginal, j, 'celda original');
       if (c === null) {
-        filaImp[j] = at(medias, j, 'medias');
+        filaRes[j] = 0;
+        filaMasc[j] = false;
       } else {
-        filaImp[j] = c;
+        filaRes[j] = c - at(medias, j, 'medias');
+        filaMasc[j] = true;
       }
     }
-    Xcruda.push(filaImp);
+    Ycruda.push(filaRes);
+    mascaraCruda.push(filaMasc);
   }
 
   // 3. Orden canónico. El orden importa y va en este orden, no al revés:
@@ -150,15 +174,21 @@ export function imputarYOrdenar(matriz: MatrizVotos): MatrizImputada {
   const indicesFilas = Array.from({ length: matriz.length }, (_, i) => i);
   indicesFilas.sort((a, b) => compararFilas(matriz, indicesColumnas, a, b));
 
-  // 4. Reordenar Xcruda al orden canónico.
-  const Xcanon: number[][] = [];
+  // 4. Reordenar residuos y máscara al orden canónico.
+  const Ycanon: number[][] = [];
+  const mascaraCanon: boolean[][] = [];
   for (const i of indicesFilas) {
-    const fila = at(Xcruda, i, 'Xcruda').slice();
-    const reordenada: number[] = new Array<number>(mCols);
+    const filaY = at(Ycruda, i, 'Ycruda');
+    const filaM = at(mascaraCruda, i, 'mascaraCruda');
+    const reordenadaY: number[] = new Array<number>(mCols);
+    const reordenadaM: boolean[] = new Array<boolean>(mCols);
     for (let k = 0; k < mCols; k++) {
-      reordenada[k] = at(fila, at(indicesColumnas, k, 'indicesColumnas'), 'reordenada');
+      const j = at(indicesColumnas, k, 'indicesColumnas');
+      reordenadaY[k] = at(filaY, j, 'residuo');
+      reordenadaM[k] = at(filaM, j, 'máscara');
     }
-    Xcanon.push(reordenada);
+    Ycanon.push(reordenadaY);
+    mascaraCanon.push(reordenadaM);
   }
 
   // 5. Medias también en el orden canónico (no es estrictamente necesario, pero deja
@@ -166,7 +196,8 @@ export function imputarYOrdenar(matriz: MatrizVotos): MatrizImputada {
   const mediasCanon = indicesColumnas.map((j) => at(medias, j, 'medias'));
 
   return {
-    X: Xcanon,
+    Y: Ycanon,
+    mascara: mascaraCanon,
     filas: indicesFilas,
     columnas: indicesColumnas,
     medias: mediasCanon,
@@ -210,23 +241,6 @@ function ordenCelda(c: Celda): number {
   if (c === 1) return 2;
   if (c === 0) return 1;
   return 3;
-}
-
-/** Centra una matriz por columna (restando la media) sobre la matriz ya imputada. */
-export function centrar(X: Matrix, medias: ReadonlyArray<number>): Matrix {
-  const n = X.length;
-  if (n === 0) return X;
-  const m = at(X, 0, 'primera fila').length;
-  const Y: number[][] = new Array<Array<number>>(n);
-  for (let i = 0; i < n; i++) {
-    const fila = at(X, i, 'fila');
-    const filaCent: number[] = new Array<number>(m);
-    for (let j = 0; j < m; j++) {
-      filaCent[j] = at(fila, j, 'celda') - at(medias, j, 'media');
-    }
-    Y[i] = filaCent;
-  }
-  return Y;
 }
 
 /**

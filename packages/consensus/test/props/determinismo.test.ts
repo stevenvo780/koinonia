@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
 
 import { analizarConsenso } from '../../src/index.js';
 import { kMaximoPara } from '../../src/kmeans.js';
-import type { MatrizVotos, ResultadoConsenso } from '../../src/types.js';
+import type { MatrizVotos, ResultadoAnalisis, ResultadoConsenso } from '../../src/types.js';
 
 import {
   arbMatriz,
@@ -44,8 +44,24 @@ const FC = { numRuns: 300, seed: 20260822, verbose: 0 } as const;
 /** La invariancia al orden de los participantes es la crítica: se le dan muchos más casos. */
 const FC_INTENSO = { numRuns: 1000, seed: 20260822, verbose: 0 } as const;
 
-function analizar(M: MatrizVotos): Desenlace<ResultadoConsenso> {
+function analizar(M: MatrizVotos): Desenlace<ResultadoAnalisis> {
   return desenlace(() => analizarConsenso(M, textosDe(M[0]?.length ?? 0)));
+}
+
+/**
+ * ¿Salió la variante con grupos? Devuelve `undefined` si no, para que la prueba pueda seguir
+ * comprobando lo que sí aplica.
+ *
+ * Ojo con lo que esto NO hace: **no** sirve para saltarse un caso sin comprobar nada. Desde que
+ * existe el umbral de no-facción de ADR-0038, «no hay grupos claros» es un desenlace normal, y
+ * un test que se limitara a ignorarlo se volvería silenciosamente más flojo justo en las
+ * entradas menos estructuradas —las que más fácil rompen el determinismo—. Por eso las
+ * propiedades de permutación de abajo comprueban SIEMPRE que el desenlace coincide, y sólo
+ * después miran el reparto en grupos.
+ */
+function grupos(r: Desenlace<ResultadoAnalisis>): ResultadoConsenso | undefined {
+  if (!r.ok) return undefined;
+  return r.valor.tipo === 'GruposDetectados' ? r.valor : undefined;
 }
 
 /**
@@ -115,6 +131,23 @@ describe('P1 — determinismo bit a bit', () => {
     expect(b).toEqual(a);
     expect(a.ok).toBe(true);
   });
+
+  it('la instantánea que devuelve se puede volver a meter y no cambia nada', () => {
+    // La histéresis de ADR-0038 entra como dato, no como estado guardado en el paquete. Si al
+    // realimentar la instantánea de una corrida sobre la MISMA matriz saliera otra cosa, la
+    // histéresis estaría moviendo el resultado en vez de estabilizarlo, que es lo contrario de
+    // lo que se le pide.
+    for (const semilla of [7, 19, 53]) {
+      const M = matrizConFacciones(80, 16, 3, semilla);
+      const primera = analizar(M);
+      const g = grupos(primera);
+      if (g === undefined) continue;
+      const realimentada = desenlace(() =>
+        analizarConsenso(M, textosDe(16), { anterior: g.instantanea }),
+      );
+      expect(realimentada).toEqual(primera);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -133,24 +166,40 @@ describe('P2 — el orden de llegada de los participantes no cambia nada', () =>
           const base = analizar(M);
           const movida = analizar(permutar(M, p));
 
+          // Lo primero, y sin excepciones: el DESENLACE no puede depender del orden de llegada.
+          // Ni el fallo, ni el «no hay grupos claros», ni el reparto en grupos.
+          expect(movida.ok).toBe(base.ok);
           if (!base.ok || !movida.ok) {
-            // Si una aborta, la otra tiene que abortar igual: el desenlace no puede depender
-            // del orden de llegada tampoco cuando el desenlace es un fallo.
-            expect(movida.ok).toBe(base.ok);
             if (!base.ok && !movida.ok) expect(movida.error).toBe(base.error);
             return;
           }
+          const antes = base.valor;
+          const ahora = movida.valor;
+          expect(ahora.tipo).toBe(antes.tipo);
+
+          if (antes.tipo === 'FaccionesNoDetectadas') {
+            // Sin grupos no hay nada indexado por participante, así que la salida entera tiene
+            // que ser IDÉNTICA, no equivalente: la separación máxima, el acuerdo general y su
+            // orden salen de sumas que el orden de llegada podría haber alterado.
+            expect(ahora).toEqual(antes);
+            return;
+          }
+          const g = grupos(movida);
+          expect(g).toBeDefined();
+          if (g === undefined) return;
 
           // La persona que ahora ocupa la posición i es la que antes ocupaba la p[i].
-          const esperado = p.map((origen) => base.valor.asignaciones[origen]);
-          expect(movida.valor.asignaciones).toEqual(esperado);
+          const esperado = p.map((origen) => antes.asignaciones[origen]);
+          expect(g.asignaciones).toEqual(esperado);
           // Y todo lo que no depende del orden de las personas sale exactamente igual.
-          expect(movida.valor.k).toBe(base.valor.k);
-          expect(movida.valor.grupos).toEqual(base.valor.grupos);
-          expect(movida.valor.primeraComponente).toEqual(base.valor.primeraComponente);
-          expect(movida.valor.segundaComponente).toEqual(base.valor.segundaComponente);
-          expect(movida.valor.afirmacionesPuente).toEqual(base.valor.afirmacionesPuente);
-          expect(movida.valor.afirmacionesDivisivas).toEqual(base.valor.afirmacionesDivisivas);
+          expect(g.k).toBe(antes.k);
+          expect(g.grupos).toEqual(antes.grupos);
+          expect(g.separacionMaxima).toBe(antes.separacionMaxima);
+          expect(g.primeraComponente).toEqual(antes.primeraComponente);
+          expect(g.segundaComponente).toEqual(antes.segundaComponente);
+          expect(g.afirmacionesPuente).toEqual(antes.afirmacionesPuente);
+          expect(g.afirmacionesPuntuadas).toEqual(antes.afirmacionesPuntuadas);
+          expect(g.afirmacionesDivisivas).toEqual(antes.afirmacionesDivisivas);
         },
       ),
       FC_INTENSO,
@@ -158,31 +207,43 @@ describe('P2 — el orden de llegada de los participantes no cambia nada', () =>
   });
 
   it('tampoco con matrices grandes y estructuradas, donde hay más sumas que desordenar', () => {
+    let comprobados = 0;
     for (const semilla of [5, 23, 61]) {
       const M = matrizConFacciones(90, 20, 4, semilla);
       const p = fc.sample(arbPermutacion(M.length), { numRuns: 1, seed: semilla })[0];
       expect(p).toBeDefined();
       if (p === undefined) continue;
-      const base = analizar(M);
-      const movida = analizar(permutar(M, p));
-      expect(base.ok).toBe(true);
-      if (!base.ok || !movida.ok) continue;
-      expect(movida.valor.asignaciones).toEqual(p.map((o) => base.valor.asignaciones[o]));
-      expect(movida.valor.afirmacionesPuente).toEqual(base.valor.afirmacionesPuente);
+      const base = grupos(analizar(M));
+      const movida = grupos(analizar(permutar(M, p)));
+      // Con facciones de verdad, las dos tienen que encontrar grupos. Si una no los encontrara,
+      // el `expect` de abajo lo diría en vez de dejar pasar el caso en silencio.
+      expect(base).toBeDefined();
+      expect(movida).toBeDefined();
+      if (base === undefined || movida === undefined) continue;
+      expect(movida.asignaciones).toEqual(p.map((o) => base.asignaciones[o]));
+      expect(movida.afirmacionesPuente).toEqual(base.afirmacionesPuente);
+      expect(movida.afirmacionesPuntuadas).toEqual(base.afirmacionesPuntuadas);
+      comprobados++;
     }
+    expect(comprobados).toBe(3);
   });
 
   it('invertir el orden de llegada por completo tampoco altera los grupos', () => {
     // El caso extremo de reordenación, y el más fácil de razonar a mano.
+    let comprobados = 0;
     for (const semilla of [3, 17, 44, 88]) {
       const M = matrizConFacciones(60, 14, 3, semilla);
       const alReves = [...M].reverse();
-      const base = analizar(M);
-      const otro = analizar(alReves);
-      if (!base.ok || !otro.ok) continue;
-      const esperado = [...base.valor.asignaciones].reverse();
-      expect(otro.valor.asignaciones).toEqual(esperado);
+      const base = grupos(analizar(M));
+      const otro = grupos(analizar(alReves));
+      expect(base).toBeDefined();
+      expect(otro).toBeDefined();
+      if (base === undefined || otro === undefined) continue;
+      const esperado = [...base.asignaciones].reverse();
+      expect(otro.asignaciones).toEqual(esperado);
+      comprobados++;
     }
+    expect(comprobados).toBe(4);
   });
 });
 
@@ -200,19 +261,22 @@ describe('P3 — el orden de las afirmaciones no cambia los grupos', () => {
           const m = M[0]?.length ?? 0;
           const p = fc.sample(arbPermutacion(m), { numRuns: 1, seed: semilla })[0];
           if (p === undefined) return;
-          const base = analizar(M);
-          const movida = analizar(permutarColumnas(M, p));
+          const baseD = analizar(M);
+          const movidaD = analizar(permutarColumnas(M, p));
 
-          if (!base.ok || !movida.ok) {
-            expect(movida.ok).toBe(base.ok);
-            return;
-          }
+          expect(movidaD.ok).toBe(baseD.ok);
+          if (!baseD.ok || !movidaD.ok) return;
+          expect(movidaD.valor.tipo).toBe(baseD.valor.tipo);
+          const base = grupos(baseD);
+          const movida = grupos(movidaD);
+          if (base === undefined || movida === undefined) return;
+
           // Las personas no se han movido: el reparto en grupos debe ser el mismo.
-          expect(movida.valor.asignaciones).toEqual(base.valor.asignaciones);
-          expect(movida.valor.k).toBe(base.valor.k);
+          expect(movida.asignaciones).toEqual(base.asignaciones);
+          expect(movida.k).toBe(base.k);
           // El ranking sale con los mismos valores y en el mismo orden.
-          expect(movida.valor.afirmacionesPuente.map((a) => a.metrica)).toEqual(
-            base.valor.afirmacionesPuente.map((a) => a.metrica),
+          expect(movida.afirmacionesPuntuadas.map((a) => a.metrica)).toEqual(
+            base.afirmacionesPuntuadas.map((a) => a.metrica),
           );
           // Y cada tramo de empate contiene exactamente las mismas afirmaciones.
           //
@@ -223,8 +287,8 @@ describe('P3 — el orden de las afirmaciones no cambia los grupos', () => {
           // concreto sería exigir que el cálculo distinga lo que no se distingue por ningún
           // dato. Lo que sí se exige —y se comprueba— es que el orden entre afirmaciones con
           // métricas DISTINTAS no cambie, y eso es justo lo que compara la igualdad de tramos.
-          expect(tramosDeEmpate(movida.valor.afirmacionesPuente, (i) => p[i] ?? -1)).toEqual(
-            tramosDeEmpate(base.valor.afirmacionesPuente, (i) => i),
+          expect(tramosDeEmpate(movida.afirmacionesPuntuadas, (i) => p[i] ?? -1)).toEqual(
+            tramosDeEmpate(base.afirmacionesPuntuadas, (i) => i),
           );
         },
       ),
@@ -235,23 +299,31 @@ describe('P3 — el orden de las afirmaciones no cambia los grupos', () => {
   it('la traducción de índices es fiel: cada afirmación conserva SUS números', () => {
     // Comprueba que al reordenar las columnas cada métrica sigue a su afirmación en vez de
     // quedarse en su posición. Es la comprobación que delata una permutación aplicada de más.
+    let comprobados = 0;
     for (const semilla of [9, 31, 57]) {
       const M = matrizConFacciones(50, 12, 3, semilla);
       const p = fc.sample(arbPermutacion(12), { numRuns: 1, seed: semilla })[0];
       if (p === undefined) continue;
-      const base = analizar(M);
-      const movida = analizar(permutarColumnas(M, p));
-      if (!base.ok || !movida.ok) continue;
+      const base = grupos(analizar(M));
+      const movida = grupos(analizar(permutarColumnas(M, p)));
+      expect(base).toBeDefined();
+      expect(movida).toBeDefined();
+      if (base === undefined || movida === undefined) continue;
       const inv = inversa(p);
-      for (const af of base.valor.afirmacionesPuente) {
-        const gemela = movida.valor.afirmacionesPuente.find(
+      for (const af of base.afirmacionesPuntuadas) {
+        const gemela = movida.afirmacionesPuntuadas.find(
           (b) => b.indiceOriginal === inv[af.indiceOriginal],
         );
         expect(gemela).toBeDefined();
         expect(gemela?.metrica).toBeCloseTo(af.metrica, 12);
         expect(gemela?.observaciones).toBe(af.observaciones);
+        // El `z₁` también viaja pegado a SU afirmación, no a su posición.
+        expect(gemela?.zMinimo).toBeCloseTo(af.zMinimo, 12);
+        expect(gemela?.cumpleFiltroZ).toBe(af.cumpleFiltroZ);
       }
+      comprobados++;
     }
+    expect(comprobados).toBe(3);
   });
 });
 
@@ -265,7 +337,13 @@ describe('P4 — el suavizado de Laplace mantiene las probabilidades lejos de lo
       fc.property(arbMatriz(), (M) => {
         const r = analizar(M);
         if (!r.ok) return;
-        for (const af of [...r.valor.afirmacionesPuente, ...r.valor.afirmacionesDivisivas]) {
+        // Se comprueba en LAS DOS variantes: el acuerdo general de «no hay grupos claros»
+        // también se calcula con Laplace y también acaba en pantalla.
+        const afirmaciones =
+          r.valor.tipo === 'GruposDetectados'
+            ? [...r.valor.afirmacionesPuntuadas, ...r.valor.afirmacionesDivisivas]
+            : [...r.valor.afirmacionesPuntuadas];
+        for (const af of afirmaciones) {
           for (const p of af.probabilidadesPorGrupo) {
             expect(p).toBeGreaterThan(0);
             expect(p).toBeLessThan(1);
@@ -282,9 +360,8 @@ describe('P5 — el reparto en grupos es una partición', () => {
   it('los tamaños suman el total y cada persona está en un grupo y sólo uno', () => {
     fc.assert(
       fc.property(arbMatriz(), (M) => {
-        const r = analizar(M);
-        if (!r.ok) return;
-        const res = r.valor;
+        const res = grupos(analizar(M));
+        if (res === undefined) return;
         expect(res.asignaciones).toHaveLength(M.length);
         expect(res.participantesConsiderados).toBe(M.length);
 
@@ -314,11 +391,37 @@ describe('P6 — el número de grupos se queda en su rango', () => {
   it('2 ≤ k ≤ kMáximo, y kMáximo es el que dice la fórmula', () => {
     fc.assert(
       fc.property(arbMatriz(), (M) => {
+        const res = grupos(analizar(M));
+        if (res === undefined) return;
+        expect(res.kMaximo).toBe(kMaximoPara(M.length));
+        expect(res.k).toBeGreaterThanOrEqual(2);
+        expect(res.k).toBeLessThanOrEqual(res.kMaximo);
+        // ADR-0038 fija el rango en 2..5. El tope nunca puede pasarse de ahí, por muchos
+        // participantes que haya: seis facciones no las interpreta nadie.
+        expect(res.kMaximo).toBeLessThanOrEqual(5);
+        expect(res.k).toBeLessThanOrEqual(5);
+      }),
+      FC,
+    );
+  });
+});
+
+describe('P6b — el umbral de no-facción manda sobre la publicación de grupos', () => {
+  it('si hay grupos, la separación llegó al umbral; si no los hay, no llegó', () => {
+    // La propiedad que hace que «no hay grupos claros» no sea decorativo: el desenlace y la
+    // separación no pueden contradecirse, ni en una dirección ni en la otra.
+    fc.assert(
+      fc.property(arbMatriz(), (M) => {
         const r = analizar(M);
         if (!r.ok) return;
-        expect(r.valor.kMaximo).toBe(kMaximoPara(M.length));
-        expect(r.valor.k).toBeGreaterThanOrEqual(2);
-        expect(r.valor.k).toBeLessThanOrEqual(r.valor.kMaximo);
+        if (r.valor.tipo === 'GruposDetectados') {
+          expect(r.valor.separacionMaxima).toBeGreaterThanOrEqual(0.25);
+        } else {
+          expect(r.valor.separacionMaxima).toBeLessThan(0.25);
+          expect(r.valor.umbral).toBe(0.25);
+          // Y sin grupos no se publica ningún grupo, ni siquiera vacío.
+          expect(Object.hasOwn(r.valor, 'grupos')).toBe(false);
+        }
       }),
       FC,
     );
@@ -329,14 +432,15 @@ describe('P7 — el ranking de afirmaciones puente no sube nunca', () => {
   it('el GIC va de mayor a menor a lo largo de la lista', () => {
     fc.assert(
       fc.property(arbMatriz(), (M) => {
-        const r = analizar(M);
-        if (!r.ok) return;
-        const puente = r.valor.afirmacionesPuente;
-        for (let i = 1; i < puente.length; i++) {
-          expect(puente[i]?.metrica ?? 0).toBeLessThanOrEqual(puente[i - 1]?.metrica ?? 0);
+        const res = grupos(analizar(M));
+        if (res === undefined) return;
+        for (const lista of [res.afirmacionesPuente, res.afirmacionesPuntuadas]) {
+          for (let i = 1; i < lista.length; i++) {
+            expect(lista[i]?.metrica ?? 0).toBeLessThanOrEqual(lista[i - 1]?.metrica ?? 0);
+          }
         }
         // Y el de divisivas, por dispersión, tampoco.
-        const div = r.valor.afirmacionesDivisivas;
+        const div = res.afirmacionesDivisivas;
         for (let i = 1; i < div.length; i++) {
           expect(div[i]?.metrica ?? 0).toBeLessThanOrEqual(div[i - 1]?.metrica ?? 0);
         }
@@ -351,11 +455,40 @@ describe('P7 — el ranking de afirmaciones puente no sube nunca', () => {
     // repugna a una minoría, que es exactamente lo contrario de un puente.
     fc.assert(
       fc.property(arbMatriz(), (M) => {
-        const r = analizar(M);
-        if (!r.ok) return;
-        for (const af of r.valor.afirmacionesPuente) {
+        const res = grupos(analizar(M));
+        if (res === undefined) return;
+        for (const af of res.afirmacionesPuntuadas) {
           const producto = af.probabilidadesPorGrupo.reduce((a, b) => a * b, 1);
           expect(af.metrica).toBeCloseTo(producto, 12);
+        }
+      }),
+      FC,
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// P7b — el filtro de significación de ADR-0038
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe('P7b — la lista de puentes es exactamente la que supera el filtro z₁', () => {
+  it('nada que no lo cumpla entra, y nada que lo cumpla se queda fuera', () => {
+    fc.assert(
+      fc.property(arbMatriz(), (M) => {
+        const r = analizar(M);
+        if (!r.ok) return;
+        const puntuadas = r.valor.afirmacionesPuntuadas;
+        const puente = r.valor.afirmacionesPuente;
+        expect(puente).toEqual(puntuadas.filter((a) => a.cumpleFiltroZ));
+        for (const af of puntuadas) {
+          // El indicador y el número no pueden discrepar: el uno se calcula del otro.
+          expect(af.cumpleFiltroZ).toBe(af.zMinimo > 1.2816);
+          // Y `z₁` es el mínimo sobre los grupos que observaron la afirmación, recalculado aquí
+          // desde las probabilidades publicadas... salvo que nadie la observara.
+          if (af.probabilidadesPorGrupo.length === 0) {
+            expect(af.zMinimo).toBe(Number.NEGATIVE_INFINITY);
+            expect(af.cumpleFiltroZ).toBe(false);
+          }
         }
       }),
       FC,
@@ -371,9 +504,9 @@ describe('P8 — el signo de los ejes está fijado por una regla', () => {
   it('o la suma es positiva, o manda la componente de mayor magnitud', () => {
     fc.assert(
       fc.property(arbMatriz(), (M) => {
-        const r = analizar(M);
-        if (!r.ok) return;
-        for (const v of [r.valor.primeraComponente, r.valor.segundaComponente]) {
+        const res = grupos(analizar(M));
+        if (res === undefined) return;
+        for (const v of [res.primeraComponente, res.segundaComponente]) {
           if (v.every((x) => x === 0)) continue; // no hay segundo eje: es el vector nulo
           let s = 0;
           for (const x of v) s += x;
@@ -434,11 +567,14 @@ describe('P9 — entradas sin ninguna variación', () => {
         );
         const a = analizar(M);
         expect(analizar(M)).toEqual(a);
-        if (a.ok) {
-          expect(a.valor.k).toBeGreaterThanOrEqual(2);
-          const suma = a.valor.grupos.reduce((acc, g) => acc + g.tamano, 0);
-          expect(suma).toBe(n);
-        }
+        // Una columna que parte a la gente en pares e impares separa perfectamente: aquí SIEMPRE
+        // hay grupos, y son dos.
+        const res = grupos(a);
+        expect(res).toBeDefined();
+        if (res === undefined) return;
+        expect(res.k).toBe(2);
+        const suma = res.grupos.reduce((acc, g) => acc + g.tamano, 0);
+        expect(suma).toBe(n);
       }),
       FC,
     );
