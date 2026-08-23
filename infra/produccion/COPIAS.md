@@ -142,7 +142,11 @@ ssh root@167.114.118.213 '
   sin una persona delante), pide escribir a mano la frase exacta `SI, REEMPLAZAR koinonia`, y hace
   — a su vez — una copia de emergencia de lo que había, por si la restauración sale mal. Detiene
   `koinonia-api` antes de restaurar y **no la vuelve a levantar sola**: el último paso, revisar los
-  datos y correr `docker start koinonia-api`, queda a propósito en manos de una persona.
+  datos y correr `docker start koinonia-api`, queda a propósito en manos de una persona. Esa copia
+  de emergencia (`koinonia-ANTES-DE-RESTAURAR-<fecha>.dump`) queda en el mismo `/opt/koinonia/copias/`
+  pero **la rotación automática de `copia-de-seguridad.sh` la ignora a propósito** — igual que a las
+  `.SOSPECHOSA`, no cuenta para las 14 copias válidas y nunca se autoborra; queda ahí hasta que un
+  humano decida qué hacer con ella.
 
 Una copia que nadie sabe restaurar no es una copia — por eso el modo aislado no es sólo para una
 catástrofe: es barato de correr (un contenedor descartable, unos segundos) y es exactamente lo que
