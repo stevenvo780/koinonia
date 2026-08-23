@@ -1,7 +1,8 @@
 # Handoff de sesión — Koinonía
 
-> **Fecha:** 2026-08-22, segunda actualización del día (actualiza el corte del 2026-08-21 y el de
-> media jornada) · **Destinatario:** la próxima sesión de trabajo, que no vio nada de lo anterior.
+> **Fecha:** 2026-08-22, tercera actualización del día (cierre de sesión) · **Destinatario:** la próxima sesión de trabajo.
+>
+> **Despliegue:** El sistema está desplegado en producción sobre VPS y operativo (ver §7).
 >
 > Este documento es **autocontenido**. No hace falta haber estado en la sesión previa ni recordar
 > nada: aquí está el estado del repositorio, las decisiones vinculantes, lo que falta, lo que se
@@ -19,6 +20,8 @@ Todo lo verificable se comprobó contra el repositorio el **2026-08-22 a las 16:
 `ea684c4`, después de integrar ADR-0046 a ADR-0050 y la democracia líquida. Las cifras de pruebas y
 rutas de esta sección sustituyen las de los dos cortes anteriores. Lo que no se pudo verificar se
 marca explícitamente como *no verificado*.
+
+**El despliegue a producción está operativo** en la VPS bajo el prefijo `koinonia-` en modo aditivo y con proxy Caddy (ver §7).
 
 **Git sí se verificó esta vez**, y el agujero de custodia que el corte anterior declaraba abierto
 está **cerrado**: hay remoto configurado y el árbol está publicado (§2.1). Es el cambio más
@@ -227,7 +230,7 @@ Playwright sugiere `sudo apt-get install libicu74 libxml2 libflite1 libmanette-0
 no sirve en este equipo:** el sistema es **CachyOS (`ID_LIKE=arch`)**, no hay `apt-get`
 —`playwright install --with-deps` aborta con `Failed to run 'apt-get install -s' … spawn apt-get
 ENOENT`— y `sudo` pide contraseña. Además ICU 74 y `libxml2.so.2` son versiones que Arch ya no
-distribuye. Ver §7, tarea 12, para las salidas reales.
+distribuye. Ver §8, tarea 12, para las salidas reales.
 
 **Están configurados y fallando en rojo a propósito.** No se han silenciado ni marcado como
 `skip`: un rojo visible es información; un verde que no probó nada es una mentira. Quien vaya a
@@ -303,7 +306,7 @@ revés, y no «se anota la tensión»: se corrige el research.
 | **0046** | Deliberación estructurada por etapas | Aceptado, **parcialmente sustituido por 0049** | Etapas como ventanas de escritura reales, aportes tipados con aristas obligatorias, grafo acíclico por construcción. **Cae** la autoría sellada (compromiso, seudónimo por deliberación y etapa de revelación); **sigue** todo lo demás. |
 | **0047** | Métodos de escrutinio completos | Aceptado | Los cinco que faltaban, con enteros exactos. Tres anti-invariantes demostrados **en positivo**, nunca con `skip`. |
 | **0048** | Consenso transversal como agenda | Aceptado | `packages/consensus` admite punto flotante **porque su salida es agenda y no puede alimentar un umbral ni un conteo**. |
-| **0049** | Autoría por alcance de etapa | Aceptado | **Sustituye el sellado criptográfico por control de acceso.** El autor va en el evento; lo que se deniega es **leerlo** mientras la etapa `perspectivas` siga vigente. Ver la advertencia de alcance en §7, tarea 19. |
+| **0049** | Autoría por alcance de etapa | Aceptado | **Sustituye el sellado criptográfico por control de acceso.** El autor va en el evento; lo que se deniega es **leerlo** mientras la etapa `perspectivas` siga vigente. Ver la advertencia de alcance en §8, tarea 19. |
 | **0050** | Umbral de no-facción revisado | **Propuesto**, no aceptado | Contraste de hipótesis nula por permutación determinista, para sustituir el umbral de silueta fijo de ADR-0048. **Es una propuesta: no está implementada y no manda todavía.** |
 
 ⚠ **`docs/adr/README.md` indexa hasta el 0049.** ADR-0050 existe como fichero y **no tiene fila en el
@@ -410,7 +413,7 @@ cierre («El dato acumulado») da el desglose:
 que **sigue sin ficha `E-NN`** son las rondas de `services/api`, `packages/anchor` y
 `packages/verifier-cli`: los tres hallazgos de §5.2 puntos 2-4 y el bug del verificador de §5.3, que
 sólo viven en comentarios de código y en nombres de test. Total real ≈ **55 hallazgos**, de los
-cuales ≈ 46 son errores de especificación. **La tarea 14 de §7 queda abierta a medias.**
+cuales ≈ 46 son errores de especificación. **La tarea 14 de §8 queda abierta a medias.**
 
 **La tercera ronda añadió un tipo de entrada que no existía: un error del propio orquestador.** E24 se
 registró como fallo de la spec y era una directiva equivocada; la spec tenía razón. Está **tachada,
@@ -532,7 +535,24 @@ Los dos matices que hacen honesto el resultado:
 
 ---
 
-## 7. Qué falta — plan de continuación priorizado
+## 7. Despliegue en producción
+
+El despliegue en producción está realizado, configurado y plenamente funcional con las siguientes características:
+
+*   **Puntos de acceso:** Interfaz en `https://koinonia.167.114.118.213.sslip.io` y API en `https://api.167.114.118.213.sslip.io`.
+*   **Aislamiento y aditividad en VPS:** La máquina aloja 66 contenedores ajenos en producción. El despliegue es exclusivamente aditivo, encapsulado en `/opt/koinonia` con el prefijo `koinonia-` en todos sus contenedores. Se verificó el inventario antes y después, confirmando la total integridad de los servicios preexistentes.
+*   **Enrutamiento y Proxy:** A cargo de **Caddy 2.6.2** a través de un único `/etc/caddy/Caddyfile` compartido con diez sitios externos, sin directivas `import` ni directorios `conf.d`. Dado que cualquier recarga (`reload`) es global y crítica, es obligatorio generar una copia de seguridad y ejecutar `caddy validate` antes de aplicar cambios. Los certificados TLS son emitidos por Let's Encrypt sobre dominios `sslip.io` (las IPs públicas directas no admiten firma de certificados estándar).
+*   **Base de datos:** PostgreSQL 16 se ejecuta en un contenedor sin puertos expuestos públicamente al host. Las diez migraciones iniciales se aplicaron automáticamente al arrancar el contenedor y se verificó su registro en la tabla de migraciones.
+*   **Servicio de correo:** El envío de correos opera mediante credenciales SASL propias sobre el puerto 587 de la instancia local preexistente de Postfix. No se modificó la directiva `mynetworks` para evitar convertir el servidor en un relay abierto para los 66 contenedores ajenos. Se confirmó que el token de acceso ya no se expone en los registros del servidor.
+*   **Privilegios mínimos en la API:** La API ya no corre con privilegios de superusuario. Las conexiones de base de datos se separaron entre migración y uso de la aplicación (`KOINONIA_DATABASE_URL_APP`). Para demostrar que los bloqueos a operaciones no permitidas (como `UPDATE`) se dan estrictamente por denegación de privilegios de base de datos y no por la lógica del trigger append-only, se ejecutó una prueba desactivando temporalmente dicho trigger, verificando que la aplicación no puede modificar los datos pero un superusuario en la misma sesión sí lo logra.
+*   **Trampas desactivadas en producción:**
+    *   La configuración en `infra/docker/docker-compose.yml` mapeaba originalmente `55432:5432`, lo que expondría la base de datos a internet con las credenciales por defecto del repositorio. Esto fue corregido.
+    *   El anclaje externo de firmas viene activado de forma predeterminada para entornos de producción.
+    *   La variable `KOINONIA_VAULT_MASTER_KEY` requiere un formato codificado en base64 y no en hexadecimal.
+
+---
+
+## 8. Qué falta — plan de continuación priorizado
 
 **Lo que se cerró el 2026-08-22, para no volver a abrirlo por descuido:** **democracia líquida**
 (tarea 2), **deliberación estructurada** (tarea 20, que nació y murió el mismo día), **métodos de
@@ -558,14 +578,17 @@ están tachadas abajo con lo que dejaron. Lo que **sigue abierto** son las tarea
 | **14** | **Volcar al registro los hallazgos de `api`, `anchor` y `verifier-cli`** | `00-contradicciones-resueltas.md` parte 3 | **Abierta a medias.** Las rondas de escrutinio/consenso (E24–E35, B1–B3) y de democracia líquida (E36–E46) ya están volcadas, y el acumulado está corregido a **42** errores de spec. **Siguen sin ficha `E-NN`** los cuatro hallazgos de §5.2-5.3 posteriores a `domain`. Además, `TESTING.md` §Principio rector conserva la cifra «unos 20» y la tabla de `MODEL_CONTEXT.md` §3 conserva conteos históricos (crypto 116, domain 229) que hoy son **108** y **584**. |
 | **15** | **Cerrar las divergencias entre `packages/consensus` y ADR-0038** | ADR-0048 §«Divergencias» · ADR-0038 · **ADR-0050** | Parte se cerró en `d3ce8d4` («Ajusta el análisis de consenso a lo que manda ADR-0038»), que subió el paquete de 65 a **101** pruebas. **Lo que queda:** el **umbral de no-facción** —ADR-0050 **propone** sustituir el umbral de silueta fijo por un **contraste de hipótesis nula por permutación determinista**, y está **Propuesto, no aceptado ni implementado**— y, sobre todo, que **nada conecta el paquete con el ledger**: no hay snapshot, ni hash de entrada, ni `AgendaDeConsensoCongelada`. **Hasta cerrar eso, la salida no se presenta a la asamblea.** |
 | **16** | **Revisión adversarial del esquema de autoría** | ADR-0046 · **ADR-0049** | **No ejecutada, y el objeto cambió.** ADR-0049 **retiró el esquema de seudónimo y compromiso** que esta tarea iba a auditar; lo que hay que atacar ahora es la **regla de acceso por etapa**, que es más simple y por eso más fácil de auditar de verdad. Sigue sin revisión independiente. Ver la tarea 19, que es la parte de esto que ya se sabe. |
-| **17** | **Las seis pantallas que faltan** | `PRODUCT.md` §4 | El producto define **14 pantallas** y hoy existen **8**: inicio, problemas, propuestas, decisiones, iniciativas, mis tareas, verificar y **deliberaciones** (17 ficheros `page.tsx` contando detalle y creación, más el proxy `app/api/[...ruta]/route.ts`). **Faltan seis: consenso, círculos y comisiones, reuniones, normas, delegaciones e historial.** Dos de ellas dejan sin interfaz cosas que ya funcionan en el dominio: **«Consenso»** (el paquete calcula y nadie lo ve) y **«Delegaciones»** (la democracia líquida entera es hoy inalcanzable desde la interfaz). ⚠ **Lección de `ea684c4`:** la pantalla de deliberaciones existió durante horas **sin estar enlazada en la navegación**. Una pantalla que no se puede alcanzar no cuenta como hecha, y el escenario E2E que lo comprueba ya existe. |
-| **18** | **La constitución digital versionada** | `GOVERNANCE.md` §6 | **Diseñada y sin una línea de código.** «Las reglas son datos versionados»: convierte las normas del colectivo en objetos con su decisión de origen, su fecha de revisión y su procedimiento de reforma —incluido el problema del arranque, que §6 ya resuelve—. De ella cuelga la pantalla «Normas» de la tarea 17. **Es la pieza de gobernanza más grande que sigue sin empezar.** |
-| **19** | **Declarar bien el alcance de la autoría por etapa** | ADR-0049 · `packages/domain/src/access.ts:370` | **Hecho el código, pendiente la consecuencia.** `deliberation:read-authorship` es hoy **`CIRCLE_MEMBER`** con `deniedDuringStage: 'perspectivas'`. Es decir: **cerrar la etapa hace la autoría legible para el CÍRCULO, no para el público.** La revisión adversarial de `gemini/pro` recomendó **eliminar el ocultamiento entero** por engañoso; se aceptó **parcialmente** —se retiró la retención del export (`99735ee`), se mantuvo la regla de acceso—, y por eso queda esta tarea: **que la interfaz y los textos digan «tu círculo verá quién escribió esto cuando cierre la etapa» y no «se revelará»**. Prometer publicidad y entregar visibilidad de círculo es el mismo modo de fallo que C6 existe para evitar. |
+| **17** | **Las seis pantallas que faltan** | `PRODUCT.md` §4 | El producto define **14 pantallas** y hoy existen **8**: inicio, problemas, propuestas, decisiones, iniciativas, mis tareas, verificar y **deliberaciones** (17 ficheros `page.tsx` contando detalle y creación, más el proxy `app/api/[...ruta]/route.ts`). **Faltan seis: consenso, círculos y comisiones, reuniones, normas, delegaciones e historial.** Dos de ellas dejan sin interfaz cosas que ya funcionan en el dominio: **«Consenso»** y **«Delegaciones»** (inalcanzables desde la interfaz). ⚠ **La pantalla de Reuniones no tiene un dominio de soporte detrás y no se debe inventar.** ⚠ **Lección de `ea684c4`:** la pantalla de deliberaciones existió sin enlace de navegación; el escenario E2E que lo comprueba ya existe. |
+| **18** | **La constitución digital versionada y su persistencia** | `GOVERNANCE.md` §6 | **Diseñada y sin código.** Falta implementar la persistencia y la lógica del agregado event-sourced para las reglas del §6 de `GOVERNANCE.md` (círculos, normas, etc.). De ella cuelga la pantalla «Normas» de la tarea 17. **Es la pieza de gobernanza más grande que sigue sin empezar.** |
+| **19** | **Declarar bien el alcance de la autoría por etapa** | ADR-0049 · `packages/domain/src/access.ts:370` | **Hecho el código, pendiente la consecuencia.** `deliberation:read-authorship` es hoy **`CIRCLE_MEMBER`** con `deniedDuringStage: 'perspectivas'`. Es decir: **cerrar la etapa hace la autoría legible para el CÍRCULO, no para el público.** La revisión adversarial de `gemini/pro` recomendó **eliminar el ocultamiento entero** por engañoso; se aceptó **parcialmente** (se retiró la retención del export, se mantuvo la regla de acceso), y por eso queda esta tarea: **que la interfaz y los textos digan «tu círculo verá quién escribió esto cuando cierre la etapa» y no «se revelará»**. |
+| **21** | **Dirección real del facilitador** | — | **BLOQUEANTE PARA USO REAL.** El facilitador configurado es `operador@udea.edu.co`, el cual no existe (Google acepta los correos dirigidos allí pero los rebota). Hasta que no se configure una dirección institucional real, nadie puede ingresar a la plataforma como facilitador. |
+| **22** | **Rediseño del sistema visual e interfaz (en curso)** | — | **En curso.** Corregir la desalineación de 272 px en rejillas de escritorio, reducir los 73 KiB de precarga de la barra de 13 enlaces (ocupa 284 px de 800 en vertical, `<h1>` inicia en `y=373`), incorporar `aria-current`, ajustar la escala tipográfica a 360 px y 1280 px para evitar líneas de 85-90 caracteres, y mejorar el contraste de bordes de campos (actualmente 1,58:1, violando WCAG 1.4.11). Se mantiene contraste de texto óptimo (peor caso 7,13:1), cero fuentes web y cero imágenes rasterizadas. |
+| **23** | **Mutación de Condorcet-Schulze** | `TESTING.md` §10 | La cobertura de mutación de `condorcet-schulze` está en **77,67%**, aún bajo el umbral establecido. Como referencia, `majority-judgment` llegó a su techo demostrado de **78,60%** tras verificar que no contenía bugs reales, sino 17 fallas en los tests. |
 
 
 ---
 
-## 8. Reglas de orquestación aprendidas
+## 9. Reglas de orquestación aprendidas
 
 Se pagaron en esta sesión. No son preferencias de estilo.
 
@@ -583,7 +606,7 @@ Se pagaron en esta sesión. No son preferencias de estilo.
 
 ---
 
-## 9. Transporte de delegación — historia del fallo y diagnóstico vigente
+## 10. Transporte de delegación — historia del fallo y diagnóstico vigente
 
 **Vigente:** el transporte **funciona** y su único límite conocido es la **duración** de la llamada.
 Ir directo al «Diagnóstico corregido el 2026-08-22», dos apartados más abajo; lo que viene primero es
@@ -645,7 +668,7 @@ minutos, no escribir texto.
 
 **Lo que quedó sin ejecutar por transporte en esta sesión:** la **revisión adversarial independiente
 del esquema de seudónimo** de ADR-0046 (`claude/opus`). **No se atribuye ningún resultado a esa
-llamada**, y la tarea 16 de §7 la deja explícitamente abierta.
+llamada**, y la tarea 16 de §8 la deja explícitamente abierta.
 
 ### Consecuencia real sobre la sesión del 2026-08-21
 
@@ -662,7 +685,7 @@ para él, y ahora sí se le puede encargar.
 
 ---
 
-## 10. Cómo arrancar la próxima sesión
+## 11. Cómo arrancar la próxima sesión
 
 1. **Leer este handoff entero.**
 2. **Leer `docs/ARCHITECTURE.md` y `docs/adr/README.md`.** Los ADR no se reabren; si uno parece mal,
@@ -703,12 +726,12 @@ para él, y ahora sí se le puede encargar.
      declaró pendiente y cuyo objeto además cambió con ADR-0049.
 
 Antes de delegar cualquier cosa: leer `docs/MODEL_CONTEXT.md` §1 —los **siete campos** obligatorios de
-toda delegación—, su **§8** (registro de ruteo del 2026-08-22, con las tres reglas nuevas) y §8 de
+toda delegación—, su **§8** (registro de ruteo del 2026-08-22, con las tres reglas nuevas) y §9 de
 este documento.
 
 ---
 
-## 11. Estado vigente y correcciones aplicadas a los datos de partida
+## 12. Estado vigente y correcciones aplicadas a los datos de partida
 
 **Estado vigente en `ea684c4`** (medido el 2026-08-22 a las 16:17): **1 213 tests en 85 ficheros**,
 incluidos **177** contra PostgreSQL 16 real; desglose por paquete

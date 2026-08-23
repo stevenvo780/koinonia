@@ -66,7 +66,7 @@ recortó** — por eso la regla 2 obliga a parar y avisar en vez de ampliar.
 > y su versión**. «Subagente implementador» no permite comparar nada, y es la única columna que estaba
 > vacía justo en lo que decide el ruteo futuro.
 
-## 4. Dos aprendizajes de ruteo
+## 4. Cuatro aprendizajes de ruteo
 
 ### 4.1 Implementar es una forma de revisar — y la única que encuentra errores internos
 
@@ -107,6 +107,14 @@ porque suenan a rigor.
    escrutinio.
 3. **Quien revisa no es quien implementa, y quien confirma una corrección no es quien la propuso** —
    la misma regla de `TESTING.md` §9, por la misma razón.
+
+### 4.3 El límite de delegación es la duración y no la cuota
+
+El límite de `delegar_a_cloud` no es la cuota sino la duración de cada llamada. MiniMax y Gemini estuvieron todo el tiempo por encima del 90% y 67% libres de cuota. Una ola de nueve llamadas simultáneas las tumbó todas y dejó procesos colgados que saturaron el transporte más de una hora. **Paralelizar bien es hacer más llamadas y más cortas, no llamadas más grandes.** Cloud para trabajo acotado que devuelve texto o toca pocos ficheros; subagentes `task` para lo largo que necesita correr pruebas.
+
+### 4.4 El trabajo sobrevive al timeout pero sin verificar
+
+Se registró previamente que «el trabajo sobrevive al timeout». Aunque esto es cierto, resulta incompleto: **sobrevive SIN VERIFICAR**. Cuatro ficheros de prueba escritos por agentes caídos quedaron en disco con 20 errores de tipos, 34 de lint y 17 pruebas fallando, ya que nunca llegaron a ejecutarse. La pauta correcta es **auditar lo heredado antes de darlo por bueno**.
 
 ## 5. Registro de ruteo de la sesión 2026-08-21
 
@@ -395,3 +403,25 @@ Tres sesiones de datos bastan para dejar de tratarlo como hipótesis:
 | Revisión adversarial | `gemini/pro`, `codex/*` nativo | Cambió el resultado en las tres sesiones registradas |
 | **QA exploratorio estático y masivo, en paralelo** | **`minimax/MiniMax-M3`, varias instancias** | 31 hallazgos con cita literal en esta sesión. **Comprobar que la respuesta no viene vacía** |
 | Orquestación, síntesis, decisiones sobre discrepancias | **el orquestador** | Las tres discrepancias del día —E24 retirada, la recomendación de `gemini/pro`, la errata de T-09— las cerró el orquestador, y una de las tres fue contra sí mismo |
+
+## 10. Registro de ruteo — sesión 2026-08-23, rediseño de interfaz y despliegue
+
+| TASK | TIPO | MODELO | TOKENS | RESULTADO | TESTS | REINTENTOS | ESCALAMIENTO |
+|---|---|---|---:|---|---|---:|---|
+| Despliegue en la VPS e inventario previo | infraestructura | subagentes `task` | n/d | **Excelente.** El inventario en solo lectura fue lo que hizo el despliegue seguro | — | 0 | — |
+| Capturas y auditoría de la interfaz desplegada | auditoría | subagente `task` | n/d | 30 capturas a 360 y 1280 px, peso de red medido, y un juicio honesto: la barra de 13 enlaces ocupaba 284 px de 800 y costaba 73 KiB de precarga | — | 0 | — |
+| Rediseño del sistema visual | UI / diseño | `claude/opus` | n/d | Recorrido numerado + grupo «Consultar» plegable, escala fluida, `--medida: 64ch`, borde de control a 3,43:1, pie anclado. Portada: `h1` de 373 → 198 px | — | 0 | — |
+| Corrección de la regresión del rediseño | UI / corrección | `claude/opus` | n/d | Su propio cambio dejaba el `h1` de las pantallas de consulta en `y=648` de 800 (81%), peor que el problema original. Lo midió, lo reconoció y lo bajó a 286 px | — | 0 | — |
+| 21 defectos de texto (concordancia, punto doble, millares) | corrección | `minimax/MiniMax-M3` | n/d | Los 21, verificados con tsc, eslint y prettier | — | 0 | — |
+| Contrato del 401 en `/auth/yo` | contratos | `codex/gpt-5.6-sol` | n/d | Recomendó rutas de estado separadas y advirtió del riesgo de oráculo de enumeración de padrón | — | 0 | — |
+| Reestructuración de `/verificar` | diseño | `gemini/pro` + subagente `task` | n/d | Jerarquía invertida: veredicto ámbar primero, seis comprobaciones plegadas, comprobación externa como acción principal | — | 0 | — |
+| Barridos de QA por pantallas | QA | 4× `minimax/MiniMax-M3` en paralelo | n/d | Doble envío sin proteger en tres pantallas, callejón sin salida en la pantalla de resultado, y que la lista de deliberaciones mentía por omisión sobre la autoría | — | 0 | — |
+| Resucitar las pruebas de `/verificar` | tests | subagente `task` | n/d | La prueba de que la manipulación se denuncia estaba **muerta**; volvió a correr y **con aserciones más fuertes**, no más débiles | — | 0 | — |
+
+### 10.1 Aprendizajes de ruteo
+
+1. **El límite de `delegar_a_cloud` no es la cuota sino la duración de cada llamada.** MiniMax y Gemini estuvieron todo el tiempo por encima del 90% y 67% libres. Una ola de nueve llamadas simultáneas las tumbó todas. **Paralelizar bien es hacer más llamadas y más cortas, no llamadas más grandes.**
+2. **Corrección a un aprendizaje anterior**: se registró que «el trabajo sobrevive al timeout». Es cierto pero incompleto — **sobrevive SIN VERIFICAR**. Cuatro ficheros de prueba escritos por agentes caídos quedaron en disco con 20 errores de tipos y 17 pruebas fallando: nunca se ejecutaron. La pauta correcta es **auditar lo heredado antes de darlo por bueno**.
+3. **Un parte de errores caduca.** Se encargó reparar una colisión con 14 errores de tipos; el agente comprobó antes de tocar, vio que ya estaban resueltos y **auditó la fusión en vez de rehacerla**. Comprobar antes de reparar es parte del encargo.
+4. **Dos agentes sobre el mismo fichero vuelven a costar caro.** `apps/web/app/iniciativas/[id]/page.tsx` lo tocaron a la vez el de puntuación y el de doble envío. Es la misma regla que el repositorio ya tenía escrita: **particionar por fichero y decirlo explícitamente en el encargo**.
+5. **Ruteo por fortaleza, confirmado con evidencia**: Opus para juicio de interfaz; Codex para corrección dura y seguridad; Gemini para lectura larga y análisis; MiniMax para volumen acotado. El mejor rendimiento del día fue MiniMax en trabajo mecánico bien recortado.
