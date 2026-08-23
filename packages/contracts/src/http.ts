@@ -67,6 +67,43 @@ export const sesion = z.object({
 });
 export type Sesion = z.infer<typeof sesion>;
 
+/**
+ * ¿Esta petición trae una sesión utilizable? La pregunta que se contesta **siempre con 200**.
+ *
+ * `/auth/yo` no se toca y sigue devolviendo 401 sin credencial, porque leer la propia sesión es una
+ * operación sobre un recurso protegido y su denegación es el rechazo de la operación, no un
+ * resultado del dominio. Pero la interfaz no quiere leer la sesión en cada carga: quiere saber si
+ * hay. Son dos preguntas distintas y ahora tienen dos rutas distintas, en vez de una sola con el
+ * significado torcido.
+ *
+ * Lo que se arregla con esto es concreto: Chrome apunta en la consola toda respuesta 4xx que pase
+ * por `fetch`, se capture o no, y no hay API de cliente que lo silencie. Un 401 esperado en cada
+ * carga es una línea roja en la portada de una plataforma cuya promesa es que se puede mirar debajo
+ * del capó.
+ *
+ * ═══ Por qué esto NO es un oráculo ═══
+ *
+ * Una consulta que le contesta 200 a cualquiera sólo es admisible si no dice nada que quien pregunta
+ * no supiera ya. Aquí se cumple por construcción, y por dos razones separadas:
+ *
+ *  1. **No hay forma de nombrar a nadie.** La respuesta depende exclusivamente de la credencial que
+ *     trae la propia petición. No se lee cuerpo, ni parámetros de ruta, ni cadena de consulta:
+ *     presentar la sesión de otra persona exige tenerla, y tenerla es ser esa persona.
+ *  2. **El `false` es uno solo.** Sin cookie, con la cookie vacía, con un testigo inventado, con una
+ *     sesión vencida, con una sesión revocada y con el testigo de una cuenta que no existe se
+ *     devuelve exactamente el mismo cuerpo. No existe «no entraste» frente a «esa cuenta no
+ *     existe», que es la distinción con la que se enumera un padrón. Es la misma regla que ya
+ *     obliga a `/auth/enlace` a contestar `enviado: true` exista o no la cuenta.
+ *
+ * Y no autoriza nada: `abierta: true` no es un permiso, es una observación. Cada operación vuelve a
+ * comprobar quién llama, y un cliente que se invente este 200 se estrella igual contra el 401.
+ */
+export const estadoSesion = z.discriminatedUnion('abierta', [
+  z.object({ abierta: z.literal(false) }).strict(),
+  z.object({ abierta: z.literal(true), sesion: sesion.strict() }).strict(),
+]);
+export type EstadoSesion = z.infer<typeof estadoSesion>;
+
 export const baseLegalSupresion = z.enum(['ley-1581-art-8e', 'revocatoria-consentimiento']);
 export type BaseLegalSupresion = z.infer<typeof baseLegalSupresion>;
 
@@ -102,6 +139,63 @@ export type MiembroCirculo = z.infer<typeof miembroCirculo>;
 
 export const miembrosCirculo = z.array(miembroCirculo);
 export type MiembrosCirculo = z.infer<typeof miembrosCirculo>;
+
+/**
+ * ¿Esta sesión puede pedir la lista de integrantes de este grupo?
+ *
+ * La lista **no se mueve de sitio**: `/circulos/{id}/miembros` sigue contestando 401 y 403. Leer un
+ * recurso protegido es una operación, y «denegado» ahí no es un resultado de dominio sino el rechazo
+ * de la operación. Lo que se añade es la pregunta previa, que es otra cosa: si se puede continuar.
+ *
+ * ═══ Un solo esquema, a propósito ═══
+ *
+ * Esto **no** es una unión discriminada, y la ausencia es la decisión: dos formas distintas según el
+ * caso es exactamente cómo una consulta de capacidad se convierte en oráculo. Hay un esquema, un
+ * código y un booleano. Un grupo que no existe y un grupo al que no pertenecés producen la misma
+ * respuesta byte a byte —sin conteo de integrantes, sin rol, sin motivo—, así que la ruta no sirve
+ * para averiguar qué grupos hay ni quién está en ellos.
+ *
+ * Es `.strict()` por lo mismo: un `motivo` o un `cuantos` añadidos de buena fe mañana serían un
+ * error de frontera y no un campo que el cliente ignora en silencio mientras viaja por la red.
+ *
+ * El booleano lo calcula el servidor con la **misma matriz** que autoriza la colección, no con una
+ * copia de la regla escrita en el navegador. Una copia se desincroniza el día que la matriz cambia,
+ * y se desincroniza hacia el lado peor: escondiéndole a alguien lo que sí podía ver.
+ */
+export const accesoAMiembros = z.object({ puedoVer: z.boolean() }).strict();
+export type AccesoAMiembros = z.infer<typeof accesoAMiembros>;
+
+/** La colección protegida. Contesta 401 y 403; no se pide sin haber preguntado antes. */
+export function rutaDeMiembros(circuloId: string): string {
+  return `/circulos/${circuloId}/miembros`;
+}
+
+/** La consulta de estado que la precede. Contesta 200 siempre. */
+export function rutaDeAccesoAMiembros(circuloId: string): string {
+  return `${rutaDeMiembros(circuloId)}/acceso`;
+}
+
+/**
+ * Los integrantes del grupo **si esta sesión puede verlos**; `undefined` si no, y sin haber tocado
+ * la colección protegida.
+ *
+ * El orden de las dos llamadas es parte del contrato de la colección —«preguntá antes»— y por eso
+ * vive acá y no en una pantalla: escrito en la pantalla, se olvida en la siguiente que lo necesite.
+ * `traer` es el transporte y entra como parámetro: acá no hay red, y sin red esto se puede probar
+ * sin navegador, que es lo único que demuestra que el segundo `fetch` no ocurre.
+ *
+ * La respuesta de capacidad se valida con su esquema en vez de creerle: un cuerpo raro —o falsificado
+ * por un intermediario— tiene que ser un fallo ruidoso y no un `puedoVer` que se lee como cierto.
+ * Aunque colarlo no serviría de nada: la colección vuelve a decidir por su cuenta.
+ */
+export async function miembrosSiPuedo(
+  circuloId: string,
+  traer: <T>(ruta: string) => Promise<T>,
+): Promise<MiembrosCirculo | undefined> {
+  const acceso = accesoAMiembros.parse(await traer<unknown>(rutaDeAccesoAMiembros(circuloId)));
+  if (!acceso.puedoVer) return undefined;
+  return miembrosCirculo.parse(await traer<unknown>(rutaDeMiembros(circuloId)));
+}
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Problemas

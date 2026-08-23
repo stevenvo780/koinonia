@@ -63,6 +63,8 @@ import {
   reanudarTarea as reanudarTareaSchema,
   reofrecerTarea as reofrecerTareaSchema,
   responderOfertaTarea as responderOfertaTareaSchema,
+  type AccesoAMiembros,
+  type EstadoSesion,
   type Sesion,
   solicitarSupresion as solicitarSupresionSchema,
   type SupresionSolicitada,
@@ -71,6 +73,7 @@ import {
 import {
   DomainError,
   authorize,
+  can,
   circleId,
   type ExecutionPlan,
   type MemberId,
@@ -573,6 +576,43 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
+  /**
+   * ¿Hay sesión? **Siempre 200**, con una unión discriminada.
+   *
+   * Esta ruta NO autoriza nada y no sustituye ninguna comprobación: contesta una observación sobre
+   * la credencial que trae la propia petición. Todo lo demás sigue autorizándose dentro de cada
+   * operación, y quien se invente un `abierta: true` en el cliente se estrella igual contra el 401
+   * de la operación real —hay una prueba que lo hace a propósito—.
+   *
+   * Tres cosas que parecen detalles y son la ruta entera:
+   *
+   *  · **No lee nada de la petición salvo la credencial.** Ni cuerpo, ni cadena de consulta. Un
+   *    `?correo=` o un `?miembroId=` no cambian la respuesta porque no se miran: la ruta no tiene
+   *    manera de nombrar a otra persona, que es lo que la separa de un oráculo de padrón.
+   *  · **Un solo `false`.** Sin cookie, con cookie vacía, con un testigo inventado, con una sesión
+   *    vencida o revocada y con el testigo de una cuenta inexistente sale el mismo cuerpo. El hook
+   *    de identidad ya devuelve `undefined` «sin decir por qué», y acá eso se conserva en vez de
+   *    traducirse a matices.
+   *  · **`no-store`.** Una respuesta de sesión guardada por un intermediario es la sesión de una
+   *    persona servida a otra. `/auth/yo` no la lleva porque nadie la pide sin credencial; ésta la
+   *    va a pedir todo el mundo en cada carga, incluido quien no ha entrado.
+   */
+  app.get('/auth/estado', (request, reply) => {
+    void reply.header('cache-control', 'no-store');
+    const quien = request.quien;
+    if (quien === undefined) return { abierta: false } satisfies EstadoSesion;
+    return {
+      abierta: true,
+      sesion: {
+        miembroId: quien.memberId,
+        alias: quien.alias,
+        roles: [...quien.roles],
+        circulos: [...quien.circles],
+        expiraEn: quien.expiresAt,
+      },
+    } satisfies EstadoSesion;
+  });
+
   app.get('/auth/yo', async (request, reply) => {
     const quien = request.quien;
     if (quien === undefined) {
@@ -671,6 +711,31 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     parse(z.object({}).strict(), request.query);
     const yo = sujetoPropioDe(request);
     return misTareasDto(await listarIniciativas(deps), yo);
+  });
+
+  /**
+   * ¿Puede esta sesión pedir la lista de integrantes? **Siempre 200**, siempre el mismo esquema.
+   *
+   * La colección de abajo no cambia —sigue en 401 y 403—; esto es la pregunta previa, para que la
+   * pantalla no la invoque cuando ya sabe que no puede verla. El booleano sale de `can()`, la misma
+   * matriz que `authorize()` aplica dos líneas más abajo: no es una segunda regla que pueda
+   * desincronizarse, es la misma consultada sin lanzar.
+   *
+   * **Un grupo inexistente y un grupo ajeno contestan lo mismo.** El `existeCirculo` va dentro del
+   * booleano y no antes con un 404: si el «no existe» saliera por otro camino, esta ruta sería un
+   * detector de grupos, y aunque hoy la lista de grupos sea pública —`GET /circulos` no pide nada—,
+   * una consulta de capacidad que distingue «no está» de «no es tuyo» es la forma exacta en que
+   * mañana se filtra lo que sí es privado.
+   *
+   * Tampoco mira la cadena de consulta: sin selector de sujeto no hay «¿y esta otra persona puede?».
+   */
+  app.get('/circulos/:id/miembros/acceso', (request) => {
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    return {
+      puedoVer: existeCirculo(id)
+        ? can(actorDe(request), 'circle:members-read', { kind: 'circle', circleId: circleId(id) })
+        : false,
+    } satisfies AccesoAMiembros;
   });
 
   /** Selector acotado: sólo integrantes vigentes del círculo que la persona ya puede consultar. */

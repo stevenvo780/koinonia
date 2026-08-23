@@ -9,7 +9,13 @@
  * Los tipos vienen de `@koinonia/contracts`: una sola definición para el servidor y el cliente.
  */
 
-import type { ApiError } from '@koinonia/contracts';
+import {
+  miembrosSiPuedo,
+  type ApiError,
+  type EstadoSesion,
+  type MiembrosCirculo,
+  type Sesion,
+} from '@koinonia/contracts';
 
 export class ErrorDeApi extends Error {
   readonly codigo: string;
@@ -37,8 +43,11 @@ export class ErrorDeApi extends Error {
  *
  * Lo que esto **no** puede arreglar es la línea roja de la consola del navegador: Chrome apunta
  * toda respuesta 4xx que pase por `fetch`, la trate el programa o no, y desde el cliente no hay
- * forma de callarla. Para que `/auth/yo` deje de escribirla, tendría que contestar 200 diciendo en
- * el cuerpo que no hay sesión; eso vive en el servicio, no acá.
+ * forma de callarla. Por eso la pregunta «¿hay sesión?» dejó de hacerse contra `/auth/yo` —que sigue
+ * en 401, como debe— y se hace contra `/auth/estado`, que contesta 200 siempre: ver `sesionActual`.
+ *
+ * Esta función se queda para lo que sí es un 4xx legítimo y hay que explicar en pantalla: una
+ * escritura sin sesión, un recurso ajeno, una etapa que todavía no dejó ver la autoría.
  */
 export function respuestaEsperada(error: unknown, ...estados: number[]): boolean {
   return error instanceof ErrorDeApi && estados.includes(error.estado);
@@ -73,6 +82,34 @@ export async function traer<T>(ruta: string, signal?: AbortSignal): Promise<T> {
   });
   if (!respuesta.ok) throw await leerError(respuesta);
   return (await respuesta.json()) as T;
+}
+
+/**
+ * La sesión de quien mira, o `undefined` si no hay ninguna. **Sin línea roja en la consola.**
+ *
+ * Va contra `/auth/estado`, que contesta 200 tanto si hay como si no. `/auth/yo` sigue existiendo y
+ * sigue devolviendo 401 sin credencial: son dos preguntas distintas y ésta —«¿hay?»— es la única
+ * que la interfaz hace en cada carga, siete pantallas incluidas.
+ *
+ * El `undefined` que sale de acá **no es un permiso denegado ni concedido**: sólo dice qué mostrar.
+ * Cada operación vuelve a decidir en el servidor, y si esta función mintiera, mentiría en la
+ * dirección inofensiva.
+ */
+export async function sesionActual(): Promise<Sesion | undefined> {
+  const estado = await traer<EstadoSesion>('/auth/estado');
+  return estado.abierta ? estado.sesion : undefined;
+}
+
+/**
+ * Los integrantes del grupo si esta sesión puede verlos; `undefined` si no.
+ *
+ * Pregunta primero por la capacidad —200 siempre— y sólo entonces pide la colección, que sigue
+ * contestando 401 y 403 a quien la llame de frente. La secuencia vive en `@koinonia/contracts`
+ * porque es parte del contrato de la colección y porque allí se puede probar, sin navegador, que
+ * con capacidad negativa **la segunda llamada no ocurre**.
+ */
+export async function miembrosDelCirculo(circuloId: string): Promise<MiembrosCirculo | undefined> {
+  return await miembrosSiPuedo(circuloId, traer);
 }
 
 export async function enviar<T>(ruta: string, cuerpo: unknown): Promise<T> {
