@@ -6,7 +6,7 @@
 >
 > **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones **R1, R2 y R3** las tomó el arquitecto y son firmes. Las contradicciones **C4 en adelante** las detectó la revisión editorial del corpus; las que R1–R3 adjudican de forma derivada se marcan como **resueltas**, y las que exigen una decisión nueva quedan **pendientes** con la recomendación del editor, que no tiene autoridad para cerrarlas.
 >
-> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E46 y E78–E87, en cinco rondas) la produjo **implementar el código**: `packages/crypto` contra `10-ledger-inmutable.md`, `packages/domain` contra `30-decision-engine-spec.md` (tres veces) y el asistente de acción sistémica contra `03-deliberativa-sistemas-antipatrones.md`. Las tres partes encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
+> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E46 y E78–E101, en siete rondas) la produjo **implementar el código**: `packages/crypto` contra `10-ledger-inmutable.md`, `packages/domain` contra `30-decision-engine-spec.md` (tres veces), el asistente contra `03-deliberativa-sistemas-antipatrones.md`, la persistencia de la constitución en `services/api` y `packages/contracts`, y la evaluación contra `ADR-0053`. Las tres partes encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
 
 ## Orden de precedencia normativa
 
@@ -339,9 +339,9 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 
 > **Qué es esta parte, y por qué está separada de la anterior.** Las contradicciones C4–C20 las
 > encontró una **revisión editorial**: alguien leyendo el corpus con atención y comparando documentos
-> entre sí. Los errores E1–E46 y E78–E87 de abajo los encontró otra cosa: **alguien escribiendo el código**.
+> entre sí. Los errores E1–E46 y E78–E101 de abajo los encontró otra cosa: **alguien escribiendo el código**.
 >
-> Hay cinco rondas, contra tres especificaciones distintas:
+> Hay siete rondas, contra cinco especificaciones distintas:
 >
 > | Ronda | Paquete | Spec | Errores | Pruebas en verde al terminar |
 > |---|---|---|---|---|
@@ -350,15 +350,17 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 > | 3ª | `packages/domain` (B.5–B.9) y `packages/consensus` | `30-decision-engine-spec.md` PARTE B, `01-decidim-loomio-polis.md` §3 | **E24–E35** — once en la spec, **una retirada por ser error propio**, más tres bugs del código (B1–B3) | 1 006 en todo el repositorio |
 > | 4ª | `packages/domain` (PARTE C) | `30-decision-engine-spec.md` PARTE C y §D.4 | **E36–E46** — once en la spec, **tres autodestructivas** | 1 213 en todo el repositorio |
 > | 5ª | `packages/domain` (asistente) | `03-deliberativa-sistemas-antipatrones.md` §3.1 | **E78–E87** — diez errores de especificación | 2 025 en todo el repositorio |
+> | 6ª | `services/api` y `packages/contracts` | `GOVERNANCE.md` §6, `ADR-0051` | **E88–E94** — siete errores de especificación | 2 172 |
+> | 7ª | `packages/domain` (evaluación) | `ADR-0053`, `ADR-0026`, `ADR-0033`, `ADR-0040` | **E95–E101** — siete errores de especificación | 2 232 |
 >
-> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera, la cuarta y la quinta · **Autoridad:**
+> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 de la tercera a la sexta, 2026-08-23 la séptima · **Autoridad:**
 > las resoluciones las tomó el arquitecto y son firmes. Cada una está aplicada en el punto exacto del
 > documento donde vivía el error, con una nota **«Corregido tras la implementación»** que explica qué
 > decía antes y qué rompía.
 >
 > **El dato acumulado, que es el hallazgo principal de esta parte: la implementación ha encontrado ya
-> 52 errores que ninguna revisión por lectura detectó** —seis en la spec 10, treinta y seis en la
-> spec 30 y diez en la spec 03—, y las tres habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es
+> 66 errores que ninguna revisión por lectura detectó** —seis en la spec 10, treinta y seis en la
+> spec 30, diez en la spec 03, siete en la spec de la constitución y siete en la spec de evaluación—, y todas habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es
 > un accidente de un documento flojo: es lo que se puede esperar de cualquier especificación no
 > ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su confirmación en las rondas
 > segunda, tercera y cuarta.
@@ -2007,23 +2009,223 @@ propios del código.
 
 *Vive en:* `packages/domain/src/assistant/cierre.ts:6-23`.
 
+## E88 — El texto de las normas no cabía en ninguna parte, y el producto lo promete
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §6.5 | Exige publicar la «diferencia respecto de la anterior» y `/normas` promete el texto de cada regla. |
+| ADR-0051 | El agregado, por decisión consciente, sólo guarda huellas de las reglas. |
+
+**El conflicto.** Con huellas, la diferencia publicable es una lista de etiquetas: se puede decir *que* cambió `horario_de_la_sala`, no *qué* cambió. Las dos decisiones son correctas por separado y juntas no cierran.
+
+**Por qué importaba.** Sin el texto normativo accesible, es imposible mostrar la diferencia real entre versiones ni cumplir la promesa de publicidad y transparencia del producto.
+
+**Resolución.** Resuelto con el almacén de textos direccionado por contenido de `text-store.ts`. Queda un borde declarado: un historial traído de fuera puede nombrar huellas que aquí no están archivadas, y entonces la lectura falla en vez de enseñar una regla en blanco.
+
+*Vive en:* `services/api/src/constitution/text-store.ts`.
+
+## E89 — La votación fundacional no cabe en la plataforma, y el foundingDecisionId finge que sí
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §6 | El evento guarda «la decisión que la ratificó en asamblea abierta» como un `DecisionId`. |
+
+**El conflicto.** Abrir una decisión exige una `DecisionConfig` con umbrales, quórum y método, pero el §6 establece que esos umbrales *son* la constitución. La votación que aprueba la versión 1 no puede celebrarse dentro de un sistema cuyas reglas todavía no existen.
+
+**Por qué importaba.** El `foundingDecisionId` es, en el arranque, un identificador opaco que no está obligado a corresponder a nada real en el sistema.
+
+**Resolución.** Se acepta para el arranque que el `foundingDecisionId` sea un identificador opaco. Se propone para el futuro que el §6 exija publicar y anclar el acta y el escrutinio antes de registrar la fundación, y que ese campo sea la huella del acta anclada y no un identificador interno.
+
+*Vive en:* `services/api/src/http/service.ts`.
+
+## E90 — El freno del §6 —las 30 firmas— es hoy un número que teclea quien propone
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §6 y Fila 13 | Las «30 firmas (10 % del censo)» es la primera de las seis garantías acumuladas. |
+
+**El conflicto.** No existe el respaldo como hecho en el sistema: no hay agregado, ni evento, ni pantalla para firmar una propuesta de reforma. El campo `sponsorCount` entra como entero en el evento y el pliegue lo compara contra el censo congelado (compara una afirmación de quien abre consigo misma).
+
+**Por qué importaba.** Cualquier miembro puede abrir reformas sin que el sistema verifique si realmente cuenta con las firmas de respaldo, burlando la primera garantía.
+
+**Resolución.** El pliegue compara el entero tecleado contra el censo congelado. Se propone modelar el respaldo en el futuro como eventos `ReformSponsored` —una firma, un hecho, con su actor— y derivar `sponsorCount` en el pliegue. Mientras tanto, el número está publicado con autor y fecha en el evento, lo que permite auditarlo y contradecirlo de forma externa.
+
+*Vive en:* `packages/domain/src/constitution/commands.ts` y `services/api/src/constitution/index.ts`.
+
+## E91 — El §6.6 le encarga a Garantías verificar un procedimiento que el sistema no puede enseñarles
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §6.6 y §6.c | Garantías debe verificar la veda de reformas (que depende del fin de semestre y de qué cláusulas depende cada votación). |
+
+**El conflicto.** El fin de semestre no está en ninguna parte (no hay calendario académico), y `DecisionConfig` no tiene un campo que diga de qué reglas depende una votación.
+
+**Por qué importaba.** El §6.6 manda comprobar algo sin fuente contra la que comprobarlo.
+
+**Resolución.** Se delega la verificación a un acto manual de Garantías. Se propone que una decisión declare las cláusulas de las que depende (al lado de `constituentAct`) y que el calendario académico se publique como acuerdo de Coordinación por la vía del §10.
+
+*Vive en:* `packages/domain/src/constitution/commands.ts` y `services/api/src/constitution/index.ts`.
+
+## E92 — Dos padrones congelados en una misma reforma y el documento no dice cuál manda
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §2(a) | Congela el padrón al abrir cada decisión. |
+| `GOVERNANCE.md` §6 | Mide los umbrales de la reforma sobre «el censo». |
+
+**El conflicto.** La reforma congela su censo el día que se abre, y su votación congela el suyo veintiún días después (o un semestre). Los dos números pueden diferir debido a altas y bajas.
+
+**Por qué importaba.** Los votos se cuentan sobre un padrón y el umbral se mide sobre otro, introduciendo inconsistencias matemáticas en el quórum.
+
+**Resolución.** El agregado resuelve midiendo contra el censo congelado **al abrir la reforma** (coherente con "no se cambian las reglas viendo el marcador"). Se propone explicitarlo en el §6 o congelar el censo de la reforma al abrir la votación.
+
+*Vive en:* `packages/domain/src/constitution/state-machine.ts` y `packages/domain/src/constitution/core.ts`.
+
+## E93 — El padrón es el denominador de la sección 4 y no deja rastro en el historial
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` Fila 19 y §7 | El alta y la baja son hechos verificables; el administrador no puede modificar el padrón y «todo acto administrativo es un evento público en el mismo historial». |
+
+**El conflicto.** La pertenencia vive en `identity.member`, una tabla mutable sin cadena de huellas ni anclaje. Nadie puede demostrar después cuál era el censo el día que se abrió una reforma, salvo el entero copiado en el evento.
+
+**Por qué importaba.** Esta entrega agrava la exposición al derivar de esa tabla mutable el censo y la identidad de los garantes, debilitando las garantías del §7.
+
+**Resolución.** El censo y los garantes se copian por valor y se congelan en el evento. Se propone crear un agregado de padrón event-sourced en el futuro, cumpliendo la promesa del §7.
+
+*Vive en:* `services/api/src/constitution/repository.ts` y `packages/domain/src/constitution/commands.ts`.
+
+## E94 — Detectar una firma fabricada deja la pantalla de normas sin poder enseñar nada
+
+| Documento | Qué decía |
+|---|---|
+| `GOVERNANCE.md` §7 | Garantiza que las firmas falsificadas sean detectadas por el sistema. |
+
+**El conflicto.** Si un administrador inserta una aprobación falsificada de Garantías directamente en la base de datos, el pliegue la rechaza al releer y la petición `GET /normas` responde con un error, impidiendo ver la constitución vigente.
+
+**Por qué importaba.** Quien puede escribir en la base de datos puede provocar una denegación de servicio sobre las normas del sistema.
+
+**Resolución.** Se elige fallar ruidosamente para no mostrar una constitución que el sistema no puede verificar. Se deja como mitigación pendiente que la pantalla distinga «no hay reglas» de «las reglas no se pueden verificar» con un aviso propio en vez de un error genérico.
+
+*Vive en:* `services/api/src/constitution/repository.ts`.
+
+## E95 — Dos hogares para el mismo criterio de éxito y la desaparición de successIf
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0033` | Define `Agreement` como entidad de primera clase con `evaluationCriteria: { observable, source, successIf }[]`. |
+| `ADR-0043` | Introduce la misma promesa en `ExecutionPlan` con la forma `{ description, evidenceSource }` y la congela en `proposalVersionHash`. |
+
+**El conflicto.** Hay dos hogares para el mismo dato, sólo uno existe en código, y en la conversión desaparece `successIf` (el umbral acordado de antemano), que era el núcleo del argumento del `ADR-0033` contra la evaluación retrospectiva sesgada.
+
+**Por qué importaba.** Al no tener un umbral automatizado, la evaluación se vuelve subjetiva y propensa a interpretaciones retrospectivas sesgadas.
+
+**Resolución.** Se evalúa el `ExecutionPlan`, que es lo que de verdad está congelado y hasheado. La pérdida de `successIf` se declara: la evidencia se exige, la comparación con un umbral no, y por eso `cumplido`/`incumplido` es un juicio sobre evidencia y no un cálculo. Recuperarlo exige cambiar `proposalVersionHash`, invalidando propuestas históricas.
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
+## E96 — Invariante de la regla dura de ratificación no implementado en el motor
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0033` «Regla dura» | «Una decisión que crea un acuerdo no puede pasar a `Ratified` si `reviewAt` o `evaluationCriteria` están vacíos. Es una invariante del motor». |
+
+**El conflicto.** El pliegue de ratificación en `engine.ts` comprueba actor, resultado, ventana de impugnación y desenlace, pero nunca el plan. El motor no tenía esa restricción.
+
+**Por qué importaba.** Se permitía formalmente ratificar decisiones con acuerdos que carecían de fecha de revisión o criterios de evaluación.
+
+**Resolución.** La invariante se cumple aguas arriba: `validateExecutionPlanStructure` la impone al crear la versión de la propuesta (`ADR-0043`), impidiendo abrir una decisión sin criterios. La afirmación de `ADR-0033` sobre "el motor" es falsa y se aclara que es una invariante de la versión de la propuesta.
+
+*Vive en:* `packages/domain/src/engine.ts`.
+
+## E97 — Caducidad automática de los acuerdos no derivable por falta de datos y agregados
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0033` cadencias | «Sin renovación explícita el acuerdo pasa a `caducado`», con cadencias por defecto según el tipo de acuerdo (operativo, procedimental o constitutivo). |
+
+**El conflicto.** `ExecutionPlan.reviewAt` es un instante absoluto sin tipo de acuerdo. No hay dato del que derivar una cadencia, ni existe el agregado con estado `caducado`.
+
+**Por qué importaba.** La caducidad automática prometida no se podía derivar ni ejecutar en el sistema.
+
+**Resolución.** Se implementa lo ejecutable: `mantener` exige comprometer `nextReviewAt` para evitar que la inercia renueve sola. La caducidad automática y los tres tipos de cadencia quedan como deuda declarada, requiriendo el agregado `Agreement` (E95).
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
+## E98 — La escalera de siete escalones mezcla estados de la tarea y de la evaluación
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0040` | Presenta los siete escalones como una sola escalera continua de incumplimiento que alguien recorre. |
+
+**El conflicto.** Los primeros cinco escalones son estados o transiciones de la tarea y sólo los puede cambiar quien la aceptó (`ADR-0045`). Leídos de forma continua, sugiere que un tercero puede declarar el bloqueo o reasignación de otro, violando la autonomía. Además, `dominio-suspendido` es excepcional y no automático.
+
+**Por qué importaba.** Permitir que la evaluación actúe sobre tareas de terceros violaría la autonomía individual de las ofertas de trabajo.
+
+**Resolución.** La evaluación sólo puede pulsar los dos escalones que no hablan por nadie: `consultada` y `en-revision-colectiva` (exigiendo el primero antes del segundo). El término `dominio-suspendido` se elimina del vocabulario de evaluación para evitar su activación automática.
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
+## E99 — Contradicción sobre la anulación automática como evento o estado derivado
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0026` | La discrepancia del resultado «dispara `Annulled` automático. No es una alerta: es una transición de estado». |
+| `ADR-0051` | La caducidad se calcula al leer «sin evento». |
+
+**El conflicto.** En event sourcing, una transición exige un evento escrito. Si la anulación requiriera un evento escrito, el registro manipulado seguiría vigente mientras nadie lo escribiera, convirtiéndose en una alerta que alguien debe mirar.
+
+**Por qué importaba.** Exigir un evento de anulación rompe la garantía de que las inconsistencias invaliden el estado de forma inmediata y automática.
+
+**Resolución.** Se sigue la doctrina de `ADR-0051`: `evaluationPublicStatus` deriva `anulada-por-inconsistencia` dinámicamente al plegar sin emitir eventos, y el pliegue rechaza cerrar el acuerdo.
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
+## E100 — Falta de frontera clara entre métricas de cumplimiento colectivas e individuales
+
+| Documento | Qué decía |
+|---|---|
+| `ADR-0040` | Prohíbe métricas de actividad individual, pero permite publicar la métrica agregada «cumplimiento de acuerdos». |
+
+**El conflicto.** El cumplimiento de acuerdos se calcula sobre lo producido por el módulo de evaluación. Si se desagrega por responsable (que es el campo de unión natural), se obtiene la métrica individual prohibida por el propio `ADR-0040`.
+
+**Por qué importaba.** Al no definir la frontera, era trivial saltarse la prohibición de métricas individuales.
+
+**Resolución.** Se pone la frontera en el dato: el informe de evaluación no contiene identificadores de personas, por lo que no es posible desagregarlo. La métrica agregada se traslada a `packages/metrics` y consumirá el informe anonimizado.
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
+## E101 — La capacidad de tech-admin de leer las evaluaciones contradice la frase absoluta del encargo
+
+| Documento | Qué decía |
+|---|---|
+| Encargo | «`tech-admin` no tiene ninguna capacidad» (en el módulo de evaluación). |
+
+**El conflicto.** En `access.ts`, `OPEN` permite acceso a `tech-admin`. Como las evaluaciones son públicas (`evaluation:read` es `OPEN`), el administrador técnico puede leerlas, al igual que cualquier usuario anónimo.
+
+**Por qué importaba.** La afirmación absoluta induce a error y podría provocar cambios innecesarios que rompan el acceso público general.
+
+**Resolución.** Se verifica mediante pruebas que `tech-admin` no posee ninguna capacidad de **escritura** en evaluación. Puede leer porque la lectura es pública (`OPEN`), no por privilegios especiales.
+
+*Vive en:* `packages/domain/src/evaluation/commands.ts`.
+
 ---
 
 ### El dato acumulado
 
-**Entre las tres especificaciones, la implementación ha encontrado ya 52 errores que ninguna revisión
+**Entre las cinco especificaciones, la implementación ha encontrado ya 66 errores que ninguna revisión
 por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un eslogan:
 
-| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Spec 30, 4ª ronda | Spec 03 (`assistant`), 5ª ronda | Total |
-|---|---:|---:|---:|---:|---:|---:|
-| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | 11 (E36–E46) | 10 (E78–E87) | **52** |
-| — de ellos, **autodestructivos** | 5 | *(no clasificado)* | — | **3** (E37, E38, E42) | — | — |
-| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | — | — | 2 |
-| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | — | — | 2 |
-| Divergencias elevadas sin cerrar | 1 (E9) | — | — | — | — | 1 |
-| Entradas **retiradas** (error propio) | — | — | 1 (E24) | — | — | 1 |
-| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | — | — | 3 |
-| **Entradas de la parte 3** | 11 | 14 | 15 | 11 | 10 | **61** |
+| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Spec 30, 4ª ronda | Spec 03 (`assistant`), 5ª ronda | `GOVERNANCE.md` §6, 6ª ronda | `ADR-0053`, 7ª ronda | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | 11 (E36–E46) | 10 (E78–E87) | 7 (E88–E94) | 7 (E95–E101) | **66** |
+| — de ellos, **autodestructivos** | 5 | *(no clasificado)* | — | **3** (E37, E38, E42) | — | — | — | — |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | — | — | — | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | — | — | — | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | — | — | — | — | — | 1 |
+| Entradas **retiradas** (error propio) | — | — | 1 (E24) | — | — | — | — | 1 |
+| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | — | — | — | — | 3 |
+| **Entradas de la parte 3** | 11 | 14 | 15 | 11 | 10 | 7 | 7 | **75** |
 
 **Cómo se clasifican los conflictos ADR ↔ spec, porque hay dos filas que podrían competir.** E43
 (ADR-0030 contra C.7.a) se cuenta **dentro de la especificación** y no en la fila de incoherencias,
@@ -2037,11 +2239,11 @@ NOTHING` que volvía mudo el blindaje, el `ORDER BY tree_size` que ordenaba como
 `count(*) = max(leaf_index)+1` ciego al truncamiento de la cola y el falso positivo de
 `directorySource()`— que **siguen sin ficha `E-NN`** y viven sólo en comentarios y nombres de test.
 Están descritos en `HANDOFF.md` §5.2 y §5.3 y su volcado sigue siendo la tarea 14 del plan de
-continuación. Con ellos el total real ronda los **65 hallazgos**, de los cuales unos **56** son
+continuación. Con ellos el total real ronda los **79 hallazgos**, de los cuales unos **70** son
 errores de especificación.
 
 Las especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
-Ninguno de los 52 salió de esa revisión: **los 52 salieron de escribir el código y los tests**. Y la
+Ninguno de los 66 salió de esa revisión: **los 66 salieron de escribir el código y los tests**. Y la
 segunda ronda invierte la intuición cómoda de que un documento mejor deja menos errores: la spec 30
 —2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes, apéndice de decisiones numeradas— es
 el documento más cuidado del corpus y produjo **más del doble** que la spec 10. La tercera ronda no
