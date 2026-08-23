@@ -6,7 +6,7 @@
 >
 > **Fecha:** 2026-08-21 · **Autoridad:** las resoluciones **R1, R2 y R3** las tomó el arquitecto y son firmes. Las contradicciones **C4 en adelante** las detectó la revisión editorial del corpus; las que R1–R3 adjudican de forma derivada se marcan como **resueltas**, y las que exigen una decisión nueva quedan **pendientes** con la recomendación del editor, que no tiene autoridad para cerrarlas.
 >
-> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E46, en cuatro rondas) la produjo **implementar el código**: `packages/crypto` contra `10-ledger-inmutable.md` y después `packages/domain` contra `30-decision-engine-spec.md`, tres veces. Las tres partes encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
+> **Tres partes, tres formas de encontrar un error.** La **parte 1** (R1–R3) son resoluciones del arquitecto sobre conflictos de fondo. La **parte 2** (C4–C20) la produjo una **revisión editorial**: leer el corpus y compararlo consigo mismo. La **parte 3** (E1–E46 y E78–E87, en cinco rondas) la produjo **implementar el código**: `packages/crypto` contra `10-ledger-inmutable.md`, `packages/domain` contra `30-decision-engine-spec.md` (tres veces) y el asistente de acción sistémica contra `03-deliberativa-sistemas-antipatrones.md`. Las tres partes encuentran cosas distintas, y la tercera encontró justo lo que las dos primeras no podían encontrar. Está argumentado en la cabecera de la parte 3, y es la conclusión más reutilizable de este archivo.
 
 ## Orden de precedencia normativa
 
@@ -339,9 +339,9 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 
 > **Qué es esta parte, y por qué está separada de la anterior.** Las contradicciones C4–C20 las
 > encontró una **revisión editorial**: alguien leyendo el corpus con atención y comparando documentos
-> entre sí. Los errores E1–E46 de abajo los encontró otra cosa: **alguien escribiendo el código**.
+> entre sí. Los errores E1–E46 y E78–E87 de abajo los encontró otra cosa: **alguien escribiendo el código**.
 >
-> Hay cuatro rondas, contra dos especificaciones distintas:
+> Hay cinco rondas, contra tres especificaciones distintas:
 >
 > | Ronda | Paquete | Spec | Errores | Pruebas en verde al terminar |
 > |---|---|---|---|---|
@@ -349,15 +349,16 @@ No es una contradicción —la spec 30 acota la concentración con caducidad, to
 > | 2ª | `packages/domain` | `30-decision-engine-spec.md` | **E10–E23** — catorce, todos dentro de la spec | 229 |
 > | 3ª | `packages/domain` (B.5–B.9) y `packages/consensus` | `30-decision-engine-spec.md` PARTE B, `01-decidim-loomio-polis.md` §3 | **E24–E35** — once en la spec, **una retirada por ser error propio**, más tres bugs del código (B1–B3) | 1 006 en todo el repositorio |
 > | 4ª | `packages/domain` (PARTE C) | `30-decision-engine-spec.md` PARTE C y §D.4 | **E36–E46** — once en la spec, **tres autodestructivas** | 1 213 en todo el repositorio |
+> | 5ª | `packages/domain` (asistente) | `03-deliberativa-sistemas-antipatrones.md` §3.1 | **E78–E87** — diez errores de especificación | 2 025 en todo el repositorio |
 >
-> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera y la cuarta · **Autoridad:**
+> **Fechas:** 2026-08-21 las dos primeras rondas, 2026-08-22 la tercera, la cuarta y la quinta · **Autoridad:**
 > las resoluciones las tomó el arquitecto y son firmes. Cada una está aplicada en el punto exacto del
 > documento donde vivía el error, con una nota **«Corregido tras la implementación»** que explica qué
 > decía antes y qué rompía.
 >
 > **El dato acumulado, que es el hallazgo principal de esta parte: la implementación ha encontrado ya
-> 42 errores que ninguna revisión por lectura detectó** —seis en la spec 10 y treinta y seis en la
-> spec 30—, y las dos habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es
+> 52 errores que ninguna revisión por lectura detectó** —seis en la spec 10, treinta y seis en la
+> spec 30 y diez en la spec 03—, y las tres habían pasado por la revisión editorial que produjo C4–C20 de la parte 2. No es
 > un accidente de un documento flojo: es lo que se puede esperar de cualquier especificación no
 > ejecutada, por buena que sea. Ver «El hecho metodológico» abajo y su confirmación en las rondas
 > segunda, tercera y cuarta.
@@ -1818,8 +1819,7 @@ transversal (2026-08-22).** Once errores dentro de la spec 30, una entrada retir
 propios del código.
 
 | # | Error | Dónde vivía | Estado |
-|---|---|---|---|
-| ~~E24~~ | ~~La mediana par de B.7 contradice *lower middlemost*~~ | — | **RETIRADA** — el error era del orquestador; la spec era coherente. Se conserva tachada |
+| E24 | ~~La mediana par de B.7 contradice *lower middlemost*~~ | — | **RETIRADA** — el error era del orquestador; la spec era coherente. Se conserva tachada |
 | E25 | «Misma convención que B.7» con los dos vectores orientados al revés | `30-...` §B.5 vs §B.7 | **Resuelta** — la semántica se comparte, la fórmula no: `⌊(W−1)/2⌋` y `⌊W/2⌋` |
 | E26 | Cuotas y restos del sorteo por división en punto flotante | `30-...` §B.9 vs ADR-0027 | **Resuelta** — Hamilton con enteros y `bigint`; manda el ADR |
 | E27 | `\|muestra\| = min(n,N)` y `Σ quota = n` a la vez | `30-...` INV-55 | **Resuelta** — se acota antes de repartir |
@@ -1852,21 +1852,178 @@ propios del código.
 | E45 | INV-28 se contradice: `reseq(π(L))` renumera `grantedSeq`, y los devueltos se definen por `grantedSeq` | `30-...` INV-28 | **Resuelta** — se baraja el orden de llegada **sin** renumerar; `reseq` no aplica |
 | E46 | `IntegrityAlert` no está en el catálogo ni en la tabla, y por A.8.2 sería ilegal en todo estado | `30-...` §C.4.b vs §A.7, §A.8.1 | **Resuelta** — el ciclo se declara en la `Proof` (`cycleMembers`); no se emite evento |
 
+**Parte 3, quinta ronda — errores detectados al implementar el asistente de acción sistémica (2026-08-22).** Diez errores de especificación.
+
+| # | Error | Dónde vivía | Estado |
+|---|---|---|---|
+| E78 | La frase de cierre editable se desincroniza de las respuestas del borrador | `03-...` §3.1 | **Resuelta** — calculada como función pura del borrador, no almacenada |
+| E79 | La respuesta «todavía no sé» anula la obligatoriedad de las preguntas de arranque y acción | `03-...` §3.1 | **Resuelta** — se acepta «todavía no sé» pero no cuenta para cerrar |
+| E80 | La pregunta 7 no es un campo único e introduce riesgo de descuadre cardinal | `03-...` §3.1 | **Resuelta** — validada en el pliegue por líneas; el descuadre se muestra, no se recorta solo |
+| E81 | El vínculo acción-responsable-plazo en prosa rompe la rastreabilidad del plan | `03-...` §3.1 | **Tensión declarada** — se copian literales; estructurarlas requiere cambiar la spec |
+| E82 | Instrucciones de control de interfaz embebidas en el texto de las preguntas | `03-...` §3.1 | **Tensión declarada** — prosa libre; se pierde la marca estructurada |
+| E83 | El asistente invoca una memoria de aprendizajes (`Learning`) inexistente en el sistema | `03-...` §3.1 y §3.4.4 | **Resuelta** — se usa `muestraMemoria` y se opera por búsqueda local en modo estructural |
+| E84 | Búsqueda de parecidos entra en conflicto con la privacidad del texto no publicado | encargo vs privacidad | **Resuelta** — obligación delegada al adaptador; el dominio no verifica publicidad |
+| E85 | Contradicción en el encargo del cálculo de aceptación en el paquete de métricas | encargo | **Resuelta** — el conteo y umbral quedan en `domain`; informe como deuda declarada |
+| E86 | El puerto de asistencia no puede escribir en el ledger, pero debe registrar la procedencia | `ARCHITECTURE.md` §6 | **Resuelta** — el evento lo escribe el actor `'system'`, manteniendo puro el puerto |
+| E87 | Plantilla de frase de cierre rígida e incompatible con la flexión gramatical de las preguntas | `03-...` §3.1 | **Tensión declarada** — se conserva la plantilla literal y se declara la fragilidad |
+
+## E78 — La frase de cierre editable se desincroniza de las respuestas del borrador
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | La frase de cierre se describe como «(generada, editable)». |
+
+**El conflicto.** Si la frase de cierre se guarda tras ser editada, deja de ser una función de las respuestas individuales a las 27 preguntas. En consecuencia, si el usuario corrige la respuesta a alguna de las preguntas que la integran en una fase posterior, la frase guardada se desincroniza del borrador, produciendo dos versiones conflictivas de la decisión en el sistema.
+
+**Por qué importaba.** Generar un texto editable que luego se almacena rompe la reproducibilidad e integridad del borrador. Al rehidratar el borrador, el motor no tendría forma de saber si la frase representa de forma fidedigna las respuestas o si fue alterada manualmente, ni cuál de las dos fuentes de verdad prevalece para la asamblea.
+
+**Resolución.** La frase de cierre se define como una **función pura** de las respuestas del borrador y se calcula dinámicamente cada vez que se requiere. No se guarda ningún texto de cierre en el historial de eventos. La edición de la frase se realiza editando las respuestas individuales en los campos correctos del formulario, manteniendo la invitación a corregir («¿Suena bien? ¿Falta algo?») como un disparador de ajustes sobre los datos estructurados.
+
+*Vive en:* `packages/domain/src/assistant/cierre.ts:6-23` y `packages/domain/src/assistant/cierre.ts:84-92`.
+
+## E79 — La respuesta «todavía no sé» anula la obligatoriedad de las preguntas de arranque y acción
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | «Sólo dos preguntas son obligatorias» (la 1 y la 11), conviviendo con «"todavía no sé" es siempre una respuesta válida». |
+
+**El conflicto.** Si «todavía no sé» es una respuesta de valor general y cuenta como tal para el sistema, un usuario puede responder eso a la 1 y a la 11 y cerrar un borrador de plan vacío, burlando la condición de obligatoriedad diseñada para asegurar un mínimo contenido en el plan.
+
+**Por qué importaba.** Permitir que un borrador se cierre con respuestas evasivas en los dos campos fundamentales desvirtúa el propósito del asistente, dejando iniciativas registradas que carecen de definición del problema y de las acciones a realizar.
+
+**Resolución.** Se acepta «todavía no sé» en cualquier pregunta para no bloquear la edición fluida, pero **no se cuenta como respondida** al evaluar si el borrador puede cerrarse (`puedeCerrarse`). La respuesta `todavia_no_se` se trata en el dominio como un hueco persistente que requiere definición posterior y que bloquea el cierre en las preguntas obligatorias (1 y 11).
+
+*Vive en:* `packages/domain/src/assistant/types.ts:627-644` y `packages/domain/src/assistant/types.ts:871-888`.
+
+## E80 — La pregunta 7 no es un campo único e introduce riesgo de descuadre cardinal
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | Pregunta 7: «Esto que escribiste, ¿lo viste, te lo contaron, o lo estás suponiendo? (por cada causa)» numerada como una sola pregunta. |
+
+**El conflicto.** La anotación «(por cada causa)» implica que la cardinalidad de la pregunta 7 no es uno, sino $N$ (donde $N$ es el número de causas declaradas en la pregunta 6). No es representable ni implementable como un campo de texto plano único. Además, si el usuario edita la pregunta 6 posteriormente agregando o eliminando causas, las respuestas ya dadas a la pregunta 7 quedan descuadradas.
+
+**Por qué importaba.** Un desajuste de cardinalidad provocaría errores de índice o de correspondencia al mapear causas con justificaciones, forzando a la aplicación a recortar datos arbitrariamente o a fallar en tiempo de ejecución.
+
+**Resolución.** La pregunta 7 se implementa con la forma `'por_linea'` atada a la pregunta 6 (`porCadaLineaDe: 6`). El pliegue valida la correspondencia de cardinalidad al recibir el evento. Si el usuario modifica la pregunta 6 después, el sistema no recorta la respuesta a la 7 por su cuenta (lo que violaría el principio de que la máquina no edita al usuario), sino que expone el desajuste a través de la función `desajustes` para que la interfaz alerte a la persona de forma explícita.
+
+*Vive en:* `packages/domain/src/assistant/types.ts:890-909` y `packages/domain/src/assistant/types.ts:917-930`.
+
+## E81 — El vínculo acción-responsable-plazo en prosa rompe la rastreabilidad del plan
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | Preguntas 12 («¿Quién hace cada una?») y 13 («¿Para cuándo estaría hecha cada una?») son texto libre general. |
+
+**El conflicto.** Aunque conceptualmente las preguntas 12 y 13 operan por cada acción enunciada en la 11, la especificación las trata como preguntas independientes de texto libre. Esto rompe la estructura del dato e impide que el vínculo acción $\leftrightarrow$ responsable $\leftrightarrow$ plazo se registre de forma asociada en la base de datos, contradiciendo el principio 4 del proyecto («toda decisión debe poder convertirse en acción rastreable»).
+
+**Por qué importaba.** Como texto plano en prosa, las tareas no pueden extraerse automáticamente ni integrarse de forma estructurada con el gestor de iniciativas del espacio de trabajo.
+
+**Resolución.** Se conserva la redacción y forma de texto plano de las preguntas en cumplimiento estricto del pliego literal de §3.1 para el MVP, y se declara formalmente la tensión con el principio 4 en el diseño. Su posterior estructuración y corrección metodológica requerirá una decisión del círculo que modifique la redacción original de la especificación.
+
+*Vive en:* `packages/domain/src/assistant/preguntas.ts:244-249`.
+
+## E82 — Instrucciones de control de interfaz embebidas en el texto de las preguntas
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | Pregunta 20: «¿Cuánto sería "suficiente"? Poné un número aunque sea a ojo — y marcá que es a ojo.» |
+
+**El conflicto.** La instrucción «marcá que es a ojo» presupone un control de interfaz de usuario (como un checkbox) que no está soportado ni tipificado en el modelo de datos de las preguntas, el cual solo gestiona textos literales de respuesta.
+
+**Por qué importaba.** Al no existir un campo estructurado para registrar la naturaleza estimada del dato, el carácter «a ojo» queda diluido en la prosa de la respuesta, perdiendo la distinción entre un indicador medido y uno estimado.
+
+**Resolución.** La pregunta se deja como respuesta de texto libre ('frase') respetando el literal del documento. La distinción entre dato estimado y medido queda declarada como una deuda de interfaz y no del dominio, respondiendo a la instrucción en texto plano dentro del mismo campo.
+
+*Vive en:* `packages/domain/src/assistant/preguntas.ts:281-284`.
+
+## E83 — El asistente invoca una memoria de aprendizajes (`Learning`) inexistente en el sistema
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 y §3.4.4 | El sistema busca coincidencias en la memoria (`Learning`) y las muestra al lado del campo en las preguntas 2, 6, 11 y 27. |
+
+**El conflicto.** La entidad `Learning` (y su almacenamiento correspondiente) no está definida ni implementada en ningún módulo del sistema de gobernanza en esta etapa del proyecto.
+
+**Por qué importaba.** La especificación hace depender una funcionalidad central del asistente (mostrar sugerencias basadas en similitud) de un tipo de datos y un almacén ficticios, lo que causaría fallas de compilación o dependencias vacías.
+
+**Resolución.** Se añade el metadato `muestraMemoria` a los tipos de las preguntas afectadas. El motor de búsqueda de parecidos opera mediante una búsqueda local simple sobre las propuestas y planes ya públicos en el dominio en el modo estructural (sin IA), asegurando que la ayuda funcione de manera autónoma y autocontenida sin depender del modelo de lenguaje ni de entidades no implementadas.
+
+*Vive en:* `packages/domain/src/assistant/preguntas.ts:207`, `:219`, `:242` y `:300`.
+
+## E84 — Búsqueda de parecidos entra en conflicto con la privacidad del texto no publicado
+
+| Documento | Qué decía |
+|---|---|
+| Encargo de tarea | La operación de buscar parecidos exige enviar también el corpus con el que se compara. |
+
+**El conflicto.** El corpus con el que se realiza la comparación está compuesto por respuestas dadas por otros usuarios en borradores en curso. El dominio no puede comprobar si esos borradores o textos son públicos o privados, pues carece de visibilidad sobre el estado de publicación o los permisos del corpus de origen.
+
+**Por qué importaba.** Si se envían textos de borradores privados al puerto de asistencia para calcular la similitud, se violaría la garantía de privacidad («sólo viaja el fragmento») declarada para proteger el espacio de redacción individual.
+
+**Resolución.** El parámetro `conQueComparar` de la petición al puerto de IA se tipifica de forma restrictiva y se documenta que solo debe ser poblado con textos que el adaptador verifique de forma externa como públicos. El dominio valida la ausencia de identificadores en el payload, pero delega la responsabilidad de filtrar la privacidad de los datos al adaptador correspondiente.
+
+*Vive en:* `packages/domain/src/assistant/types.ts:412-427`.
+
+## E85 — Contradicción en el encargo del cálculo de aceptación en el paquete de métricas
+
+| Documento | Qué decía |
+|---|---|
+| Encargo de tarea | Medir la tasa de aceptación colectiva de sugerencias en `packages/metrics`, a la vez que se prohíbe explícitamente modificar dicho paquete. |
+
+**El conflicto.** No es posible implementar la acumulación y reporte de la tasa en `packages/metrics` si el ámbito de la tarea veta la modificación de los ficheros de ese paquete.
+
+**Por qué importaba.** Exigir la implementación de una característica en un módulo inaccesible bloquea el cierre limpio del entregable.
+
+**Resolución.** Se implementa el acumulador básico (`ConteoDeSugerencias`), el umbral de fricción y el cálculo puro de la tasa (`tasaDeAceptacionColectiva`) dentro del paquete `packages/domain`. La publicación de la tasa colectiva y su integración final en el informe agregador se declaran como deuda técnica documentada en el ADR-0052 §(f).
+
+*Vive en:* `packages/domain/src/assistant/types.ts:1101` y `packages/domain/src/assistant/index.ts:33`.
+
+## E86 — El puerto de asistencia no puede escribir en el ledger, pero debe registrar la procedencia
+
+| Documento | Qué decía |
+|---|---|
+| `ARCHITECTURE.md` §6 | La fila de `AIAssistantPort` declara que el puerto de asistencia «nunca escribe en el ledger». |
+
+**El conflicto.** Para poder auditar y medir la tasa de aceptación colectiva de sugerencias de la IA, el sistema necesita registrar en el ledger el evento de que una sugerencia fue recibida y su procedencia, lo cual exige una escritura iniciada por el proceso de asistencia.
+
+**Por qué importaba.** Si el puerto tuviese permiso para escribir, se rompería el aislamiento del puerto de IA y se permitiría la introducción de datos arbitrarios o decisiones autónomas de la máquina en el historial de gobernanza.
+
+**Resolución.** El puerto permanece estrictamente como un resolvedor puro que devuelve valores al dominio. El registro del evento de procedencia (`SugerenciaRecibida`) se realiza y firma en el motor de dominio bajo la autoría del actor `'system'`, manteniendo el aislamiento criptográfico y operativo del puerto de asistencia.
+
+*Vive en:* `packages/domain/src/assistant/commands.ts:633`.
+
+## E87 — Plantilla de frase de cierre rígida e incompatible con la flexión gramatical de las preguntas
+
+| Documento | Qué decía |
+|---|---|
+| `03-...` §3.1 | Plantilla de frase de cierre: «vamos a [11] ... para que [2] empiece a [18] ...» |
+
+**El conflicto.** La preposición «a» antes del hueco de la pregunta 11 asume que la respuesta vendrá expresada en verbo en infinitivo (por ejemplo, «vamos a *convocar*»). Sin embargo, el conector «empiece a» antes de la pregunta 18 recibe la respuesta a «¿qué van a hacer distinto las personas...?», que comúnmente se responde con un verbo conjugado (por ejemplo, «*llegan* más temprano»), provocando que la frase final quede mal construida gramaticalmente («para que la gente empiece a llegan más temprano»).
+
+**Por qué importaba.** La frase de cierre generada automáticamente puede resultar incoherente o difícil de leer para los miembros de la asamblea, restándole credibilidad y valor de uso al borrador.
+
+**Resolución.** Se conserva la estructura literal de la plantilla tal y como fue validada socialmente en la especificación, y se documenta formalmente la fragilidad de la flexión sintáctica. Su resolución final se traslada como propuesta de cambio sobre la redacción de la pregunta 18 en la especificación de investigación, fuera de los límites del código.
+
+*Vive en:* `packages/domain/src/assistant/cierre.ts:6-23`.
+
+---
+
 ### El dato acumulado
 
-**Entre las dos especificaciones, la implementación ha encontrado ya 42 errores que ninguna revisión
+**Entre las tres especificaciones, la implementación ha encontrado ya 52 errores que ninguna revisión
 por lectura detectó.** El desglose exacto, para que la cifra sea verificable y no un eslogan:
 
-| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Spec 30, 4ª ronda | Total |
-|---|---:|---:|---:|---:|---:|
-| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | 11 (E36–E46) | **42** |
-| — de ellos, **autodestructivos** | 5 | *(no clasificado)* | — | **3** (E37, E38, E42) | — |
-| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | — | 2 |
-| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | — | 2 |
-| Divergencias elevadas sin cerrar | 1 (E9) | — | — | — | 1 |
-| Entradas **retiradas** (error propio) | — | — | 1 (E24) | — | 1 |
-| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | — | 3 |
-| **Entradas de la parte 3** | 11 | 14 | 15 | 11 | **51** |
+| | Spec 10 (`crypto`) | Spec 30 (`domain`), 2ª ronda | Spec 30, 3ª ronda | Spec 30, 4ª ronda | Spec 03 (`assistant`), 5ª ronda | Total |
+|---|---:|---:|---:|---:|---:|---:|
+| Errores **dentro de la especificación** | 6 (E1–E6) | 14 (E10–E23) | 11 (E25–E35) | 11 (E36–E46) | 10 (E78–E87) | **52** |
+| — de ellos, **autodestructivos** | 5 | *(no clasificado)* | — | **3** (E37, E38, E42) | — | — |
+| Incoherencias entre ADR y specs | 2 (E7, E8) | — | — | — | — | 2 |
+| Hallazgos derivados al propagar | 2 (E1′, E1″) | — | — | — | — | 2 |
+| Divergencias elevadas sin cerrar | 1 (E9) | — | — | — | — | 1 |
+| Entradas **retiradas** (error propio) | — | — | 1 (E24) | — | — | 1 |
+| Bugs del código, autodestructivos | — | — | 3 (B1–B3) | — | — | 3 |
+| **Entradas de la parte 3** | 11 | 14 | 15 | 11 | 10 | **61** |
 
 **Cómo se clasifican los conflictos ADR ↔ spec, porque hay dos filas que podrían competir.** E43
 (ADR-0030 contra C.7.a) se cuenta **dentro de la especificación** y no en la fila de incoherencias,
@@ -1880,11 +2037,11 @@ NOTHING` que volvía mudo el blindaje, el `ORDER BY tree_size` que ordenaba como
 `count(*) = max(leaf_index)+1` ciego al truncamiento de la cola y el falso positivo de
 `directorySource()`— que **siguen sin ficha `E-NN`** y viven sólo en comentarios y nombres de test.
 Están descritos en `HANDOFF.md` §5.2 y §5.3 y su volcado sigue siendo la tarea 14 del plan de
-continuación. Con ellos el total real ronda los **55 hallazgos**, de los cuales unos **46** son
+continuación. Con ellos el total real ronda los **65 hallazgos**, de los cuales unos **56** son
 errores de especificación.
 
 Las especificaciones habían pasado por la revisión editorial que produjo C4–C20 de la parte 2.
-Ninguno de los 42 salió de esa revisión: **los 42 salieron de escribir el código y los tests**. Y la
+Ninguno de los 52 salió de esa revisión: **los 52 salieron de escribir el código y los tests**. Y la
 segunda ronda invierte la intuición cómoda de que un documento mejor deja menos errores: la spec 30
 —2 600 líneas, 60 invariantes formalizados, 7 anti-invariantes, apéndice de decisiones numeradas— es
 el documento más cuidado del corpus y produjo **más del doble** que la spec 10. La tercera ronda no

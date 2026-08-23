@@ -400,6 +400,9 @@ export * from './deliberation/index.js';
 // ── Constitución digital: las reglas como datos versionados (§6) ─────────────────────────────────
 export * from './constitution/index.js';
 
+// ── Asistente de acción sistémica: las 27 preguntas y el puerto que no puede decidir ─────────────
+export * from './assistant/index.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,
