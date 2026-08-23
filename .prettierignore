@@ -6,6 +6,11 @@ LICENSE
 docs/
 *.tsbuildinfo
 
+# Rastros locales de los servidores MCP. No se versionan y no los escribe una persona: revisar su
+# formato haría fallar la verificación por ficheros que el repositorio ni siquiera contiene.
+.serena/
+.playwright-mcp/
+
 # Artefactos generados por Next.js: no se revisan, se borran.
 apps/web/.next/
 apps/web/next-env.d.ts

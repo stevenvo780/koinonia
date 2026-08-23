@@ -22,6 +22,12 @@ Thumbs.db
 *.swp
 *~
 
+# Rastros de los servidores MCP: describen la herramienta de quien edita, no el proyecto, y se
+# regeneran solos en cada máquina. `.serena/` es su índice y su caché; `.playwright-mcp/` son los
+# volcados de consola y de página que deja una sesión de navegador asistida.
+.serena/
+.playwright-mcp/
+
 # Artefactos locales de verificación (los publicados viven fuera del repo de código).
 /export/
 /checkpoints-local/
