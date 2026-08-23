@@ -157,7 +157,60 @@ Concentrar delegaciones en dos o tres personas que votan en bloque: peso desprop
 > la prohibición en voto secreto son correctos y están implementados.
 
 **T-18 · Manipulación del padrón** `A2` facilitación
-Añadir votantes afines o excluir disidentes antes de abrir, o alterar estratos para sesgar un sorteo. **Quién está en el padrón decide el resultado más a menudo que cómo se cuenta** → **Precond.** control del alta o de la base → **Impacto** máximo → **Detectab.** alta si el padrón se congela y su hash se publica → **MVP** padrón congelado al abrir e inmutable (ADR-0025); **hash publicado sólo sobre los `MemberId` ordenados** (C10) y anclado con el checkpoint; **estratos publicados agregados, nunca por miembro** (C10, C11); pertenencia verificable por prueba de inclusión Merkle; toda alta o baja posterior a la apertura queda fuera del proceso, sin excepción → **Después** doble firma del padrón por secretaría y un testigo antes de abrir → **Prueba** `roster.spec.ts::hash_ignora_estratos_y_atributos`, `::estratos_solo_agregados`, `::padron_modificado_invalida_el_hash_anclado`.
+Añadir votantes afines o excluir disidentes antes de abrir, o alterar estratos para sesgar un sorteo. **Quién está en el padrón decide el resultado más a menudo que cómo se cuenta** → **Precond.** control del alta o de la base → **Impacto** máximo → **Detectab. partida en dos, y hay que leerla así:** **alta** para toda alteración **posterior** al congelado, porque el padrón queda sellado en `DecisionOpened` y anclado; **nula** para toda alteración **anterior** al congelado, porque el padrón vive en `identity.member`, una tabla mutable sin cadena de huellas, y la apertura fotografía sin más lo que encuentre. **Congelar no cierra el ataque: le pone fecha límite, y conserva para siempre lo que se haya congelado mal** → **MVP** padrón congelado al abrir e inmutable (ADR-0025); **hash publicado sólo sobre los `MemberId` ordenados** (C10) y anclado con el checkpoint; **estratos publicados agregados, nunca por miembro** (C10, C11); pertenencia verificable por prueba de inclusión Merkle; toda alta o baja posterior a la apertura queda fuera del proceso, sin excepción. **Lo que ninguno de estos controles hace es acreditar la procedencia del censo**: ver ADR-0054 → **Después** **agregado de padrón event-sourced con cofirma externa por transición (ADR-0054, Propuesto — es lo único de esta fila que ataca la mitad no cubierta)**; doble firma del padrón por secretaría y un testigo antes de abrir → **Prueba** `packages/domain/test/electorate.test.ts:68` (el `rollHash` ignora estratos y atributos), `:148` e `:155` (INV-03, el alta posterior no entra), `:166` (A.3, la baja posterior permanece en `N`), `:186` (INV-02, la elegibilidad se decide contra el snapshot y no contra el registro vivo). **Sin prueba: que un padrón modificado invalide el hash anclado** —`verifyRollHash` sólo se afirma en positivo (`:91`) y el caso negativo no existe— **y la procedencia del registro, que no tiene contra qué probarse hasta que se decida ADR-0054.**
+
+> **Corregido el 2026-08-23 — T-18 confundía la integridad del retrato con la autenticidad de su
+> fuente, y de ahí sacaba una «detectabilidad alta» que es falsa.** Lo que decía, literalmente:
+> «**Detectab.** alta si el padrón se congela y su hash se publica», y como prueba
+> `roster.spec.ts::hash_ignora_estratos_y_atributos`, `::estratos_solo_agregados`,
+> `::padron_modificado_invalida_el_hash_anclado`. Se corrige la fila y **no se borra lo que decía**,
+> porque la fila estuvo vigente y decisiones se tomaron leyéndola.
+>
+> **Por qué era falsa.** Congelar y publicar el hash demuestra que **el padrón no cambió después de
+> abrir**. No demuestra —no puede— que la lista congelada correspondiera a matrículas legítimas. El
+> padrón es el **denominador de todas las reglas** de `GOVERNANCE.md` §4 y es el **único estado de
+> gobierno que no está en el historial encadenado**: vive en `identity.member`, tabla mutable
+> (`services/api/migrations/0005_identidad.sql:31`) sobre la que la aplicación tiene `UPDATE` y
+> `DELETE` (`:145`); el alta no emite ningún evento (`services/api/src/http/identity.ts:132`,
+> invocada desde `services/api/src/http/app.ts:512`); y `registryVersion` es la constante `1`
+> (`services/api/src/http/service.ts:580`), así que ni siquiera hay continuidad versionada que
+> delate un salto. Quien administra altera la tabla, abre, deja que el congelado selle esa lectura y
+> restaura. **Contra ese ataque la detectabilidad no es alta: es cero**, y el `rollHash` anclado
+> pasa de ser un control a ser el sello que protege el fraude.
+>
+> **Y el verificador independiente lo daría por bueno.** Sus 25 códigos de hallazgo
+> (`packages/verifier-cli/src/hallazgos.ts:19-48`) cubren el export, la cadena, los checkpoints y el
+> anclaje. **Ninguno cubre la procedencia.** Ante un padrón fraudulento congelado limpiamente saldría
+> verde: certificaría una mentira coherente. Decir «detectabilidad alta» en la fila que gobierna el
+> denominador de todo el sistema es el peor sitio del documento para una afirmación de más.
+>
+> **La corrección del nombre de las pruebas importa tanto como la de la prosa, por lo mismo que se
+> dijo en T-09 el 2026-08-22: un nombre de prueba equivocado es una instrucción.** `roster.spec.ts`
+> **no existe en el repositorio** —ni con ese nombre ni con otro—; lo que cubre parte de la fila es
+> `packages/domain/test/electorate.test.ts`, con 14 casos. De las tres pruebas que se nombraban, una
+> sí existe con otro nombre y en otro fichero (`:68`), y **dos no existen**:
+> `::estratos_solo_agregados` no tiene equivalente, y `::padron_modificado_invalida_el_hash_anclado`
+> **tampoco**: `verifyRollHash` sólo aparece afirmado en positivo (`:91`) y **el caso negativo —el
+> que sostiene toda la mitigación— no se prueba en ninguna parte**. Por §3 («una amenaza sin prueba
+> que la persigue es una intención, no un control») y por §9 (cobertura amenaza → prueba del 100 %),
+> esta fila **no cumplía** y ahora lo dice.
+>
+> ⚠ **`roster.spec.ts` se nombra también en T-04**, con dos pruebas más que tampoco existen. **No se
+> corrige aquí**: se señala, para que quien revise T-04 sepa que arrastra el mismo fichero fantasma.
+>
+> **El hueco no es nuevo y esta es la tercera vez que se escribe.** Está registrado como **E93** en
+> `docs/research/00-contradicciones-resueltas.md:2084` y en el comentario de cabecera de
+> `services/api/src/constitution/index.ts:95-104`, que además señala que `GOVERNANCE.md` §7 promete
+> lo contrario de lo que ocurre: «todo acto administrativo es un evento público en el mismo
+> historial» (`docs/GOVERNANCE.md:236`) y quien administra «no puede crear, eliminar o modificar
+> miembros del padrón» (`:230`). **Por la jerarquía de arriba, `GOVERNANCE.md` manda sobre este
+> documento**, así que aquí sólo se **señala** la contradicción (regla C19) y se deja la resolución a
+> **ADR-0054**, que está en **Propuesto** porque la elección de fondo —qué promete la plataforma
+> cuando alguien pide que lo borren— es jurídica y política, no técnica.
+>
+> **Lo que no se toca de la fila, porque es correcto:** el impacto máximo, la frase de que quién está
+> en el padrón decide más resultados que cómo se cuenta, el hash sólo sobre `MemberId` ordenados, los
+> estratos agregados y la exclusión de toda alta o baja posterior a la apertura.
 
 **T-27 · Aprobación huérfana o ejecución sustituida** `A2` `A4`
 Persistir el resultado y crear después la iniciativa permite que una caída deje un acuerdo aprobado sin
@@ -434,6 +487,15 @@ Roles: **ANÓN** · **MIEM** (miembro del padrón) · **FACIL** (facilitación d
 | Ejecutar supresión | cualquiera | ✗ | ✓ sobre sí mismo | ✗ | ejecuta, no decide | ✗ |
 | Verificar checkpoints | cualquiera | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Firmar acta de verificación | publicado | ✗ | ✗ | ✗ | **✗** | ✓ |
+
+> **Corregido el 2026-08-23 — las dos filas «Alta/baja de miembro» describen un control que no
+> existe.** Se dejan como están porque **son la regla correcta**, pero hoy **no las aplica nada**:
+> el alta la produce automáticamente el primer acceso de cualquier correo institucional válido
+> (`services/api/src/http/app.ts:512` → `identity.ts:132`), no la facilitación; y **ninguna línea de
+> `services/api/src` escribe jamás `withdrawn_at`**, así que la baja **no tiene camino de
+> aplicación** y su única vía posible es SQL directo. La columna `FACIL` de la fila «padrón abierto»
+> describe, pues, una capacidad que nadie tiene, y el `✗ (T-18)` de la fila «padrón congelado»
+> describe una prohibición que ningún mecanismo impone. Ver la corrección de T-18 y **ADR-0054**.
 
 **Autorización horizontal — donde falla casi todo el software.** El error dominante no es dar un permiso al rol equivocado: es dar el permiso correcto **sobre el recurso de otro**. `MIEM` puede leer su recibo; el fallo es que pueda leer `/receipts/:id` con el id de otro. Reglas obligatorias:
 
