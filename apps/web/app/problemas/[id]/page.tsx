@@ -15,7 +15,7 @@ import {
 import { DialogoTexto } from '../../../components/dialogo';
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
 import { useAccionUnica } from '../../../lib/acciones';
-import { cuando, enviar, traer } from '../../../lib/api';
+import { cerrarFrase, cuando, enviar, traer } from '../../../lib/api';
 
 const CERTEZAS: readonly Certeza[] = ['visto', 'me-lo-contaron', 'lo-supongo'];
 
@@ -194,7 +194,8 @@ export default function DetalleProblema(): ReactNode {
                 // Nunca una ausencia silenciosa: el hueco se declara, con su fecha y su motivo.
                 <p className="suave">
                   <span aria-hidden="true">— </span>Se retiró este aporte el{' '}
-                  {cuando(evidencia.retirada.cuando)}. Motivo: «{evidencia.retirada.motivo}».
+                  {cerrarFrase(cuando(evidencia.retirada.cuando))} Motivo: «
+                  {evidencia.retirada.motivo}».
                 </p>
               )}
             </li>

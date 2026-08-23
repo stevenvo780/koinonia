@@ -137,10 +137,7 @@ export default function ConsensoPantalla(): ReactNode {
       {consenso?.tipo === 'sin-grupos' && (
         <>
           <div className="aviso atencion" role="status">
-            <strong>
-              <span aria-hidden="true">! </span>
-              {consenso.titulo}:{' '}
-            </strong>
+            <strong>{consenso.titulo}: </strong>
             {consenso.descripcion}
           </div>
           <p className="suave">
@@ -160,8 +157,9 @@ export default function ConsensoPantalla(): ReactNode {
             <h2 id="grupos-titulo">{consenso.titulo}</h2>
             <p>{consenso.descripcion}</p>
             <p className="suave">
-              Salió de {consenso.votaciones} votaciones cerradas y de las respuestas de{' '}
-              {consenso.personas} personas.
+              Salió de {consenso.votaciones}{' '}
+              {consenso.votaciones === 1 ? 'votación cerrada' : 'votaciones cerradas'} y de las
+              respuestas de {consenso.personas} {consenso.personas === 1 ? 'persona' : 'personas'}.
             </p>
             <DeDondeSale texto={consenso.deDondeSale} />
 

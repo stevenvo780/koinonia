@@ -6,7 +6,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { IniciativaResumen } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../components/marco';
-import { cuando, traer } from '../../lib/api';
+import { cerrarFrase, cuando, traer } from '../../lib/api';
 
 export default function Iniciativas(): ReactNode {
   const [iniciativas, setIniciativas] = useState<IniciativaResumen[] | undefined>(undefined);
@@ -47,10 +47,12 @@ export default function Iniciativas(): ReactNode {
               </p>
               {!iniciativa.activa && iniciativa.ratificableEn !== undefined && (
                 <p className="suave">
-                  Puede ratificarse desde el {cuando(iniciativa.ratificableEn)}.
+                  Puede ratificarse desde el {cerrarFrase(cuando(iniciativa.ratificableEn))}
                 </p>
               )}
-              <p className="suave">Volvemos a mirar el {cuando(iniciativa.revisarEn)}.</p>
+              <p className="suave">
+                Volvemos a mirar el {cerrarFrase(cuando(iniciativa.revisarEn))}
+              </p>
             </li>
           ))}
         </ul>

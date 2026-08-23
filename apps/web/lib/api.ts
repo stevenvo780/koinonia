@@ -27,6 +27,23 @@ export class ErrorDeApi extends Error {
   }
 }
 
+/**
+ * ¿Este fallo es en realidad **una respuesta**, y no un fallo?
+ *
+ * Un 401 —«no entraste»— y un 403 —«esto no es tuyo»— son la contestación correcta a una pregunta
+ * legítima, no una avería. Quien pregunta tiene que poder distinguirlos de un servidor caído, y
+ * hacerlo a mano en cada pantalla —`instanceof` más el número— es cómo se acaba pintando «algo
+ * salió mal» a alguien que sencillamente está mirando sin cuenta.
+ *
+ * Lo que esto **no** puede arreglar es la línea roja de la consola del navegador: Chrome apunta
+ * toda respuesta 4xx que pase por `fetch`, la trate el programa o no, y desde el cliente no hay
+ * forma de callarla. Para que `/auth/yo` deje de escribirla, tendría que contestar 200 diciendo en
+ * el cuerpo que no hay sesión; eso vive en el servicio, no acá.
+ */
+export function respuestaEsperada(error: unknown, ...estados: number[]): boolean {
+  return error instanceof ErrorDeApi && estados.includes(error.estado);
+}
+
 async function leerError(respuesta: Response): Promise<ErrorDeApi> {
   try {
     const cuerpo = (await respuesta.json()) as ApiError;
@@ -106,6 +123,20 @@ export function cuando(ms: number): string {
     timeStyle: 'short',
     timeZone: 'America/Bogota',
   }).format(new Date(ms));
+}
+
+/**
+ * Cierra una frase con punto **sin duplicarlo**.
+ *
+ * `cuando()` acaba en «9:29 p. m.» y ese punto ya cierra la frase; la plantilla que añadía el suyo
+ * escribía «9:29 p. m..». La regla ortográfica es explícita: el punto de una abreviatura hace de
+ * punto final y no se escriben dos. Así que el que sobra es el de la plantilla, y por eso el cierre
+ * se decide acá —mirando el texto— y no en cada pantalla, donde depende de que quien la escribe se
+ * acuerde de que la fecha termina en una abreviatura.
+ */
+export function cerrarFrase(texto: string): string {
+  const limpio = texto.trimEnd();
+  return /[.!?…]$/u.test(limpio) ? limpio : `${limpio}.`;
 }
 
 /** «Cierra en 3 días» / «Cerró hace 2 horas». Un plazo en palabras, no una cuenta atrás cruda. */

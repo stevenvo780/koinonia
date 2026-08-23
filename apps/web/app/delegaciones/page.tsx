@@ -21,7 +21,7 @@ import type { DelegacionesDeDecision, PanelDeDelegaciones } from '@koinonia/cont
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
 import { useAccionUnica } from '../../lib/acciones';
-import { cuando, enviar, plazo, traer } from '../../lib/api';
+import { cerrarFrase, cuando, enviar, plazo, traer } from '../../lib/api';
 
 function Reparto({ votacion }: { readonly votacion: DelegacionesDeDecision }): ReactNode {
   const { reparto } = votacion;
@@ -220,8 +220,8 @@ export default function Delegaciones(): ReactNode {
                 <>
                   <p>
                     Le prestaste tu voto a <strong>{votacion.miDelegacion.enQuien}</strong> el{' '}
-                    {cuando(votacion.miDelegacion.desde)}. Vence al cerrar la votación, el{' '}
-                    {cuando(votacion.miDelegacion.hasta)}.
+                    {cerrarFrase(cuando(votacion.miDelegacion.desde))} Vence al cerrar la votación,
+                    el {cerrarFrase(cuando(votacion.miDelegacion.hasta))}
                   </p>
                   <p>
                     <button

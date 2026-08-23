@@ -16,7 +16,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Circulo, MiembrosCirculo } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../../components/marco';
-import { ErrorDeApi, traer } from '../../../lib/api';
+import { respuestaEsperada, traer } from '../../../lib/api';
 
 export default function DetalleCirculo(): ReactNode {
   const params = useParams<{ id: string }>();
@@ -45,11 +45,15 @@ export default function DetalleCirculo(): ReactNode {
         // Un 401 y un 403 no son un error de la pantalla: son la respuesta correcta a alguien que
         // no puede ver esto. Se cuentan como tales y se explican; cualquier otra cosa sí es un
         // fallo y se pinta como fallo.
-        if (fallo instanceof ErrorDeApi && (fallo.estado === 401 || fallo.estado === 403)) {
+        if (respuestaEsperada(fallo, 401)) {
           setSinPermiso(
-            fallo.estado === 401
-              ? 'Para ver quiénes integran un grupo hay que entrar con el correo institucional.'
-              : 'Sólo quienes integran este grupo pueden ver la lista. No es un directorio público.',
+            'Para ver quiénes integran un grupo hay que entrar con el correo institucional.',
+          );
+          return;
+        }
+        if (respuestaEsperada(fallo, 403)) {
+          setSinPermiso(
+            'Sólo quienes integran este grupo pueden ver la lista. No es un directorio público.',
           );
           return;
         }

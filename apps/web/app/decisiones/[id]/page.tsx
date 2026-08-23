@@ -151,8 +151,14 @@ export default function Decision(): ReactNode {
         <div className="aviso" role="note">
           <p>{decision.queHaceFaltaParaQuePase}</p>
           <p className="suave">
-            Podían decidir acá {decision.podianDecidir} personas. La lista se cerró al abrir la
-            votación y ya no cambia. Se manifestaron {decision.seManifestaron}.
+            {decision.podianDecidir === 1
+              ? 'Podía decidir acá 1 persona'
+              : `Podían decidir acá ${String(decision.podianDecidir)} personas`}
+            . La lista se cerró al abrir la votación y ya no cambia.{' '}
+            {decision.seManifestaron === 1
+              ? `Se manifestó ${String(decision.seManifestaron)}`
+              : `Se manifestaron ${String(decision.seManifestaron)}`}
+            .
           </p>
         </div>
       </section>

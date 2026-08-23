@@ -18,7 +18,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Portada } from '@koinonia/contracts';
 
 import { BarraSesion, Cargando, ErrorVisible } from '../components/marco';
-import { cuando, plazo, traer } from '../lib/api';
+import { cerrarFrase, cuando, plazo, traer } from '../lib/api';
 
 const EJEMPLOS: readonly string[] = [
   'La sala de estudio cierra a las 6 y los de la nocturna no tenemos dónde leer.',
@@ -81,7 +81,8 @@ export default function Inicio(): ReactNode {
                 </p>
                 {portada.loQueTeToca.cierraEn !== undefined && (
                   <p>
-                    {plazo(portada.loQueTeToca.cierraEn)} — {cuando(portada.loQueTeToca.cierraEn)}.
+                    {plazo(portada.loQueTeToca.cierraEn)} —{' '}
+                    {cerrarFrase(cuando(portada.loQueTeToca.cierraEn))}
                   </p>
                 )}
                 <p>

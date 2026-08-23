@@ -83,7 +83,8 @@ export default function Entrar(): ReactNode {
         <Aviso tipo="bien" titulo="Revisá tu correo">
           <p>
             Si ese correo es del Instituto, ya salió el enlace. Sirve <strong>una sola vez</strong>{' '}
-            y vence en {enviado.duraMinutos} minutos.
+            y vence en{' '}
+            {enviado.duraMinutos === 1 ? '1 minuto' : `${String(enviado.duraMinutos)} minutos`}.
           </p>
           <p className="suave">
             Decimos «si ese correo es del Instituto» a propósito: esta pantalla no revela quién
