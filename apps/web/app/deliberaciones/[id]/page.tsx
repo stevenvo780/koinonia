@@ -18,6 +18,12 @@
  * 3. **Lo de la autoría se dice como es.** Mientras la etapa la oculte, la pantalla no dice
  *    «anónimo»: dice de quién protege —de las demás personas que participan— y de quién no —de quien
  *    administra el servidor—. Prometer más de lo que el sistema da es peor que no prometer nada.
+ *
+ * 4. **El doble toque no lo para esta pantalla: lo para `useAccionUnica`.** Tenía un `enviando` de
+ *    estado, que se ve en el repintado siguiente y no antes del `await`, y llamaba a
+ *    `nuevoRequestId()` dentro del manejador, de modo que las dos llamadas de un doble toque eran
+ *    dos comandos distintos para el servidor. En un historial que no se puede corregir eso es un
+ *    aporte duplicado en la conversación, escrito por alguien que sólo quiso escribir uno.
  */
 
 import Link from 'next/link';
@@ -39,7 +45,8 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, Pasos, useSesion } from '../../../components/marco';
-import { cuando, enviar, nuevoRequestId, plazo, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { cuando, enviar, plazo, traer } from '../../../lib/api';
 
 const ETAPAS: readonly { readonly id: string; readonly nombre: string }[] = Object.entries(
   ETAPA_EN_PALABRAS,
@@ -149,7 +156,7 @@ export default function DetalleDeliberacion(): ReactNode {
   const [nombres, setNombres] = useState<Readonly<Record<string, string>>>({});
   const [error, setError] = useState<unknown>(undefined);
   const [errorAporte, setErrorAporte] = useState<unknown>(undefined);
-  const [enviando, setEnviando] = useState(false);
+  const { enCurso, ejecutar } = useAccionUnica();
 
   const [clave, setClave] = useState<ClaveAporte | ''>('');
   const [texto, setTexto] = useState('');
@@ -190,12 +197,10 @@ export default function DetalleDeliberacion(): ReactNode {
 
   async function aportar(evento: SyntheticEvent, opcion: OpcionDeAporte): Promise<void> {
     evento.preventDefault();
-    setErrorAporte(undefined);
-    setEnviando(true);
-    const comun = {
-      requestId: nuevoRequestId(),
-      ...(corrigeA === '' ? {} : { corrigeA }),
-    };
+    // El `requestId` **no** entra acá: entra en `llamar`, ya elegido por `useAccionUnica`. Lo que
+    // se arma en este bloque es exactamente lo que define que el aporte es *el mismo* aporte, y es
+    // lo que decide si un reintento reusa la clave o estrena una.
+    const comun = corrigeA === '' ? {} : { corrigeA };
     const cuerpo =
       opcion.clave === 'pregunta'
         ? { ...comun, tipo: 'posicion', modo: 'pregunta_aclaratoria', texto }
@@ -229,30 +234,29 @@ export default function DetalleDeliberacion(): ReactNode {
                       saleDe: destinos,
                       texto,
                     };
-    try {
-      setDeliberacion(await enviar<DeliberacionDetalle>(`/deliberaciones/${id}/aportes`, cuerpo));
+    const resultado = await ejecutar('aportar', cuerpo, (requestId) => {
+      setErrorAporte(undefined);
+      return enviar<DeliberacionDetalle>(`/deliberaciones/${id}/aportes`, { ...cuerpo, requestId });
+    });
+    if (resultado.estado === 'hecho') {
+      setDeliberacion(resultado.valor);
       limpiar();
-    } catch (fallo) {
-      setErrorAporte(fallo);
-    } finally {
-      setEnviando(false);
+    } else if (resultado.estado === 'fallo') {
+      setErrorAporte(resultado.error);
     }
   }
 
   async function avanzar(): Promise<void> {
-    setErrorAporte(undefined);
-    setEnviando(true);
-    try {
-      setDeliberacion(
-        await enviar<DeliberacionDetalle>(`/deliberaciones/${id}/etapa`, {
-          requestId: nuevoRequestId(),
-        }),
-      );
-    } catch (fallo) {
-      setErrorAporte(fallo);
-    } finally {
-      setEnviando(false);
-    }
+    // La intención es «cerrar *esta* etapa», y por eso la etapa entra como dato: si la
+    // conversación ya avanzó, cerrar la siguiente es otra intención y merece otra clave. Si la
+    // respuesta se perdió, en cambio, el reintento lleva la misma y el cierre no se escribe dos
+    // veces —que en este historial significaría dos etapas cerradas de un solo acto—.
+    const resultado = await ejecutar('avanzar', deliberacion?.etapa, (requestId) => {
+      setErrorAporte(undefined);
+      return enviar<DeliberacionDetalle>(`/deliberaciones/${id}/etapa`, { requestId });
+    });
+    if (resultado.estado === 'hecho') setDeliberacion(resultado.valor);
+    else if (resultado.estado === 'fallo') setErrorAporte(resultado.error);
   }
 
   if (error !== undefined) return <ErrorVisible error={error} />;
@@ -574,8 +578,8 @@ export default function DetalleDeliberacion(): ReactNode {
                 </div>
               )}
 
-              <button className="boton" type="submit" disabled={enviando}>
-                {enviando ? 'Guardando…' : 'Guardar mi aporte'}
+              <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                {enCurso === 'aportar' ? 'Guardando…' : 'Guardar mi aporte'}
               </button>
             </form>
           )}
@@ -599,7 +603,7 @@ export default function DetalleDeliberacion(): ReactNode {
           <button
             className="boton"
             type="button"
-            disabled={enviando}
+            disabled={enCurso !== undefined}
             onClick={() => void avanzar()}
           >
             Cerrar «{deliberacion.etapaEnPalabras}» y pasar a «

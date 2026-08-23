@@ -30,7 +30,8 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
-import { cuando, enviar, ErrorDeApi, nuevoRequestId, traer } from '../../../lib/api';
+import { useAccionUnica } from '../../../lib/acciones';
+import { cerrarFrase, cuando, enviar, ErrorDeApi, traer } from '../../../lib/api';
 
 type RespuestaElegida = 'aceptar' | 'rechazar' | 'pedir-reasignacion';
 
@@ -58,14 +59,18 @@ export default function DetalleIniciativa(): ReactNode {
   const [error, setError] = useState<unknown>(undefined);
   const [errorAccion, setErrorAccion] = useState<unknown>(undefined);
   const [mensaje, setMensaje] = useState<string | undefined>(undefined);
-  const [accionEnCurso, setAccionEnCurso] = useState<string | undefined>(undefined);
-  const accionEnCursoRef = useRef<string | undefined>(undefined);
-  const accionGeneracionRef = useRef(0);
+  // Una acción a la vez y una clave de idempotencia por intención. Esta pantalla lo tenía copiado
+  // a mano; el helper es el mismo que usan las demás, y arreglarlo una vez las arregla a todas.
+  // Las claves llevan el id de la tarea —`iniciar-${tarea.id}`— y por eso doce acciones sobre
+  // muchas tareas conviven sin mezclar idempotencias.
+  const {
+    enCurso: accionEnCurso,
+    ejecutar: ejecutarUnica,
+    olvidarTodo,
+    reiniciar,
+  } = useAccionUnica();
   const cargaGeneracionRef = useRef(0);
   const resultadoAccionRef = useRef<HTMLDivElement | null>(null);
-  const intentos = useRef(
-    new Map<string, { readonly huella: string; readonly requestId: string }>(),
-  );
 
   const [miembros, setMiembros] = useState<MiembrosCirculo | undefined>(undefined);
   const [errorMiembros, setErrorMiembros] = useState<unknown>(undefined);
@@ -115,11 +120,11 @@ export default function DetalleIniciativa(): ReactNode {
     setReofertaPorTarea({});
     setErrorAccion(undefined);
     setMensaje(undefined);
-    accionGeneracionRef.current += 1;
-    accionEnCursoRef.current = undefined;
-    setAccionEnCurso(undefined);
-    intentos.current.clear();
-  }, [cargandoSesion, sesion]);
+    reiniciar();
+    // Y aquí sí se olvidan las claves: pertenecen a la intención de otra persona, y reusarlas
+    // haría que el servidor tomara el envío de esta por un duplicado del de aquella.
+    olvidarTodo();
+  }, [cargandoSesion, olvidarTodo, reiniciar, sesion]);
 
   const recargar = useCallback(
     async (para: string): Promise<void> => {
@@ -143,18 +148,17 @@ export default function DetalleIniciativa(): ReactNode {
   useEffect(() => {
     if (claveSesion === 'cargando') {
       // Una respuesta de la misma cuenta iniciada antes del foco tampoco puede ganar luego de que
-      // la cookie se revalidó y volvió al mismo miembro.
+      // la cookie se revalidó y volvió al mismo miembro. Las claves **no** se olvidan: si sigue
+      // siendo la misma persona, su reintento tiene que llevar el mismo `requestId`.
       cargaGeneracionRef.current += 1;
-      accionGeneracionRef.current += 1;
-      accionEnCursoRef.current = undefined;
-      setAccionEnCurso(undefined);
+      reiniciar();
       return;
     }
     setIniciativa(undefined);
     setError(undefined);
     setIniciativaPara(undefined);
     void recargar(claveSesion);
-  }, [claveSesion, recargar]);
+  }, [claveSesion, recargar, reiniciar]);
 
   useEffect(() => {
     if (iniciativa?.activa !== true || !iniciativa.esResponsableInicial) {
@@ -183,67 +187,58 @@ export default function DetalleIniciativa(): ReactNode {
     confirmacion: string,
     destinoFoco?: string,
   ): Promise<boolean> {
-    // Un segundo submit local nunca corre en paralelo con el primero. Además de evitar una vista
-    // que retrocede cuando las respuestas llegan desordenadas, esto reduce dobles toques móviles.
-    if (accionEnCursoRef.current !== undefined) return false;
-    const huella = JSON.stringify([ruta, cuerpo]);
-    const previo = intentos.current.get(clave);
-    const requestId = previo?.huella === huella ? previo.requestId : nuevoRequestId();
-    intentos.current.set(clave, { huella, requestId });
-    setErrorAccion(undefined);
-    setMensaje(undefined);
     const ejecutadaPara = claveSesionRef.current;
     if (ejecutadaPara === 'cargando') return false;
-    const generacion = ++accionGeneracionRef.current;
-    accionEnCursoRef.current = clave;
-    setAccionEnCurso(clave);
-    try {
-      const actualizada = await enviar<IniciativaDetalle>(ruta, {
-        ...cuerpo,
-        requestId,
+
+    const enfocarResultado = (): void => {
+      requestAnimationFrame(() => {
+        (destinoFoco === undefined
+          ? resultadoAccionRef.current
+          : document.getElementById(destinoFoco)
+        )?.focus();
       });
-      if (claveSesionRef.current !== ejecutadaPara || accionGeneracionRef.current !== generacion)
-        return false;
-      setIniciativa(actualizada);
+    };
+
+    // El cerrojo síncrono y la clave de idempotencia los pone `useAccionUnica`. Lo que queda acá
+    // es lo que sólo esta pantalla sabe: qué proyección se pinta y qué recarga exige cada rechazo.
+    const resultado = await ejecutarUnica<IniciativaDetalle>(clave, [ruta, cuerpo], (requestId) => {
+      // Dentro de `llamar`, que sólo corre si el cerrojo se tomó: un segundo toque descartado no
+      // puede borrar el aviso anterior sin haber hecho nada a cambio.
+      setErrorAccion(undefined);
+      setMensaje(undefined);
+      return enviar<IniciativaDetalle>(ruta, { ...cuerpo, requestId });
+    });
+
+    // `ignorado` es el toque que no entró o la respuesta de una sesión ya jubilada. Nada que pintar.
+    if (resultado.estado === 'ignorado') return false;
+    // Una proyección lleva permisos de una identidad concreta: si la identidad cambió mientras la
+    // llamada volaba, esta respuesta describe permisos que ya no son los de quien mira.
+    if (claveSesionRef.current !== ejecutadaPara) return false;
+
+    if (resultado.estado === 'hecho') {
+      setIniciativa(resultado.valor);
       setIniciativaPara(ejecutadaPara);
       setMensaje(confirmacion);
-      intentos.current.delete(clave);
-      requestAnimationFrame(() => {
-        (destinoFoco === undefined
-          ? resultadoAccionRef.current
-          : document.getElementById(destinoFoco)
-        )?.focus();
-      });
+      enfocarResultado();
       return true;
-    } catch (fallo: unknown) {
-      if (claveSesionRef.current !== ejecutadaPara || accionGeneracionRef.current !== generacion)
-        return false;
-      setErrorAccion(fallo);
-      if (
-        fallo instanceof ErrorDeApi &&
-        [
-          'STALE_TASK_OFFER',
-          'STALE_TASK_REVISION',
-          'STALE_TASK_PAUSE',
-          'STALE_TASK_DELIVERY',
-          'TASK_OFFER_ALREADY_ANSWERED',
-        ].includes(fallo.codigo)
-      ) {
-        await recargar(ejecutadaPara);
-      }
-      requestAnimationFrame(() => {
-        (destinoFoco === undefined
-          ? resultadoAccionRef.current
-          : document.getElementById(destinoFoco)
-        )?.focus();
-      });
-      return false;
-    } finally {
-      if (accionGeneracionRef.current === generacion) {
-        accionEnCursoRef.current = undefined;
-        setAccionEnCurso(undefined);
-      }
     }
+
+    const fallo = resultado.error;
+    setErrorAccion(fallo);
+    if (
+      fallo instanceof ErrorDeApi &&
+      [
+        'STALE_TASK_OFFER',
+        'STALE_TASK_REVISION',
+        'STALE_TASK_PAUSE',
+        'STALE_TASK_DELIVERY',
+        'TASK_OFFER_ALREADY_ANSWERED',
+      ].includes(fallo.codigo)
+    ) {
+      await recargar(ejecutadaPara);
+    }
+    enfocarResultado();
+    return false;
   }
 
   async function ratificar(): Promise<void> {
@@ -407,7 +402,7 @@ export default function DetalleIniciativa(): ReactNode {
             La decisión ya fue ratificada. Se pueden organizar hitos y ofrecer tareas sin borrar las
             decisiones anteriores.
             {iniciativa.activadaEn !== undefined && (
-              <> Quedó activa el {cuando(iniciativa.activadaEn)}.</>
+              <> Quedó activa el {cerrarFrase(cuando(iniciativa.activadaEn))}</>
             )}
           </Aviso>
         ) : (
@@ -415,7 +410,11 @@ export default function DetalleIniciativa(): ReactNode {
             La decisión fue aprobada, pero todavía puede impugnarse. No corresponde iniciar trabajo
             irreversible hasta que quede ratificada.
             {iniciativa.ratificableEn !== undefined && (
-              <> La ratificación puede hacerse desde el {cuando(iniciativa.ratificableEn)}.</>
+              <>
+                {' '}
+                La ratificación puede hacerse desde el{' '}
+                {cerrarFrase(cuando(iniciativa.ratificableEn))}
+              </>
             )}
           </Aviso>
         )}
@@ -474,7 +473,7 @@ export default function DetalleIniciativa(): ReactNode {
 
       <section aria-labelledby="revision-iniciativa-titulo">
         <h2 id="revision-iniciativa-titulo">Cuándo volvemos a mirar</h2>
-        <p>{cuando(iniciativa.revisarEn)}.</p>
+        <p>{cerrarFrase(cuando(iniciativa.revisarEn))}</p>
       </section>
 
       <section aria-labelledby="criterios-iniciativa-titulo">
@@ -510,7 +509,7 @@ export default function DetalleIniciativa(): ReactNode {
                   <article className="tarjeta-trabajo" aria-labelledby={`hito-${hito.id}`}>
                     <h3 id={`hito-${hito.id}`}>{hito.titulo}</h3>
                     <p>{hito.criterioDeTerminacion}</p>
-                    <p className="suave">Fecha límite: {cuando(hito.venceEn)}.</p>
+                    <p className="suave">Fecha límite: {cerrarFrase(cuando(hito.venceEn))}</p>
                     {tareas.length === 0 ? (
                       <p className="suave">Este hito todavía no tiene tareas ofrecidas.</p>
                     ) : (
@@ -615,7 +614,8 @@ export default function DetalleIniciativa(): ReactNode {
                   }}
                 />
                 <span className="ayuda" id="ayuda-vence-hito">
-                  No puede ser posterior a la revisión acordada: {cuando(iniciativa.revisarEn)}.
+                  No puede ser posterior a la revisión acordada:{' '}
+                  {cerrarFrase(cuando(iniciativa.revisarEn))}
                 </span>
               </div>
               <button className="boton secundario" disabled={accionEnCurso !== undefined}>
@@ -722,7 +722,7 @@ export default function DetalleIniciativa(): ReactNode {
                     }}
                   />
                   <span className="ayuda" id="ayuda-vence-tarea">
-                    No puede pasar de la fecha de su hito: {cuando(topeTarea)}.
+                    No puede pasar de la fecha de su hito: {cerrarFrase(cuando(topeTarea))}
                   </span>
                 </div>
                 <div className="campo">
@@ -968,7 +968,11 @@ function TareaVisible({
           </div>
           <div>
             <dt>Tiempo estimado</dt>
-            <dd>{tarea.esfuerzoMinutos} minutos</dd>
+            <dd>
+              {tarea.esfuerzoMinutos === 1
+                ? '1 minuto'
+                : `${String(tarea.esfuerzoMinutos)} minutos`}
+            </dd>
           </div>
         </dl>
         {estadoDependencias.length > 0 && (
@@ -1003,7 +1007,9 @@ function TareaVisible({
           tarea.completadaEn !== undefined) && (
           <section className="historia-tarea" aria-labelledby={`historia-${tarea.id}`}>
             <h5 id={`historia-${tarea.id}`}>Historia del trabajo</h5>
-            {tarea.iniciadaEn !== undefined && <p>Comenzó el {cuando(tarea.iniciadaEn)}.</p>}
+            {tarea.iniciadaEn !== undefined && (
+              <p>Comenzó el {cerrarFrase(cuando(tarea.iniciadaEn))}</p>
+            )}
             {tarea.pausas.length > 0 && (
               <div>
                 <h6>Pausas, bloqueos y apoyos</h6>
@@ -1017,7 +1023,8 @@ function TareaVisible({
                     return (
                       <li key={pausa.id}>
                         {pausa.tipo === 'bloqueo' ? 'Bloqueo' : 'Pedido de ayuda'}: {categoria}.
-                        Comenzó el {cuando(solicitud?.solicitadaEn ?? pausa.iniciadaEn)}.{' '}
+                        Comenzó el{' '}
+                        {cerrarFrase(cuando(solicitud?.solicitadaEn ?? pausa.iniciadaEn))}{' '}
                         {pausa.finalizadaEn === undefined
                           ? 'Sigue vigente.'
                           : `Terminó el ${cuando(pausa.finalizadaEn)} por ${
@@ -1139,7 +1146,7 @@ function TareaVisible({
               </div>
             )}
             {tarea.completadaEn !== undefined && (
-              <p>Quedó completada el {cuando(tarea.completadaEn)}.</p>
+              <p>Quedó completada el {cerrarFrase(cuando(tarea.completadaEn))}</p>
             )}
           </section>
         )}

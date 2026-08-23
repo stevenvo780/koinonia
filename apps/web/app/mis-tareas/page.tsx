@@ -17,7 +17,8 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
-import { cuando, enviar, ErrorDeApi, nuevoRequestId, reemplazar, traer } from '../../lib/api';
+import { useAccionUnica } from '../../lib/acciones';
+import { cerrarFrase, cuando, enviar, ErrorDeApi, reemplazar, traer } from '../../lib/api';
 
 const MAXIMO_SEMANAL = 10_080;
 
@@ -32,11 +33,6 @@ const ESTADO_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
   entregada: 'Entregada para revisión',
   completada: 'Completada',
 };
-
-interface Intento {
-  readonly huella: string;
-  readonly requestId: string;
-}
 
 /**
  * Reconstruye la fila propia a partir de la iniciativa que devuelve la mutación.
@@ -61,6 +57,11 @@ function filaPropia(iniciativa: IniciativaDetalle, tareaId: string): MiTarea | u
 
 function dividirMinutos(total: number): { horas: string; minutos: string } {
   return { horas: String(Math.floor(total / 60)), minutos: String(total % 60) };
+}
+
+/** «1 minuto estimado» / «45 minutos estimados». El número manda sobre el sustantivo. */
+function esfuerzoEnPalabras(minutos: number): string {
+  return minutos === 1 ? '1 minuto estimado' : `${String(minutos)} minutos estimados`;
 }
 
 function describirCapacidad(capacidad: CapacidadPropia): string {
@@ -90,17 +91,25 @@ export default function MisTareas(): ReactNode {
   const [errorAccion, setErrorAccion] = useState<unknown>(undefined);
   const [confirmacion, setConfirmacion] = useState<string | undefined>(undefined);
   const [guardando, setGuardando] = useState(false);
-  const [accionEnCurso, setAccionEnCurso] = useState<string | undefined>(undefined);
+  // Una acción a la vez y una clave de idempotencia por intención. Esta pantalla era la última que
+  // llevaba el patrón copiado a mano —su propio cerrojo, su propia generación, su propio mapa de
+  // claves y su propio `nuevoRequestId()`—; ahora usa el mismo módulo que las demás, que es lo que
+  // hace cierta la premisa de `lib/acciones`: arreglarlo una vez las arregla a todas.
+  // Las claves llevan el id de la tarea —`iniciar-${tarea.id}`— así que muchas filas conviven sin
+  // mezclar idempotencias, y el cerrojo sigue siendo uno solo para toda la pantalla.
+  const {
+    enCurso: accionEnCurso,
+    ejecutar: ejecutarUnica,
+    olvidarTodo,
+    reiniciar,
+  } = useAccionUnica();
   const guardandoRef = useRef(false);
-  const accionRef = useRef<string | undefined>(undefined);
   const guardadoGeneracionRef = useRef(0);
-  const accionGeneracionRef = useRef(0);
   const capacidadCargaGeneracionRef = useRef(0);
   const tareasCargaGeneracionRef = useRef(0);
   const ultimaIdentidadConfirmadaRef = useRef<string | undefined>(undefined);
   const borradorCapacidadDeRef = useRef<string | undefined>(undefined);
   const borradorCapacidadSucioRef = useRef(false);
-  const intentos = useRef(new Map<string, Intento>());
   const resultadoRef = useRef<HTMLDivElement>(null);
 
   function adoptarCapacidad(owner: string, actual: CapacidadPropia): void {
@@ -172,17 +181,19 @@ export default function MisTareas(): ReactNode {
     setErrorAccion(undefined);
     setConfirmacion(undefined);
     guardandoRef.current = false;
-    accionRef.current = undefined;
     guardadoGeneracionRef.current += 1;
-    accionGeneracionRef.current += 1;
     setGuardando(false);
-    setAccionEnCurso(undefined);
-    intentos.current.clear();
+    // Suelta el cerrojo y jubila lo que esté en vuelo. Las claves de idempotencia **no** se
+    // olvidan acá: revalidar la cookie de la misma persona pasa por este efecto en cada vuelta al
+    // foco, y borrarlas ahí era justamente lo que impedía reintentar tras un 401 pasajero sin
+    // escribir dos veces. Se olvidan más abajo, y sólo cuando el sujeto deja de ser el mismo.
+    reiniciar();
     if (cargandoSesion) return;
     if (miembroId === undefined) {
       ultimaIdentidadConfirmadaRef.current = undefined;
       borradorCapacidadDeRef.current = undefined;
       borradorCapacidadSucioRef.current = false;
+      olvidarTodo();
       setHoras('');
       setMinutos('');
       return;
@@ -190,6 +201,9 @@ export default function MisTareas(): ReactNode {
     if (ultimaIdentidadConfirmadaRef.current !== miembroId) {
       borradorCapacidadDeRef.current = undefined;
       borradorCapacidadSucioRef.current = false;
+      // Una clave pendiente recuerda la intención de la cuenta anterior. Reusarla haría que el
+      // servidor tomara el envío de esta persona por un duplicado del de aquella, y no escribiera.
+      olvidarTodo();
       setHoras('');
       setMinutos('');
     }
@@ -197,7 +211,7 @@ export default function MisTareas(): ReactNode {
     void cargarCapacidad(miembroId);
     void cargarTareas(miembroId);
     // Las funciones verifican el owner capturado antes de adoptar cualquier promesa tardía.
-  }, [cargandoSesion, miembroId]);
+  }, [cargandoSesion, miembroId, olvidarTodo, reiniciar]);
 
   async function guardar(evento: SyntheticEvent<HTMLFormElement>): Promise<void> {
     evento.preventDefault();
@@ -288,19 +302,45 @@ export default function MisTareas(): ReactNode {
     readonly cuerpo: Readonly<Record<string, unknown>>;
     readonly mensaje: string;
   }): Promise<void> {
-    if (accionRef.current !== undefined || miembroId === undefined) return;
+    if (miembroId === undefined) return;
     const ruta = `/iniciativas/${input.iniciativaId}/tareas/${input.tarea.id}/${input.sufijo}`;
-    const huella = JSON.stringify([ruta, input.cuerpo]);
-    const anterior = intentos.current.get(input.clave);
-    const requestId = anterior?.huella === huella ? anterior.requestId : nuevoRequestId();
-    intentos.current.set(input.clave, { huella, requestId });
-    const generacion = ++accionGeneracionRef.current;
-    accionRef.current = input.clave;
-    setAccionEnCurso(input.clave);
-    setErrorAccion(undefined);
-    setConfirmacion(undefined);
-    const cuerpo = { ...input.cuerpo, requestId };
-    const adoptar = (actualizada: IniciativaDetalle, mensaje: string): void => {
+    const enfocarTarea = (): void => {
+      requestAnimationFrame(() => document.getElementById(`mi-tarea-${input.tarea.id}`)?.focus());
+    };
+
+    // El cerrojo síncrono, la clave estable y jubilar lo que quedó en vuelo los pone
+    // `useAccionUnica`. Lo que queda acá es lo único que sólo esta pantalla sabe: que la respuesta
+    // trae la iniciativa entera y que de ella se conserva **una sola fila**, la propia.
+    const resultado = await ejecutarUnica<{
+      readonly iniciativa: IniciativaDetalle;
+      readonly recuperada: boolean;
+    }>(input.clave, [ruta, input.cuerpo], async (requestId) => {
+      // Dentro de `llamar`, que sólo corre si el cerrojo se tomó: un segundo toque descartado no
+      // puede borrar el aviso que la persona todavía no leyó.
+      setErrorAccion(undefined);
+      setConfirmacion(undefined);
+      const cuerpo = { ...input.cuerpo, requestId };
+      try {
+        return { iniciativa: await enviar<IniciativaDetalle>(ruta, cuerpo), recuperada: false };
+      } catch (fallo: unknown) {
+        // Un fallo que no llegó a ser respuesta del servidor puede ser una escritura que sí ocurrió
+        // y cuya respuesta se perdió. Se reenvía con **la misma** clave: si ya estaba escrito, el
+        // servidor devuelve aquello en vez de escribirlo otra vez. A diferencia de mirar el nombre
+        // del estado, la clave sólo puede recuperar exactamente esta intención y no una ajena que
+        // llegó al mismo estado. Si el reintento también falla, el que sube es el segundo fallo.
+        if (fallo instanceof ErrorDeApi) throw fallo;
+        return { iniciativa: await enviar<IniciativaDetalle>(ruta, cuerpo), recuperada: true };
+      }
+    });
+
+    // `ignorado` es el toque que no entró o la respuesta de una tanda ya jubilada: nada que pintar.
+    if (resultado.estado === 'ignorado') return;
+    // Y una proyección pertenece a una identidad concreta: si cambió mientras la llamada volaba,
+    // describe permisos que ya no son los de quien mira.
+    if (miembroActualRef.current !== miembroId) return;
+
+    if (resultado.estado === 'hecho') {
+      const { iniciativa: actualizada, recuperada } = resultado.valor;
       const fila = filaPropia(actualizada, input.tarea.id);
       setMisTareas((actuales) =>
         actuales?.map((item) =>
@@ -309,46 +349,17 @@ export default function MisTareas(): ReactNode {
             : item,
         ),
       );
-      intentos.current.delete(input.clave);
-      setConfirmacion(mensaje);
-    };
-    try {
-      const actualizada = await enviar<IniciativaDetalle>(ruta, cuerpo);
-      if (miembroActualRef.current !== miembroId || accionGeneracionRef.current !== generacion)
-        return;
-      adoptar(actualizada, input.mensaje);
-      requestAnimationFrame(() => document.getElementById(`mi-tarea-${input.tarea.id}`)?.focus());
-    } catch (fallo: unknown) {
-      if (miembroActualRef.current !== miembroId || accionGeneracionRef.current !== generacion)
-        return;
-      let falloDefinitivo = fallo;
-      if (!(fallo instanceof ErrorDeApi)) {
-        try {
-          // La misma clave sólo puede recuperar exactamente esta intención. A diferencia de mirar
-          // el nombre del estado, no confunde una operación ajena que llegó al mismo estado.
-          const recuperada = await enviar<IniciativaDetalle>(ruta, cuerpo);
-          if (miembroActualRef.current !== miembroId || accionGeneracionRef.current !== generacion)
-            return;
-          adoptar(recuperada, `${input.mensaje} Recuperamos la respuesta vigente.`);
-          requestAnimationFrame(() =>
-            document.getElementById(`mi-tarea-${input.tarea.id}`)?.focus(),
-          );
-          return;
-        } catch (segundoFallo: unknown) {
-          falloDefinitivo = segundoFallo;
-        }
-      }
-      await cargarTareas(miembroId);
-      if (miembroActualRef.current !== miembroId || accionGeneracionRef.current !== generacion)
-        return;
-      setErrorAccion(falloDefinitivo);
-      requestAnimationFrame(() => document.getElementById(`mi-tarea-${input.tarea.id}`)?.focus());
-    } finally {
-      if (accionGeneracionRef.current === generacion) {
-        accionRef.current = undefined;
-        if (miembroActualRef.current === miembroId) setAccionEnCurso(undefined);
-      }
+      setConfirmacion(
+        recuperada ? `${input.mensaje} Recuperamos la respuesta vigente.` : input.mensaje,
+      );
+      enfocarTarea();
+      return;
     }
+
+    await cargarTareas(miembroId);
+    if (miembroActualRef.current !== miembroId) return;
+    setErrorAccion(resultado.error);
+    enfocarTarea();
   }
 
   if (cargandoSesion) return <Cargando que="tu sesión" />;
@@ -423,7 +434,9 @@ export default function MisTareas(): ReactNode {
                 </p>
               )}
               {capacidadVisible.declarada && (
-                <p className="suave">Última actualización: {cuando(capacidadVisible.updatedAt)}.</p>
+                <p className="suave">
+                  {cerrarFrase(`Última actualización: ${cuando(capacidadVisible.updatedAt)}`)}
+                </p>
               )}
             </div>
             <form className="formulario-acotado" onSubmit={(evento) => void guardar(evento)}>
@@ -634,7 +647,7 @@ function TareaRapida({
       <h3 id={`mi-tarea-titulo-${tarea.id}`}>{tarea.titulo}</h3>
       <p>{tarea.descripcion}</p>
       <p className="suave">
-        {tarea.esfuerzoMinutos} minutos estimados · vence el {cuando(tarea.venceEn)}
+        {esfuerzoEnPalabras(tarea.esfuerzoMinutos)} · vence el {cuando(tarea.venceEn)}
       </p>
       <p className="suave">Iniciativa: {objetivo}</p>
 

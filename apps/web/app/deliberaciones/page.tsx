@@ -14,7 +14,8 @@ import { useCallback, useEffect, useState, type ReactNode, type SyntheticEvent }
 import type { DeliberacionResumen, ProblemaResumen } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
-import { enviar, nuevoRequestId, plazo, traer } from '../../lib/api';
+import { useAccionUnica } from '../../lib/acciones';
+import { enviar, plazo, traer } from '../../lib/api';
 
 /** Dos días. Lo bastante para que quien no entra a diario alcance a leer y escribir. */
 const HORAS_POR_DEFECTO = 48;
@@ -27,7 +28,7 @@ export default function Deliberaciones(): ReactNode {
   const [errorAbrir, setErrorAbrir] = useState<unknown>(undefined);
   const [problemaId, setProblemaId] = useState('');
   const [horas, setHoras] = useState(String(HORAS_POR_DEFECTO));
-  const [guardando, setGuardando] = useState(false);
+  const { enCurso, ejecutar } = useAccionUnica();
 
   const recargar = useCallback(() => {
     traer<DeliberacionResumen[]>('/deliberaciones').then(setLista).catch(setError);
@@ -45,20 +46,19 @@ export default function Deliberaciones(): ReactNode {
 
   async function abrir(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
-    setErrorAbrir(undefined);
-    setGuardando(true);
-    try {
-      await enviar<DeliberacionResumen>('/deliberaciones', {
-        requestId: nuevoRequestId(),
-        problemaId,
-        duracionHoras: Number(horas),
-      });
+    // Abrir una conversación es un hecho del historial y no se deshace. El cerrojo vive en un
+    // `ref` dentro de `useAccionUnica` porque un `disabled` de estado llega un repintado tarde:
+    // los dos toques de un doble toque en un teléfono caen antes de que React se entere.
+    const datos = { problemaId, duracionHoras: Number(horas) };
+    const resultado = await ejecutar('abrir', datos, (requestId) => {
+      setErrorAbrir(undefined);
+      return enviar<DeliberacionResumen>('/deliberaciones', { ...datos, requestId });
+    });
+    if (resultado.estado === 'hecho') {
       setProblemaId('');
       recargar();
-    } catch (fallo) {
-      setErrorAbrir(fallo);
-    } finally {
-      setGuardando(false);
+    } else if (resultado.estado === 'fallo') {
+      setErrorAbrir(resultado.error);
     }
   }
 
@@ -98,10 +98,20 @@ export default function Deliberaciones(): ReactNode {
                 {deliberacion.cuantosAportes === 1 ? 'aporte' : 'aportes'}
               </p>
               <p>{deliberacion.queSeHaceEnEstaEtapa}</p>
+              {/*
+                Decir sólo «no se ve quién escribió» es mentir por omisión, y en la pantalla donde
+                alguien decide si escribe o no. La ficha de detalle ya dice la verdad entera en
+                `avisoDeAutoria`; acá va la misma verdad en corto, con las tres cosas que cambian
+                la decisión: de quién protege, de quién no, y que el historial descargable sí lo
+                dice. La palabra «anónimo» no aparece porque prometería algo que esto no da.
+              */}
               {!deliberacion.autoriaVisible && (
                 <p>
                   <span aria-hidden="true">◍ </span>
-                  Ahora mismo no se ve quién escribió cada aporte.
+                  Mientras esta etapa siga abierta no se ve quién escribió cada aporte. Eso te
+                  protege de las demás personas que participan, no de quien administra el servidor;
+                  y quien descargue el historial completo desde «Verificar» sí puede ver quién
+                  escribió cada aporte.
                 </p>
               )}
             </li>
@@ -160,8 +170,12 @@ export default function Deliberaciones(): ReactNode {
               />
             </div>
 
-            <button className="boton" type="submit" disabled={guardando || problemaId === ''}>
-              {guardando ? 'Abriendo…' : 'Abrir la conversación'}
+            <button
+              className="boton"
+              type="submit"
+              disabled={enCurso !== undefined || problemaId === ''}
+            >
+              {enCurso === 'abrir' ? 'Abriendo…' : 'Abrir la conversación'}
             </button>
           </form>
         </section>
