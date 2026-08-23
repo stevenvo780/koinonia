@@ -18,13 +18,17 @@ import { Client } from 'pg';
 import { expect, test } from '@playwright/test';
 
 import {
+  afirmacionesDeQueEstaBien,
   apiDirecta,
   type Cuenta,
   crearProblemaPorApi,
   entorno,
+  contenido,
   entrarPorApi,
   marca,
+  NO_ES_PRUEBA_DE_SI_MISMA,
   planDe,
+  puntoQueFalla,
   requestId,
 } from './ayudas.js';
 
@@ -63,12 +67,79 @@ test.beforeAll(async () => {
   await api.dispose();
 });
 
-test('antes de tocar nada, la pantalla dice que está todo bien', async ({ page }) => {
+test('antes de tocar nada, la pantalla NO canta victoria: dice «Sin confirmar»', async ({
+  page,
+}) => {
   await page.goto('/verificar');
-  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
-  // Y lo dice explicando qué se comprobó y qué significaría que estuviera mal.
-  await expect(page.getByRole('heading', { level: 2, name: 'Qué se comprobó' })).toBeVisible();
-  await expect(page.getByText('Está bien').first()).toBeVisible();
+
+  // El veredicto de partida. No es «está todo bien» y no puede serlo: el informe lo produce el
+  // mismo servidor que guarda el historial, y aprobar el propio examen es una presunción, no un
+  // éxito. Que esto sea ámbar y no verde es lo que le da valor a la alarma de más abajo: una
+  // pantalla que dice que sí siempre no informa de nada el día que tiene que decir que no.
+  const veredicto = contenido(page).getByRole('status').filter({ hasText: 'Sin confirmar' });
+  await expect(veredicto).toBeVisible();
+  await expect(contenido(page).getByRole('alert')).toHaveCount(0);
+
+  // La pieza de honestidad, verbatim. Si una refactorización futura se la lleva por delante, la
+  // pantalla pasa a cobrar una confianza que no se ganó, y esto tiene que fallar.
+  await expect(veredicto).toContainText(NO_ES_PRUEBA_DE_SI_MISMA);
+
+  // Los dos encabezados que hay, y el que ya no está: «Qué se comprobó» dejó de ser un `h2` para
+  // pasar a ser el rótulo en línea de cada punto.
+  await expect(page.getByRole('heading', { level: 2, name: 'Comprobalo por fuera' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'Qué revisó el servidor' }),
+  ).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Qué se comprobó' })).toHaveCount(0);
+
+  // La revisión punto por punto sigue estando —y sigue explicando qué se comprobó y qué
+  // significaría que estuviera mal—, pero ahora está plegada. Se abre y se lee: dar por buena la
+  // presencia en el DOM sería dar por buena una pantalla que no enseña nada.
+  const queSeComprobo = page.getByText('Que el historial está completo y en orden', {
+    exact: false,
+  });
+  await expect(queSeComprobo).toBeHidden();
+  await page.locator('summary', { hasText: 'Ver la revisión que hizo el servidor' }).click();
+  await expect(queSeComprobo).toBeVisible();
+  await expect(
+    page.getByText('Cada hecho registrado apunta al anterior', { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('Que cada apertura privada todavía disponible corresponde', { exact: false }),
+  ).toBeVisible();
+
+  // El número que anuncia el desplegable es el número de puntos que enseña. Un resumen que miente
+  // sobre cuánto esconde es peor que no tener resumen.
+  const puntos = page.locator('ul.tarjetas > li');
+  const cuantos = await puntos.count();
+  expect(cuantos, 'la revisión del servidor tiene que enseñar sus puntos').toBeGreaterThan(0);
+  await expect(
+    page.locator('summary', { hasText: 'Ver la revisión que hizo el servidor' }),
+  ).toHaveText(new RegExp(`\\(${String(cuantos)} puntos?\\)`, 'u'));
+
+  // Y ni un «Está bien» por punto: la marca por punto se quitó a propósito, porque seis tarjetas
+  // casi idénticas eran la nota que el servidor se ponía a sí mismo, seis veces.
+  await expect(page.getByText('Está bien', { exact: true })).toHaveCount(0);
+
+  // El verde está proscrito en la evaluación que el servidor hace de sí mismo, y la frase «está
+  // todo bien» sólo puede aparecer NEGADA. Se lee la pantalla entera, con el desplegable abierto.
+  const texto = await page.locator('main').innerText();
+  expect(texto, 'el verde está proscrito en la nota que el servidor se pone').not.toMatch(
+    /verde/iu,
+  );
+  expect(texto).not.toContain('Todas las comprobaciones pasaron');
+
+  // La pantalla nombra la frase para rechazarla, y eso se exige aparte: sin esta línea, el barrido
+  // de abajo pasaría también sobre una pantalla que no dijera nada, y un bucle que no recorre nada
+  // es una prueba que no comprueba nada.
+  expect(texto).toContain('no vas a leer que está todo bien');
+  const afirmaciones = afirmacionesDeQueEstaBien(texto);
+  expect(afirmaciones.length).toBeGreaterThan(0);
+  for (const afirmacion of afirmaciones) {
+    expect(afirmacion, 'la pantalla sólo puede nombrar «está todo bien» para rechazarlo').toMatch(
+      /\bno\b/iu,
+    );
+  }
 });
 
 test('la aplicación NO puede alterar el historial ni aunque quiera', async () => {
@@ -128,21 +199,64 @@ test('el administrador con root cambia el texto, y la verificación LO DENUNCIA'
   }
 
   // ── Y la pantalla lo dice ──────────────────────────────────────────────────────────────────
+  //
+  // Se le vuelve a preguntar al servidor **pulsando**, que es lo que haría cualquiera que dudara de
+  // lo que está viendo. El botón se llama así porque la pantalla ya preguntó sola al cargar; la
+  // primera vez, y sólo la primera, se llama «Comprobar ahora».
   await page.goto('/verificar');
-  await page.getByRole('button', { name: 'Comprobar ahora' }).click();
+  await page.getByRole('button', { name: 'Volver a preguntarle al servidor' }).click();
 
-  await expect(page.getByText('Algo en el historial no cuadra').first()).toBeVisible();
-  await expect(
-    page
-      .getByText('Esto es una alarma pública, no un arreglo silencioso', { exact: false })
-      .first(),
-  ).toBeVisible();
-  // En rojo, con símbolo y palabra: nada depende sólo del color.
+  // El titular. No es una advertencia templada ni un error técnico: es la acusación, y va sin
+  // rodeos porque lo que pasó es que alguien cambió lo que ya estaba escrito.
+  const alarma = contenido(page).getByRole('alert');
+  await expect(alarma).toBeVisible();
+  await expect(alarma).toContainText('El historial fue alterado');
+
+  // Y es ESE titular y no el otro. La pantalla tiene un titular más suave para cuando lo único que
+  // falla es la revisión de material privado local; usarlo acá sería quitarle hierro a una
+  // manipulación del historial, que es justo lo que este escenario existe para impedir.
+  await expect(alarma).not.toContainText('Falta material privado');
+
+  await expect(alarma).toContainText('Esto se publica, no se arregla en silencio.');
+  await expect(alarma).toContainText(NO_ES_PRUEBA_DE_SI_MISMA);
+
+  // Con símbolo y palabra, y no sólo en rojo: quien no distingue el color tiene que poder leer que
+  // acá no cuadra. Se busca por el papel que el bloque juega en la página —un artículo con nombre
+  // propio— y no por la clase que lo pinta, que es lo que una refactorización de estilos mueve sin
+  // avisar. La clase se comprueba además, porque el rojo también tiene que estar.
+  const punto = puntoQueFalla(page).first();
+  await expect(punto).toBeVisible();
+  await expect(punto).toContainText('✕');
+  await expect(punto).toContainText('Acá no cuadra');
   await expect(page.locator('.comprobacion.mal').first()).toBeVisible();
-  await expect(page.getByText('Algo no cuadra').first()).toBeVisible();
+
+  // El punto que falla es el del historial, dicho con todas las letras y no por descarte.
+  await expect(punto).toContainText('Que el historial está completo y en orden');
 
   // Y sigue explicando qué significa, en palabras, sin escupir un error técnico.
   await expect(page.getByText(/cuarentena/u).first()).toBeVisible();
+
+  // El error técnico existe, pero plegado y debajo de las palabras. Se abre y se comprueba que hay
+  // algo que llevarse: sin comprobante, «no cuadra» es una opinión que nadie puede rebatir ni
+  // confirmar por su cuenta.
+  await punto.locator('summary', { hasText: 'Ver el detalle técnico' }).click();
+  await expect(punto.locator('code.comprobante')).toBeVisible();
+  expect(
+    ((await punto.locator('code.comprobante').textContent()) ?? '').trim().length,
+  ).toBeGreaterThan(0);
+
+  // Los puntos que sí pasaron quedan plegados y **debajo**, y al abrirlos la pantalla no se
+  // desdice: dice que no cambian nada de lo de arriba. Un «5 de 6 están bien» al lado de la alarma
+  // es cómo se diluye una alarma sin borrarla.
+  const resto = page.locator('summary', { hasText: 'Ver el resto de la revisión' });
+  await expect(resto).toBeVisible();
+  await resto.click();
+  await expect(
+    page.getByText('basta con que falle uno para que el historial no se pueda dar por bueno', {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(alarma).toContainText('El historial fue alterado');
 });
 
 /**
@@ -153,9 +267,9 @@ test('el administrador con root cambia el texto, y la verificación LO DENUNCIA'
  * que no tiene nada que ver con lo que prueban.
  *
  * Y de paso demuestra algo que vale la pena: al reponer **los bytes exactos**, la verificación
- * vuelve al verde sola. No hay ninguna bandera de «ya lo arreglé»; lo que hace que cuadre es que el
- * contenido vuelve a ser el que produce esa huella. Si se repusiera un texto *parecido*, seguiría
- * en rojo.
+ * vuelve a cuadrar sola. No hay ninguna bandera de «ya lo arreglé»; lo que hace que cuadre es que
+ * el contenido vuelve a ser el que produce esa huella. Si se repusiera un texto *parecido*,
+ * seguiría en alarma.
  */
 test.afterAll(async () => {
   if (original === undefined) return;
@@ -189,9 +303,7 @@ test('el texto alterado no se cuela como si nada: la propuesta deja de verificar
   expect(cadena?.detalle).toBeTruthy();
 });
 
-test('reponer los bytes exactos devuelve la verificación al verde, sin ninguna bandera', async ({
-  page,
-}) => {
+test('reponer los bytes exactos apaga la alarma sola, sin ninguna bandera', async ({ page }) => {
   expect(original, 'el test anterior debió guardar el original').toBeDefined();
 
   const cliente = new Client({ connectionString: entorno().superUrl });
@@ -212,8 +324,8 @@ test('reponer los bytes exactos devuelve la verificación al verde, sin ninguna 
   }
 
   await page.goto('/verificar');
-  await page.getByRole('button', { name: 'Comprobar ahora' }).click();
-  await expect(page.getByText('Algo en el historial no cuadra').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Volver a preguntarle al servidor' }).click();
+  await expect(contenido(page).getByRole('alert')).toContainText('El historial fue alterado');
 
   // Ahora sí, los bytes exactos.
   const cliente2 = new Client({ connectionString: entorno().superUrl });
@@ -232,6 +344,14 @@ test('reponer los bytes exactos devuelve la verificación al verde, sin ninguna 
   }
 
   await page.goto('/verificar');
-  await page.getByRole('button', { name: 'Comprobar ahora' }).click();
-  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
+  await page.getByRole('button', { name: 'Volver a preguntarle al servidor' }).click();
+  // La alarma se apaga —no queda ni un `role="alert"` en pie— y el veredicto vuelve al ámbar de
+  // partida. No vuelve a un verde, porque ese verde no existe: lo que se recupera es la presunción,
+  // no una garantía.
+  await expect(
+    contenido(page).getByRole('status').filter({ hasText: 'Sin confirmar' }),
+  ).toBeVisible();
+  await expect(contenido(page).getByRole('alert')).toHaveCount(0);
+  await expect(puntoQueFalla(page)).toHaveCount(0);
+  await expect(page.locator('.comprobacion.mal')).toHaveCount(0);
 });

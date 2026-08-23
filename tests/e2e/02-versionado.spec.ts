@@ -15,6 +15,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   apiDirecta,
+  contenido,
   type Cuenta,
   crearProblemaPorApi,
   entrarPorApi,
@@ -167,11 +168,24 @@ test('la V1 sigue intacta e íntegra después de que existe la V2 y se vota sobr
   await apiSara.dispose();
 
   // ── 5. Y la V1 sigue VERIFICANDO ───────────────────────────────────────────────────────────
+  //
+  // El veredicto ya no dice «todas las comprobaciones pasaron»: el informe lo firma el mismo
+  // servidor que guarda el historial, así que mientras nadie lo compruebe por fuera se queda en
+  // «Sin confirmar». Lo que este escenario prueba no cambia —que la V1 conserva sus palabras
+  // aunque exista una V2—, sólo cambia dónde lo dice la pantalla.
   await page.goto('/verificar');
-  await expect(page.getByText('Todas las comprobaciones pasaron')).toBeVisible();
   await expect(
-    page.getByText('La versión 1 conserva sus palabras, responsable, fecha y criterios', {
-      exact: false,
-    }),
+    contenido(page).getByRole('status').filter({ hasText: 'Sin confirmar' }),
   ).toBeVisible();
+
+  // La revisión punto por punto quedó **plegada**. Comprobar que el texto está en el DOM sin abrir
+  // el desplegable sería comprobar el marcado, no la pantalla: primero se exige que esté oculto,
+  // después se abre, y sólo entonces se lee.
+  const conserva = page.getByText(
+    'La versión 1 conserva sus palabras, responsable, fecha y criterios',
+    { exact: false },
+  );
+  await expect(conserva).toBeHidden();
+  await page.locator('summary', { hasText: 'Ver la revisión que hizo el servidor' }).click();
+  await expect(conserva).toBeVisible();
 });
