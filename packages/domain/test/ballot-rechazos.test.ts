@@ -19,6 +19,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  acceptedPayloadKinds,
   type Ballot,
   type BallotContext,
   ballotRejection,
@@ -27,6 +28,7 @@ import {
   instant,
   InvalidBallotError,
   isBallotValid,
+  isVoterEligible,
   MIN_OBJECTION_ARGUMENT_LENGTH,
   type OptionId,
   validateBallot,
@@ -45,6 +47,7 @@ import {
   planToMethod,
   PROPOSAL_V1,
   PROPOSAL_V2,
+  SEED_COMMITMENT,
   T0,
 } from './arbitraries.js';
 import {
@@ -174,6 +177,36 @@ describe('ballot — el motivo del rechazo se publica entero, no sólo su códig
       'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): simple-majority admite binary | abstain y ' +
         'la papeleta es de tipo score; convertirla inventaría una preferencia que nadie expresó',
     );
+  });
+
+  /**
+   * El sorteo deliberativo **no admite papeleta ninguna**: no se vota, se sortea (B.9). Devolver una
+   * lista vacía no es un olvido, y por eso hay que fijarlo: si algún día devolviera `['binary']`, se
+   * podría «votar» una decisión que por diseño no se vota.
+   */
+  it('el sorteo deliberativo no admite ninguna clase de papeleta', async () => {
+    const cfg = await multiConfig(
+      {
+        kind: 'deliberative-sortition',
+        sampleSize: 3,
+        strata: [],
+        allocation: 'proportional',
+        seedCommitment: SEED_COMMITMENT,
+      },
+      [A, B],
+      6,
+    );
+    expect(acceptedPayloadKinds(cfg.method)).toStrictEqual([]);
+    expect(motivo(cfg, papeleta(cfg))).toBe(
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): deliberative-sortition admite  y la ' +
+        'papeleta es de tipo binary; convertirla inventaría una preferencia que nadie expresó',
+    );
+  });
+
+  it('`isVoterEligible` es el atajo del padrón congelado, y dice lo mismo que el guardián', async () => {
+    const cfg = await mayoria(3);
+    expect(isVoterEligible(cfg.electorate, memberIdAt(0))).toBe(true);
+    expect(isVoterEligible(cfg.electorate, memberIdAt(99))).toBe(false);
   });
 
   it('el orden de las seis puertas es estable: la primera que falla es la que se publica', async () => {
@@ -358,6 +391,31 @@ describe('ballot — papeletas de ordenación (ranking)', () => {
     // Y con todas las opciones presentes, el método que las exige la acepta.
     expect(isBallotValid(exige, conOrden(exige, [C, A, B]), ctx(exige))).toBe(true);
   });
+
+  /**
+   * La regla del truncamiento vale para los **dos** métodos de ordenación, no sólo para Schulze.
+   * Toda la cobertura estaba en `condorcet-schulze`, así que la mitad `irv` de la condición podía
+   * borrarse sin que nadie se enterara: los rankings truncados habrían entrado en IRV aunque el
+   * método los prohibiera, y en IRV un ranking truncado **cambia la cuota** de cada vuelta.
+   */
+  it('IRV aplica la misma regla de truncamiento que Schulze', async () => {
+    const IRV = {
+      kind: 'irv',
+      exhaustedPolicy: 'reduce-quota',
+      eliminationTieBreak: { cascade: ['pairwise-head-to-head', 'lexicographic-hash'] },
+      allowTruncation: false,
+      tieBreak: { cascade: ['lexicographic-hash'] },
+    } as const;
+    const exige = await multiConfig(IRV, [A, B, C], 5);
+    const permite = await multiConfig({ ...IRV, allowTruncation: true }, [A, B, C], 5);
+
+    expect(motivo(exige, conOrden(exige, [A, B]))).toBe(
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): el método no permite rankings truncados: ' +
+        'deben aparecer todas las opciones',
+    );
+    expect(isBallotValid(permite, conOrden(permite, [A, B]), ctx(permite))).toBe(true);
+    expect(isBallotValid(exige, conOrden(exige, [B, C, A]), ctx(exige))).toBe(true);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -445,6 +503,34 @@ describe('ballot — el motivo del rechazo de una objeción (B.3)', () => {
 
   it('la objeción bien formada pasa', () => {
     expect(razon(OBJECION)).toBe('(la objeción se aceptó)');
+  });
+
+  /**
+   * Las dos caras de B.3: objetar **exige** la objeción por escrito, y no objetar **prohíbe**
+   * adjuntarla. El código de rechazo ya se comprobaba; el texto que se le muestra a quien vota, no.
+   */
+  it('objetar sin objeción, y adjuntar objeción sin objetar, se explican con su texto', async () => {
+    const cfg = await buildConfig({
+      electorate: await buildElectorate(3),
+      method: planToMethod({
+        kind: 'sociocratic-consent',
+        maxRounds: 3,
+        minEngagementNum: 1,
+        minEngagementDen: 2,
+      }),
+    });
+    expect(motivo(cfg, papeleta(cfg, { payload: { kind: 'consent', stance: 'object' } }))).toBe(
+      'papeleta rechazada (OBJECTION_REQUIRED): objetar exige presentar la objeción por escrito: ' +
+        'qué objetivo se daña y por qué (B.3)',
+    );
+    for (const stance of ['consent', 'concern'] as const) {
+      expect(
+        motivo(cfg, papeleta(cfg, { payload: { kind: 'consent', stance, objection: OBJECION } })),
+      ).toBe(
+        `papeleta rechazada (OBJECTION_NOT_ALLOWED): una papeleta con postura ${stance} no puede ` +
+          'traer una objeción adjunta',
+      );
+    }
   });
 
   /**

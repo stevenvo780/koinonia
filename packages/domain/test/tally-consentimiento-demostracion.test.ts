@@ -158,6 +158,65 @@ describe('B.3 — qué objeciones bloquean', () => {
     expect(mergeObjections([], efectivas(cfg, ['consent', 'concern']))).toStrictEqual([]);
   });
 
+  /**
+   * Una papeleta que dice `object` **sin** objeción adjunta no puede existir en un log legal
+   * —`validateBallot` la rechaza con `OBJECTION_REQUIRED`— pero `mergeObjections` es una función
+   * exportada y pura, y ante esa entrada tiene que **no inventarse nada**. Con la condición de
+   * guarda mutada de `||` a `&&`, no sólo se inventaba: reventaba con un `TypeError` leyendo
+   * `objectionId` de `undefined`, es decir, un log ligeramente corrupto tumbaba el escrutinio entero
+   * en vez de ignorar la papeleta.
+   */
+  it('una papeleta que dice objetar sin objeción adjunta no inventa ninguna, ni revienta', () => {
+    const sinObjecion: readonly EffectiveBallot[] = [
+      {
+        voter: memberIdAt(0),
+        payload: { kind: 'consent', stance: 'object' },
+        weight: 1,
+        seq: 1,
+        onBehalfOf: [],
+      },
+    ];
+    expect(mergeObjections([], sinObjecion)).toStrictEqual([]);
+    expect(blockingObjections(mergeObjections([objecion(4)], sinObjecion))).toHaveLength(1);
+  });
+
+  /**
+   * La deduplicación mira el identificador, no «hay algo en la lista». Con el predicado mutado a
+   * `true`, cualquier registro previo —de otra objeción cualquiera— hacía desaparecer la objeción de
+   * la papeleta, y con ella el bloqueo. Es la forma más silenciosa de anular una objeción.
+   */
+  it('una objeción de la papeleta se añade aunque el registro ya traiga otras distintas', async () => {
+    const cfg = await config();
+    const unidas = mergeObjections([objecion(8)], efectivas(cfg, ['consent', 'object']));
+    expect(unidas).toHaveLength(2);
+    expect(unidas.map((o) => o.objectionId)).toContain(objectionIdAt(8));
+    expect(blockingObjections(unidas)).toHaveLength(2);
+  });
+
+  it('la manifestación ignora las papeletas que no son de consentimiento', async () => {
+    const cfg = await config(3, 1, 2, 4);
+    const mezcla: readonly EffectiveBallot[] = [
+      {
+        voter: memberIdAt(0),
+        payload: { kind: 'consent', stance: 'consent' },
+        weight: 1,
+        seq: 1,
+        onBehalfOf: [],
+      },
+      {
+        voter: memberIdAt(1),
+        payload: { kind: 'binary', approve: true },
+        weight: 1,
+        seq: 2,
+        onBehalfOf: [],
+      },
+    ];
+    expect(consentEngagement(cfg.electorate, cfg.circleId, mezcla)).toStrictEqual({
+      manifested: 1,
+      circleSize: 4,
+    });
+  });
+
   it('la unión sale ordenada por identificador', async () => {
     const cfg = await config();
     const unidas = mergeObjections([objecion(7), objecion(2)], efectivas(cfg, ['consent']));
@@ -410,6 +469,65 @@ describe('B.3 — la demostración del consentimiento, salida por salida', () =>
       'rejected',
       'rejected',
     ]);
+  });
+
+  /**
+   * Con **dos** objeciones bloqueantes, S4 las enumera separadas por «, ». Con una sola el separador
+   * no se usa, y por eso el mutante que lo vacía sobrevivía a toda la batería: la lista quedaba
+   * pegada en una sola cadena ilegible justo cuando más objeciones hay que leer.
+   */
+  it('S4 enumera VARIAS objeciones bloqueantes separadas, en orden de identificador', async () => {
+    const cfg = await config();
+    const tally = tallyConsent(cfg, efectivas(cfg, ['consent', 'consent', 'concern']), {
+      round: 1,
+      objections: [objecion(5), objecion(1)],
+    });
+    expect(tally.steps[3]).toStrictEqual({
+      id: 'S4',
+      claim: `Quedan 2 objeciones admitidas sin integrar: ${objectionIdAt(1)}, ${objectionIdAt(5)}.`,
+      evidence: { objecionesBloqueantes: 2 },
+      supportingSeqs: [11, 15],
+    });
+    expect(tally.narrative).toContain('Quedaron 2 objeciones en pie');
+  });
+
+  /**
+   * `silenceMeans` es la regla más delicada de B.3: decide si callar consiente. La cascada de
+   * `planToMethod` sólo produce `not-participating`, así que la otra mitad de la frase de S3 —la que
+   * anuncia a un círculo entero que su silencio se está contando como un «sí»— **no la escribía
+   * nadie en ninguna prueba**.
+   */
+  it('S3 anuncia si el silencio consiente, y son dos frases distintas', async () => {
+    const base = await config();
+    const conSilencioQueConsiente = await buildConfig({
+      electorate: base.electorate,
+      method: { ...base.method, silenceMeans: 'consent' } as DecisionConfig['method'],
+    });
+    const tally = tallyConsent(
+      conSilencioQueConsiente,
+      efectivas(conSilencioQueConsiente, ['consent', 'consent']),
+      { round: 1, objections: [] },
+    );
+    expect(tally.steps[2]).toStrictEqual({
+      id: 'S3',
+      claim:
+        'La manifestación fue 50.00 % del círculo y se exigía al menos 1/2. El silencio se cuenta ' +
+        'como consentimiento.',
+      evidence: {
+        manifestacion: '2/4',
+        exigido: '1/2',
+        elSilencio: 'consent',
+        cumple: 'sí',
+      },
+      supportingSeqs: [],
+    });
+
+    const conSilencioQueNo = tallyConsent(base, efectivas(base, ['consent', 'consent']), {
+      round: 1,
+      objections: [],
+    });
+    expect(conSilencioQueNo.steps[2]?.claim).toContain('El silencio no consiente.');
+    expect(tally.steps[2]?.claim).not.toBe(conSilencioQueNo.steps[2]?.claim);
   });
 
   it('el umbral de manifestación es inclusivo: justo en el mínimo, cumple', async () => {

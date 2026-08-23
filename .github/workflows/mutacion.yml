@@ -12,9 +12,9 @@ name: Mutación
 #
 #   ámbito   | antes   | ahora   | qué pasó
 #   ---------|---------|---------|------------------------------------------------------------------
-#   GLOBAL   | 62,10 % | 73,28 % |
-#   reglas   | 76,30 % | 88,44 % | **pasa el umbral**; `ballot.ts` 58,42 → 93,81
-#   tally    | 48,95 % | 65,24 % | cinco de diez escrutadores por encima del 92 %
+#   GLOBAL   | 62,10 % | 73,68 % |
+#   reglas   | 76,30 % | 89,50 % | **pasa el umbral**; `ballot.ts` 58,42 → 96,56
+#   tally    | 48,95 % | 65,61 % | cinco de diez escrutadores por encima del 94 %
 #   crypto   | 77,34 % | 77,34 % | sin tocar
 #
 # Dentro de `tally`, lo que ya está hecho y lo que falta:
@@ -23,7 +23,7 @@ name: Mutación
 #   simple-majority.ts 56,16 → 97,26 ·   score.ts             43,15  (sin tocar)
 #   unanimity.ts     43,40 → 94,34   ·   irv.ts               46,58  (sin tocar)
 #   common.ts        65,59 → 94,41   ·   majority-judgment.ts 49,81  (sin tocar)
-#   consent.ts       47,01 → 92,31   ·   sortition.ts         54,71  (sin tocar)
+#   consent.ts       47,01 → 95,73   ·   sortition.ts         54,71  (sin tocar)
 #
 # El patrón de los cinco arreglados fue siempre el mismo y sirve de guion para los cinco que quedan:
 # los tests afirmaban sobre `outcome` y nadie miraba `steps`, `tables` ni `narrative`, que es
