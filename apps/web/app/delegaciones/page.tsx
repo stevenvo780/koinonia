@@ -170,7 +170,7 @@ export default function Delegaciones(): ReactNode {
             institucional.
           </p>
           <p>
-            <Link className="boton" href="/entrar">
+            <Link className="boton accion" href="/entrar">
               Entrar
             </Link>
           </p>
@@ -206,7 +206,7 @@ export default function Delegaciones(): ReactNode {
                 <Link href={`/decisiones/${votacion.decisionId}`}>{votacion.titulo}</Link>
               </h3>
               <p className="suave">
-                {plazo(votacion.cierraEn)} · cierra el {cuando(votacion.cierraEn)}
+                {plazo(votacion.cierraEn)} · {cuando(votacion.cierraEn)}
               </p>
 
               {votacion.yaVote && (
@@ -225,7 +225,7 @@ export default function Delegaciones(): ReactNode {
                   </p>
                   <p>
                     <button
-                      className="boton"
+                      className="boton accion"
                       type="button"
                       disabled={enCurso !== undefined}
                       onClick={() => {
@@ -281,7 +281,7 @@ export default function Delegaciones(): ReactNode {
                     </select>
                   </div>
                   <p>
-                    <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                    <button className="boton accion" type="submit" disabled={enCurso !== undefined}>
                       {enCurso === `prestar-${votacion.decisionId}`
                         ? 'Prestando…'
                         : 'Prestar mi voto'}

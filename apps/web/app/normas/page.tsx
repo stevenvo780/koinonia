@@ -23,7 +23,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Normas } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../components/marco';
-import { traer } from '../../lib/api';
+import { cerrarFrase, cuando, traer } from '../../lib/api';
 
 export default function NormasPantalla(): ReactNode {
   const [normas, setNormas] = useState<Normas | undefined>(undefined);
@@ -105,8 +105,8 @@ export default function NormasPantalla(): ReactNode {
                       {version.vigente && <span className="etiqueta"> Es la que rige hoy</span>}
                     </h3>
                     <p className="suave">
-                      Rige desde el {new Date(version.rigeDesde).toLocaleDateString('es-CO')} y
-                      vence el {new Date(version.caduca).toLocaleDateString('es-CO')}.
+                      Rige desde el {cerrarFrase(cuando(version.rigeDesde))} y vence el{' '}
+                      {cerrarFrase(cuando(version.caduca))}
                     </p>
                     <ul>
                       {version.reglas.map((regla) => (

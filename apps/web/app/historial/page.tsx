@@ -21,7 +21,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Historial } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../components/marco';
-import { cuando, traer } from '../../lib/api';
+import { cerrarFrase, cuando, traer } from '../../lib/api';
 
 export default function HistorialPantalla(): ReactNode {
   const [historial, setHistorial] = useState<Historial | undefined>(undefined);
@@ -39,7 +39,7 @@ export default function HistorialPantalla(): ReactNode {
         detrás: si algo estuvo mal, lo que se escribe es la corrección, y las dos quedan.
       </p>
 
-      <div className="comprobacion" role="note">
+      <div className="veredicto bien" role="note">
         <span className="marca-estado">
           <span aria-hidden="true">✓ </span>Esto se puede comprobar sin confiar en nosotros
         </span>
@@ -48,7 +48,7 @@ export default function HistorialPantalla(): ReactNode {
           sola, el enganche dejaría de cuadrar y se notaría desde fuera.
         </p>
         <p>
-          <Link className="boton" href="/verificar">
+          <Link className="boton accion" href="/verificar">
             Comprobar que nada se cambió
           </Link>
         </p>
@@ -75,8 +75,12 @@ export default function HistorialPantalla(): ReactNode {
           <h2 id="hechos-titulo">Lo último que pasó</h2>
           <p className="suave">
             Van {historial.total} {historial.total === 1 ? 'cosa escrita' : 'cosas escritas'}
-            {historial.desde !== undefined && <> desde el {cuando(historial.desde)}</>}. Acá abajo
-            están las más recientes, de la última a la primera.
+            {historial.desde !== undefined ? (
+              <> desde el {cerrarFrase(cuando(historial.desde))}</>
+            ) : (
+              '.'
+            )}{' '}
+            Acá abajo están las más recientes, de la última a la primera.
           </p>
           <p className="suave">
             Esta lista <strong>no dice quién hizo cada cosa</strong>: mientras una conversación

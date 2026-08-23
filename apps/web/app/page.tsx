@@ -86,7 +86,7 @@ export default function Inicio(): ReactNode {
                   </p>
                 )}
                 <p>
-                  <Link className="boton" href={portada.loQueTeToca.enlace}>
+                  <Link className="boton accion" href={portada.loQueTeToca.enlace}>
                     Ir a responder
                   </Link>
                 </p>

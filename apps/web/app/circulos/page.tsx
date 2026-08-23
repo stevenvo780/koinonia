@@ -16,9 +16,15 @@ import type { Circulo, Sesion } from '@koinonia/contracts';
 import { Cargando, ErrorVisible, useSesion } from '../../components/marco';
 import { traer } from '../../lib/api';
 
-/** Si esta persona pertenece al grupo. Sólo decide qué se OFRECE; el permiso lo decide la API. */
-function pertenece(sesion: Sesion | undefined, circulo: Circulo): boolean {
-  return sesion?.circulos.includes(circulo.id) ?? false;
+/**
+ * Si esta persona pertenece al grupo. Sólo decide qué se OFRECE; el permiso lo decide la API.
+ *
+ * Devuelve `undefined` cuando todavía no sabemos —la sesión está cargando— para no afirmar una
+ * pertenencia que aún no se consultó. Pintar «No estás en este grupo» mientras `/auth/yo` no
+ * contestó sería un destello: cada tarjeta mentiría por un instante con la misma mentira.
+ */
+function pertenece(sesion: Sesion | undefined, circulo: Circulo): boolean | undefined {
+  return sesion?.circulos.includes(circulo.id);
 }
 
 export default function Circulos(): ReactNode {
@@ -77,9 +83,12 @@ export default function Circulos(): ReactNode {
                 <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}
               </p>
               <p className="suave">
-                {pertenece(sesion, circulo)
-                  ? 'Estás en este grupo.'
-                  : 'No estás en este grupo, así que no podés ver quiénes lo integran.'}
+                {(() => {
+                  const soy = pertenece(sesion, circulo);
+                  if (soy === undefined) return 'Todavía no sé si estás en este grupo.';
+                  if (soy) return 'Estás en este grupo.';
+                  return 'No estás en este grupo, así que no podés ver quiénes lo integran.';
+                })()}
               </p>
             </li>
           ))}
