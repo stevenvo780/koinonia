@@ -4,15 +4,42 @@ name: Mutación
 # aserciones sirven de algo. Estuvo definida y sin ejecutar desde que se escribió el documento, que
 # es la peor de las dos opciones: el umbral daba la impresión de estar vigilado y no vigilaba nada.
 #
-# ⚠ HOY ESTE TRABAJO FALLA, y falla a propósito. La puntuación real es 61,93 % contra un umbral de
-# 85 %. Bajar el umbral para poner esto en verde sería tapar exactamente el hallazgo que la
-# herramienta existe para producir; el informe subido como artefacto lleva la lista de mutantes que
-# sobreviven, que es el trabajo pendiente.
+# ⚠ ESTE TRABAJO SIGUE FALLANDO, y falla a propósito. Bajar el umbral para poner esto en verde sería
+# tapar exactamente el hallazgo que la herramienta existe para producir; el informe subido como
+# artefacto lleva la lista de mutantes que sobreviven, que es el trabajo pendiente.
+#
+# Medido sobre 4050 mutantes (2026-08-22), contra el umbral de 85 %:
+#
+#   ámbito   | antes   | ahora   | qué pasó
+#   ---------|---------|---------|------------------------------------------------------------------
+#   GLOBAL   | 62,10 % | 73,28 % |
+#   reglas   | 76,30 % | 88,44 % | **pasa el umbral**; `ballot.ts` 58,42 → 93,81
+#   tally    | 48,95 % | 65,24 % | cinco de diez escrutadores por encima del 92 %
+#   crypto   | 77,34 % | 77,34 % | sin tocar
+#
+# Dentro de `tally`, lo que ya está hecho y lo que falta:
+#
+#   supermajority.ts 19,23 → 97,44   ·   condorcet-schulze.ts 43,92  (sin tocar)
+#   simple-majority.ts 56,16 → 97,26 ·   score.ts             43,15  (sin tocar)
+#   unanimity.ts     43,40 → 94,34   ·   irv.ts               46,58  (sin tocar)
+#   common.ts        65,59 → 94,41   ·   majority-judgment.ts 49,81  (sin tocar)
+#   consent.ts       47,01 → 92,31   ·   sortition.ts         54,71  (sin tocar)
+#
+# El patrón de los cinco arreglados fue siempre el mismo y sirve de guion para los cinco que quedan:
+# los tests afirmaban sobre `outcome` y nadie miraba `steps`, `tables` ni `narrative`, que es
+# justamente lo que entra en la preimagen del `resultHash` y lo único que una asamblea lee.
+#
+# En los cinco ya trabajados, lo que sobrevive está **demostrado equivalente o inalcanzable** (guarda
+# defensiva que `normalize` ya cubre, `options[0]` que A.8.1 impide que sea `undefined`, y la rama
+# `cast` de `unanimity.ts:84`, que ningún denominador de B.4 puede alcanzar). No son deuda de prueba.
 #
 # NO se engancha a los pull requests todavía, aunque §10 lo pida («en todo PR que lo toque»). Con la
 # puntuación por debajo del umbral, un guardián en el PR bloquearía cualquier cambio en
 # `packages/domain` sin relación con el motivo del rojo. Se engancha el día que la puntuación pase
 # de 85 %, y ese día el guardián sí protege algo en vez de estorbar.
+#
+# `KOINONIA_MUTAR=reglas` **ya está por encima de 85 %**: es el primer ámbito que se puede enganchar
+# a los PR sin que estorbe, en cuanto se quiera separar el trabajo por ámbitos.
 
 on:
   schedule:
