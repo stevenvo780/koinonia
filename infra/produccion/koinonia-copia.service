@@ -1,0 +1,21 @@
+# Corre copia-de-seguridad.sh una vez. La activa koinonia-copia.timer; no hace falta
+# (ni tiene sentido) `systemctl enable` esta unidad — sólo el timer necesita
+# [Install]. Ver COPIAS.md para el despliegue completo.
+[Unit]
+Description=Copia de seguridad diaria de la base de datos de Koinonía
+Documentation=file:///opt/koinonia/infra/produccion/COPIAS.md
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Ruta de despliegue esperada en esta VPS — ver "Cómo se aplica" en COPIAS.md.
+ExecStart=/opt/koinonia/infra/produccion/copia-de-seguridad.sh
+Environment=KOINONIA_COPIA_DESTINO=/opt/koinonia/copias
+Environment=KOINONIA_COPIA_RETENCION=14
+# El disco es compartido con 66 contenedores ajenos: que el volcado no compita en
+# prioridad por CPU/IO con lo que sea que esté sirviendo en ese momento.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=600

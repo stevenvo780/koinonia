@@ -18,7 +18,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Portada } from '@koinonia/contracts';
 
 import { BarraSesion, Cargando, ErrorVisible } from '../components/marco';
-import { cerrarFrase, cuando, plazo, traer } from '../lib/api';
+import { Medidor, Meta, Tarjeta, Vacio } from '../components/piezas';
+import { cerrarFrase, cuando, fechaCortaEnFrase, plazo, traer } from '../lib/api';
 
 const EJEMPLOS: readonly string[] = [
   'La sala de estudio cierra a las 6 y los de la nocturna no tenemos dónde leer.',
@@ -35,11 +36,11 @@ export default function Inicio(): ReactNode {
   }, []);
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Koinonía</h1>
       <BarraSesion />
 
-      <p>
+      <p className="lede">
         Acá se escribe lo que está mal, se discute con plazo y se decide dejando constancia que
         cualquiera puede comprobar. No hay muro, no hay seguidores y no hay nadie decidiendo qué
         ves.
@@ -52,7 +53,35 @@ export default function Inicio(): ReactNode {
       </p>
 
       <ErrorVisible error={error} />
-      {portada === undefined && error === undefined && <Cargando que="la portada" />}
+
+      {/* Un esqueleto con la forma real —no una línea suelta— para que el pie de página no quede
+          pegado al título mientras la petición está en vuelo, ni todo el contenido se abra de
+          golpe cuando responda. */}
+      {portada === undefined && error === undefined && (
+        <>
+          <div className="aviso atencion" aria-hidden="true">
+            <div className="esqueleto-linea esqueleto-titulo" />
+            <div className="esqueleto-linea" style={{ width: '80%' }} />
+          </div>
+          <section aria-hidden="true">
+            <div
+              className="esqueleto-linea esqueleto-titulo"
+              style={{ marginTop: 'var(--e6)', width: '40%' }}
+            />
+            <ul className="tarjetas esqueleto">
+              {Array.from({ length: 3 }, (_valor, indice) => (
+                <li key={indice}>
+                  <div className="esqueleto-linea esqueleto-titulo" />
+                  <div className="esqueleto-linea" />
+                </li>
+              ))}
+            </ul>
+          </section>
+          <div className="solo-lectores">
+            <Cargando que="la portada" />
+          </div>
+        </>
+      )}
 
       {portada?.primerDia === true && (
         <section className="vacio" aria-labelledby="vacio-titulo">
@@ -100,25 +129,30 @@ export default function Inicio(): ReactNode {
           <section aria-labelledby="abiertas-titulo">
             <h2 id="abiertas-titulo">Decisiones abiertas</h2>
             {portada.decisionesAbiertas.length === 0 ? (
-              <div className="vacio">
+              <Vacio
+                titulo="No hay ninguna decisión abierta"
+                salida={{ href: '/problemas', texto: 'Ver los problemas' }}
+              >
                 <p>
-                  No hay ninguna decisión abierta.{' '}
                   <strong>Así debe ser la mayoría del tiempo:</strong> si hay más de tres por
                   semana, algo está mal en cómo estamos decidiendo.
                 </p>
-              </div>
+              </Vacio>
             ) : (
               <ul className="tarjetas">
                 {portada.decisionesAbiertas.map((decision) => (
-                  <li key={decision.id}>
-                    <h3>
-                      <Link href={`/decisiones/${decision.id}`}>{decision.titulo}</Link>
-                    </h3>
-                    <p className="suave">
-                      {plazo(decision.cierraEn)} · se manifestaron {decision.seManifestaron} de{' '}
-                      {decision.podianDecidir}
-                    </p>
-                  </li>
+                  <Tarjeta
+                    key={decision.id}
+                    titulo={decision.titulo}
+                    enlace={`/decisiones/${decision.id}`}
+                  >
+                    <Meta>{plazo(decision.cierraEn)}</Meta>
+                    <Medidor
+                      etiqueta="Se manifestaron"
+                      valor={decision.seManifestaron}
+                      total={decision.podianDecidir}
+                    />
+                  </Tarjeta>
                 ))}
               </ul>
             )}
@@ -129,12 +163,20 @@ export default function Inicio(): ReactNode {
               <h2 id="cerradas-titulo">Últimas cerradas</h2>
               <ul className="tarjetas">
                 {portada.ultimasCerradas.map((decision) => (
-                  <li key={decision.id}>
-                    <h3>
-                      <Link href={`/decisiones/${decision.id}/resultado`}>{decision.titulo}</Link>
-                    </h3>
-                    <p className="suave">{cuando(decision.cierraEn)}</p>
-                  </li>
+                  <Tarjeta
+                    key={decision.id}
+                    titulo={decision.titulo}
+                    enlace={`/decisiones/${decision.id}/resultado`}
+                  >
+                    <Meta>
+                      <time
+                        dateTime={new Date(decision.cierraEn).toISOString()}
+                        title={cuando(decision.cierraEn)}
+                      >
+                        Cerró {fechaCortaEnFrase(decision.cierraEn)}
+                      </time>
+                    </Meta>
+                  </Tarjeta>
                 ))}
               </ul>
             </section>
@@ -161,6 +203,6 @@ export default function Inicio(): ReactNode {
           </p>
         </>
       )}
-    </>
+    </div>
   );
 }

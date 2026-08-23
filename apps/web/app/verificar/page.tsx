@@ -224,11 +224,37 @@ export default function Verificar(): ReactNode {
   const fallaron = informe?.comprobaciones.filter((punto) => !punto.bien) ?? [];
 
   return (
-    <>
+    <div className="pagina-prosa">
       <h1>Comprobar que nada se cambió</h1>
 
       <ErrorVisible error={error} />
-      {informe === undefined && error === undefined && <Cargando que="la comprobación" />}
+
+      {/* Reserva la forma del veredicto y de la lista de comprobaciones que van a llegar, para que
+          el botón y el pie de página no queden pegados al título mientras la petición está en
+          vuelo. */}
+      {informe === undefined && error === undefined && (
+        <>
+          <div aria-hidden="true">
+            <div className="veredicto atencion">
+              <div className="esqueleto-linea esqueleto-titulo" style={{ width: '55%' }} />
+              <div className="esqueleto-linea" />
+              <div className="esqueleto-linea" style={{ width: '85%' }} />
+            </div>
+            <div className="esqueleto-linea" style={{ width: '70%', marginTop: 'var(--e4)' }} />
+            <ul className="tarjetas esqueleto" style={{ marginTop: 'var(--e6)' }}>
+              {Array.from({ length: 6 }, (_valor, indice) => (
+                <li key={indice}>
+                  <div className="esqueleto-linea esqueleto-titulo" />
+                  <div className="esqueleto-linea" />
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="solo-lectores">
+            <Cargando que="la comprobación" />
+          </div>
+        </>
+      )}
 
       {/*
        * El veredicto va primero y la salvedad va con él. Al revés —la promesa arriba y el «pero»
@@ -239,7 +265,7 @@ export default function Verificar(): ReactNode {
 
       {informe !== undefined && <p>{resumenDeLaRevision(informe)}</p>}
 
-      <p>
+      <p className="lede">
         Todo lo que pasa acá queda escrito en orden, y cada cosa escrita va enganchada a la
         anterior. Si alguien cambiara, borrara o moviera una sola, el enganche dejaría de cuadrar.
       </p>
@@ -340,6 +366,6 @@ export default function Verificar(): ReactNode {
           </section>
         </>
       )}
-    </>
+    </div>
   );
 }

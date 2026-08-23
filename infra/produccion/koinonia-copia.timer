@@ -1,0 +1,16 @@
+[Unit]
+Description=Corre la copia de seguridad de Koinonía una vez al día
+
+[Timer]
+# 02:45 UTC: antes de los otros respaldos ya programados en esta máquina (Demeter a
+# las 03h/15h, Cauce V3 a las 03:30h) — para no competir por IO con ellos ni con lo
+# que hagan al despertar.
+OnCalendar=*-*-* 02:45:00 UTC
+RandomizedDelaySec=300
+# Si la máquina estuvo apagada a esa hora, corre al arrancar en vez de saltarse el
+# día entero. Es la mitad de por qué existe este temporizador: que apagar la máquina
+# un rato no te cueste un día sin copia.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

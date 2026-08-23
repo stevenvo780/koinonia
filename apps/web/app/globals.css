@@ -89,14 +89,12 @@
   --e4: 1rem;
   --e5: 1.5rem;
   --e6: 2rem;
-  --e7: 3rem;
-  --e8: 4rem;
+  --e7: 3rem; /* el paso más largo con uso real: el margen sobre el pie */
 
   /* ── Radios: tres, según el tamaño de la pieza ───────────────────────────────────────── */
   --radio-1: 6px; /* campos, fichas, código */
   --radio-2: 10px; /* tarjetas, avisos, botones */
   --radio-3: 14px; /* diálogo */
-  --radio: var(--radio-2); /* alias histórico */
 
   /*
    * ── Profundidad ──────────────────────────────────────────────────────────────────────
@@ -108,21 +106,20 @@
   --sombra-3: 0 8px 40px -8px rgb(23 19 16 / 28%), 0 2px 8px rgb(23 19 16 / 10%);
 
   /*
-   * Una sola medida para las tres franjas: cabecera, contenido y pie comparten `.interior`, así
-   * que el borde izquierdo del nombre y el del `h1` caen en la misma vertical en cualquier ancho.
+   * `--medida` ya no es el ancho de la página: es la medida de LECTURA. `64ch` y no `44rem`: el
+   * material de esta plataforma es prosa argumentativa larga y la medida cómoda es de 45 a 75
+   * caracteres; en `rem` la línea crecía hasta 85-90 en escritorio. La usan `main p`, `main li`,
+   * `main dd` y `.pagina-prosa` más abajo — nunca `.interior`.
    *
-   * `64ch` y no `44rem`: el material de esta plataforma es prosa argumentativa larga y la medida
-   * cómoda es de 45 a 75 caracteres. En rem la línea crecía hasta 85-90 en escritorio.
+   * `--ancho-pagina` es el ancho de la FRANJA: cabecera, contenido y pie comparten `.interior`, así
+   * que el borde izquierdo del nombre y el del `h1` caen en la misma vertical en cualquier ancho.
+   * En 1440 px, `--medida` sola dejaba 372 px muertos por lado —`main` usaba el 48 % de la
+   * pantalla—: el índice y el detalle necesitan más aire que una columna de prosa, y `--medida`
+   * les venía impuesta sólo porque `.interior` no distinguía una cosa de la otra.
    */
   --medida: 64ch;
+  --ancho-pagina: 76rem;
   --canal: var(--e4);
-
-  /* ── Alias históricos. Cuestan diez líneas y evitan una sorpresa. ────────────────────── */
-  --fondo: var(--papel);
-  --fondo-suave: var(--papel-hondo);
-  --borde: var(--linea);
-  --borde-control: var(--linea-control);
-  --enlace: var(--acento);
 }
 
 * {
@@ -174,9 +171,129 @@ body {
 /* La franja compartida: la única regla que alinea cabecera, contenido y pie. */
 .interior {
   width: 100%;
-  max-width: var(--medida);
+  max-width: var(--ancho-pagina);
   margin-inline: auto;
   padding-inline: var(--canal);
+}
+
+/*
+ * ── Patrones de página ──────────────────────────────────────────────────────────────────
+ *
+ * Tres formas, no una. Antes `.interior` imponía `--medida` —64ch, la medida de una columna de
+ * prosa— por igual a la cabecera, a un índice de tarjetas y al pie, y por eso `main` usaba el 48 %
+ * de la pantalla en 1440 px con 372 px muertos por lado: la maqueta obligaba a un índice a vivir en
+ * el ancho de un párrafo. Ahora `.interior` da el ancho de FRANJA (`--ancho-pagina`) y cada
+ * pantalla elige, en su elemento raíz, cuál de estas tres formas necesita.
+ *
+ * Ninguna reduce `main p`, `main li`, `main dd`: esos ya están acotados a `--medida` más abajo,
+ * pasada la marca al margen, así que un párrafo suelto dentro de un índice o un detalle sigue
+ * siendo cómodo de leer aunque el contenedor sea más ancho.
+ */
+
+/*
+ * Columna de lectura: normas, verificar, entrar, problemas/nuevo, propuestas/nueva.
+ *
+ * `margin-inline: auto` la RECENTRABA dentro de `.interior`, que ya está centrado en la página con
+ * su propio relleno: una columna angosta (64ch) recentrada adentro de una franja ancha ya centrada
+ * cae con su borde izquierdo bien a la derecha del borde izquierdo de `.interior` —donde vive el
+ * logo, y donde arranca el título de cualquier otra pantalla—, así que en escritorio el formulario
+ * parecía flotar descentrado en vez de empezar donde empieza todo lo demás. Alineada a la izquierda
+ * de `.interior` en vez de recentrada, el aire sobrante queda a la derecha —donde no molesta— y el
+ * título vuelve a arrancar en la misma columna que el logo, igual que en `.pagina-indice` y
+ * `.pagina-detalle`.
+ */
+.pagina-prosa {
+  max-width: var(--medida);
+  margin-inline: 0;
+}
+
+/*
+ * Rejilla de tarjetas: problemas, decisiones, iniciativas, deliberaciones, círculos, historial,
+ * consenso, delegaciones. 1 columna por defecto —el teléfono no tiene ancho que repartir—, 2 a
+ * partir de ~48rem, 3 a partir de ~76rem. El propio `.tarjetas` es el que pasa a rejilla: la marca
+ * `.pagina-indice` sólo lo habilita, así que una pantalla que todavía no usa `.tarjetas` no gana
+ * nada por llevar esta clase y no pierde nada si la lleva antes de tener listas que anden.
+ */
+.pagina-indice :is(ul, ol).tarjetas {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--e4);
+  /*
+   * Sin esto, una fila de rejilla se estira a la altura de su tarjeta más alta —una tarjeta con un
+   * párrafo de más (p. ej. el aviso de autoría oculta en «Perspectivas») obliga a sus vecinas de
+   * fila, con la misma cantidad de contenido que las de la fila de abajo, a quedar con un tercio de
+   * su cuerpo vacío. Cada tarjeta mide lo que pide su propio contenido, no el de la fila.
+   */
+  align-items: start;
+}
+
+.pagina-indice :is(ul, ol).tarjetas > li {
+  /* La rejilla ya pone el hueco entre tarjetas: el margen de la lista en fila sobraría abajo. */
+  margin-bottom: 0;
+}
+
+@media (min-width: 48rem) {
+  .pagina-indice :is(ul, ol).tarjetas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 76rem) {
+  .pagina-indice :is(ul, ol).tarjetas {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/*
+ * Dos carriles: problemas/[id], propuestas/[id], decisiones/[id], deliberaciones/[id],
+ * iniciativas/[id], circulos/[id]. Tres hijos directos y nada más —el `h1` de la pantalla, el
+ * carril de estado (`.carril-estado`) y el cuerpo (`.cuerpo-detalle`)—, en ese orden en el marcado:
+ *
+ *   <div className="pagina-detalle">
+ *     <h1>…</h1>
+ *     <aside className="carril-estado">…</aside>
+ *     <div className="cuerpo-detalle">…</div>
+ *   </div>
+ *
+ * Por debajo de 64rem no hay regla nueva: el orden del marcado ya pone el carril debajo del título
+ * y encima del cuerpo, que es lo que se pidió —en el teléfono el estado es lo primero que se quiere
+ * saber—. A partir de 64rem, `grid-template-areas` recoloca el carril a la derecha SIN mover el
+ * marcado ni el orden de lectura de un lector de pantalla: sigue anunciando título → estado →
+ * cuerpo, que es el orden que importa, y sólo cambia dónde cae el píxel.
+ */
+@media (min-width: 64rem) {
+  .pagina-detalle {
+    display: grid;
+    grid-template-columns: minmax(0, var(--medida)) minmax(16rem, 22rem);
+    grid-template-areas: 'titulo titulo' 'cuerpo carril';
+    column-gap: var(--e6);
+    align-items: start;
+  }
+
+  .pagina-detalle > h1 {
+    grid-area: titulo;
+  }
+
+  .pagina-detalle > .cuerpo-detalle {
+    grid-area: cuerpo;
+    min-width: 0;
+  }
+
+  /*
+   * Pegajoso: el plazo y quién decide viajan con la lectura en vez de quedar arriba, fuera de
+   * vista. El filete y el relleno son la separación del carril: sin ellos no había ni borde, ni
+   * fondo, ni sombra que lo distinguiera del cuerpo, así que las dos columnas se leían como una
+   * sola caja partida al azar por el `column-gap`. Un filete de `--linea` alcanza —es la misma
+   * pieza que ya separa tablas y tarjetas en el resto del fichero— sin convertir el carril en una
+   * tarjeta propia, que sería más peso visual del que un aside de estado necesita.
+   */
+  .pagina-detalle > .carril-estado {
+    grid-area: carril;
+    position: sticky;
+    top: var(--e4);
+    border-left: 1px solid var(--linea);
+    padding-left: var(--e5);
+  }
 }
 
 /* Foco SIEMPRE visible, y con grosor suficiente para verse en una pantalla al sol. */
@@ -494,6 +611,46 @@ nav.principal .pista {
   }
 }
 
+/*
+ * En 48rem los dos grupos ya son listas en fila, pero siguen siendo dos bloques apilados —«El
+ * recorrido» arriba, «Consultar» abajo—: los 13 destinos ocupan cuatro renglones (rótulo, lista,
+ * rótulo, lista). A partir de 64rem cada `.grupo` pasa a ser una fila interna (su rótulo seguido de
+ * su lista, en un solo renglón), y ahí se acaba lo que el ancho real permite.
+ *
+ * La versión anterior de este comentario prometía que los DOS grupos iban a compartir un único
+ * renglón entre sí. Medido: no cabe. `.interior` tope en `--ancho-pagina` (76rem), así que el
+ * ancho disponible para `nav.principal` no crece más allá de eso por más ancha que sea la pantalla
+ * —y once destinos con su texto completo («El recorrido» + 5 pasos, «Consultar» + 6 destinos con
+ * su rótulo) piden bastante más que eso sin envolver. `flex-wrap` en `nav.principal` es quien
+ * decide, línea por línea, cuánto entra: hoy entran los DOS grupos en dos renglones prolijos, cada
+ * uno completo en el suyo, y es lo que se ve —no un salto roto ni una regla que no aplicó, sino la
+ * red de seguridad haciendo exactamente lo que tiene que hacer cuando el contenido no entra en una
+ * sola línea. `row-gap` (no el `margin-top` de la versión apilada de abajo de 64rem, que acá queda
+ * en 0) es lo que separa esos dos renglones.
+ */
+@media (min-width: 64rem) {
+  nav.principal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: var(--e7);
+    row-gap: var(--e2);
+  }
+
+  nav.principal .grupo {
+    display: flex;
+    align-items: baseline;
+    gap: var(--e3);
+    margin-top: 0;
+  }
+
+  nav.principal .titulo-grupo,
+  nav.principal .titulo-grupo.solo-ancho {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
 main {
   padding-block: var(--e2) var(--e6);
 }
@@ -571,14 +728,32 @@ h3 {
  * canal de 16 px que ya reserva `.interior`. Posicionado, así que no ocupa alto ni desplaza nada;
  * y acotado a los `h2` de primer nivel para que no aparezca dentro de las tarjetas y los avisos,
  * donde sería ruido.
+ *
+ * La intención era ésa, pero el selector no la cumplía: tres de las cuatro cajas de estado vacío
+ * son `<section className="vacio">` colgando directo de `main`, con su propio `h2` adentro —el
+ * único modo de anunciar el título del estado vacío sin un `aria-labelledby` que apunte a nada—, así
+ * que `main > section > h2` las alcanzaba igual que a cualquier título de verdad. El `:not()` es la
+ * lista completa de cajas que no son «un encabezado de sección»: vacía, aviso o índice de tarjetas.
+ *
+ * El combinador `>` entre `main` y `section` se rompió cuando cada pantalla pasó a envolver su
+ * contenido en un `<div className="pagina-indice|prosa|detalle">`: ese `div` se metió entre `main`
+ * y la `section`, y «hijo directo» dejó de ser cierto en TODA la aplicación. La marca desapareció
+ * por completo.
+ *
+ * Acá va sin `>` después de `main` —descendiente, a cualquier profundidad— para que el próximo
+ * envoltorio que alguien meta (otro `div`, un `Suspense`, lo que sea) no vuelva a romperla. Se cae
+ * a propósito la vieja rama `main > h2` (un `h2` colgando de `main` sin ninguna `section` en
+ * medio): ensancharla del mismo modo la habría vuelto `main h2` sin ningún `:not()` que la frene,
+ * y eso sí pondría la marca en cualquier `h2` de la página —el de un `<div className="vacio">`
+ * incluido—, que es exactamente el ruido que este selector existe para evitar. La única rama que
+ * queda sigue exigiendo que el `h2` sea hijo DIRECTO de una `section` de verdad: lo que cambia es
+ * sólo cuántos `div` puede haber entre esa `section` y `main`, no qué `section` cuenta.
  */
-main > h2,
-main > section > h2 {
+main section:not(.vacio, .aviso, .tarjetas) > h2 {
   position: relative;
 }
 
-main > h2::before,
-main > section > h2::before {
+main section:not(.vacio, .aviso, .tarjetas) > h2::before {
   content: '';
   position: absolute;
   left: -0.75rem;
@@ -597,12 +772,17 @@ main dd {
 }
 
 /*
- * **CLASE NUEVA — `.lede`.** El párrafo de entrada de una pantalla: un punto más grande, algo más
- * suelto de interlineado y en tinta suave. Es el peldaño que falta entre el `h1` y la prosa.
+ * **CLASE `.lede`.** El párrafo de entrada de una pantalla: un punto más grande, algo más suelto de
+ * interlineado y en tinta suave. Es el peldaño que falta entre el `h1` y la prosa.
  *
- * Dónde aplicarla (no la aplico yo: `app/*​/page.tsx` está fuera de mi lista):
+ * Sigue sin aplicarse: `app/*​/page.tsx` está fuera de la lista de esta fase, verificado de nuevo
+ * ahora que la maqueta cambió. Los cinco sitios exactos, confirmados contra el código actual:
  *   · `app/page.tsx` → el `<p>` que empieza «Acá se escribe lo que está mal…».
- *   · el primer `<p>` explicativo de `/problemas`, `/normas`, `/verificar` y `/circulos`.
+ *   · `app/problemas/page.tsx` → `<p>Lo que está mal y todavía no tiene solución propuesta.</p>`.
+ *   · `app/normas/page.tsx` → `<p>{normas.descripcion}</p>` (el texto lo manda la API).
+ *   · `app/circulos/page.tsx` → el `<p>` que empieza «Koinonía no es una asamblea permanente…».
+ *   · `app/verificar/page.tsx` → el `<p>` fijo que empieza «Todo lo que pasa acá queda escrito en
+ *     orden…» (va después del veredicto, que ya tiene su propio tratamiento visual y no es prosa).
  */
 .lede {
   font-size: clamp(1.1875rem, 1.11rem + 0.34vw, 1.375rem);
@@ -818,7 +998,13 @@ details {
 
 summary {
   display: flex;
-  align-items: center;
+  /*
+   * `flex-start`, no `center`: cuando el texto no entra en una línea (pasa en el teléfono, en
+   * `/verificar`), `summary` mide el doble de alto y `center` deja el triángulo flotando a media
+   * altura, entre las dos líneas, sin pegarse a ninguna. Anclado arriba se queda pegado a la
+   * primera línea siempre, envuelva el texto o no.
+   */
+  align-items: flex-start;
   gap: var(--e2);
   min-height: 44px;
   padding-block: var(--e2);
@@ -853,6 +1039,22 @@ summary::before {
 details[open] > summary::before {
   content: '\25BE';
   content: '\25BE' / '';
+}
+
+/*
+ * `.de-donde-sale`. Un `<details>` de procedencia —«¿de dónde salen estos grupos?», en
+ * `app/consenso/page.tsx`— y no un plegable de contenido: no esconde el cuerpo de la pantalla como
+ * el de `/verificar`, sólo ofrece la nota al pie de quien quiere comprobar de dónde sale un número.
+ * El filete arriba y el tamaño menor lo separan de la prosa como lo que es, una nota y no el
+ * párrafo siguiente; `summary` conserva su propio tamaño y sus 44 px, que no son negociables por
+ * estar dentro de una nota más chica.
+ */
+.de-donde-sale {
+  margin-top: var(--e5);
+  padding-top: var(--e3);
+  border-top: 1px solid var(--linea);
+  font-size: 0.9375rem;
+  color: var(--tinta-suave);
 }
 
 /* ── Avisos ──────────────────────────────────────────────────────────────────────────────── */
@@ -944,14 +1146,20 @@ details[open] > summary::before {
  * La tarjeta tiene presencia: papel blanco sobre papel cálido, filete de 1 px y una sombra corta.
  * Tres señales de que es una pieza y no un párrafo con borde. Al pasar por encima la sombra se
  * abre y el filete se tiñe: responde sin moverse de sitio.
+ *
+ * `:is(ul, ol)` y no `ul`: el recorrido de aportes de una deliberación es un `<ol>` a propósito
+ * —los aportes tienen un orden real— y con el selector acotado a `ul` salía como lista numerada
+ * cruda del navegador, con 40 px de sangría y la numeración decimal encima de los signos ✓/▸/·
+ * que ya pone el componente. La clase dice «esto es una tarjeta»; la etiqueta del elemento dice si
+ * ese conjunto tiene un orden que importa, y las dos cosas son ortogonales.
  */
-ul.tarjetas {
+:is(ul, ol).tarjetas {
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
-ul.tarjetas > li {
+:is(ul, ol).tarjetas > li {
   border: 1px solid var(--linea);
   border-radius: var(--radio-2);
   padding: var(--e4);
@@ -963,24 +1171,74 @@ ul.tarjetas > li {
     border-color 0.15s ease;
 }
 
-ul.tarjetas > li:hover {
+:is(ul, ol).tarjetas > li:hover {
   border-color: var(--linea-fuerte);
   box-shadow: var(--sombra-2);
 }
 
-ul.tarjetas h3 {
+/*
+ * El reinicio alcanzaba sólo a `h3`, pero el título de una tarjeta es `h2` en cuatro listados —los
+ * que ponen `<ul className="tarjetas">` directo bajo el `h1`, sin una `<section>` intermedia con su
+ * propio `h2`; ver la nota de `<Tarjeta>` en `components/piezas.tsx` sobre por qué esos cuatro
+ * necesitan ganar esa `<section>` el día que adopten el componente— y sin este reinicio esos cuatro
+ * cargaban el margen superior del `h2` de cuerpo (`var(--e6)`, 2rem) mientras los que usan `h3`
+ * cargaban el suyo (`var(--e5)`, 1.5rem pero con el reinicio puesto). Resultado medido: la misma
+ * pieza medía 221 px o 130 px según qué encabezado tuviera la pantalla
+ * al lado. El primer hijo de una tarjeta —sea cual sea— es su borde superior, no una continuación
+ * de prosa, y no debería cargar margen nunca.
+ */
+:is(ul, ol).tarjetas > li > :first-child {
   margin-top: 0;
 }
 
-ul.tarjetas h3 a {
+:is(ul, ol).tarjetas :is(h2, h3, h4) a {
   text-decoration-color: var(--linea-fuerte);
 }
 
-ul.tarjetas h3 a:hover {
+:is(ul, ol).tarjetas :is(h2, h3, h4) a:hover {
   text-decoration-color: currentcolor;
 }
 
-/* La ficha: acento tenue con letra de acento. 8.10:1. */
+/*
+ * ── El recorrido de fases ────────────────────────────────────────────────────────────────
+ *
+ * `Pasos`, en `components/marco.tsx`, usaba `ol.tarjetas` porque no tenía otra clase a mano, y
+ * heredaba la caja de una tarjeta —sombra, filete que se tiñe al pasar el mouse, `:hover`— que no
+ * le pertenece a un indicador de progreso: un paso no es un ítem de índice, es un tramo de un
+ * único recorrido. Acá el conjunto entero es una sola pieza (un borde, una sombra) y cada paso es
+ * una fila separada por un filete interior; el paso actual se marca con el fondo de acento tenue,
+ * de modo que la marca no depende sólo de la negrita que ya pone el componente en el texto.
+ */
+.pasos {
+  list-style: none;
+  margin: var(--e4) 0 var(--e5);
+  padding: 0;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
+  overflow: hidden;
+}
+
+.pasos > li {
+  padding: var(--e3) var(--e4);
+}
+
+.pasos > li + li {
+  border-top: 1px solid var(--linea);
+}
+
+.pasos > li[aria-current='step'] {
+  background: var(--acento-tenue);
+}
+
+/*
+ * La etiqueta: acento tenue con letra de acento. 8.10:1. Un rótulo de contexto sin tono
+ * semántico —quién escribió esto, en qué grupo quedaste, qué opción es la vigente—, no un estado.
+ * Para un estado con tono («Cerrada», «Te toca», «En deliberación») está `.ficha`, más abajo: esa
+ * sí lleva símbolo además de color, porque un estado tiene que poder leerse sin distinguir colores
+ * y sin depender sólo de la palabra —el símbolo es la tercera señal, no un adorno.
+ */
 .etiqueta {
   display: inline-block;
   border: 1px solid var(--acento-tenue);
@@ -994,6 +1252,224 @@ ul.tarjetas h3 a:hover {
 }
 
 /*
+ * ── `.ficha` ─────────────────────────────────────────────────────────────────────────────
+ *
+ * La ficha de estado del componente `<Ficha>` (`components/piezas.tsx`): símbolo + palabra + color,
+ * nunca color solo. La forma es la misma píldora que `.etiqueta` —mismo radio, mismo relleno— para
+ * que las dos se lean como parientes; lo que cambia es que acá el color SÍ dice algo (bien, mal,
+ * atención, en curso) y por eso va siempre acompañado del signo que pone `<Ficha>` en un `<span
+ * aria-hidden>`. `.ficha.neutra` es idéntica a la base: existe para que el componente pueda escribir
+ * siempre una variante sin tener que omitirla en el caso neutro.
+ */
+.ficha {
+  display: inline-flex;
+  align-items: center;
+  /*
+   * El espacio entre el símbolo y la palabra vive acá, no como un carácter suelto dentro del
+   * `<span aria-hidden>` del símbolo: en un contenedor `inline-flex` ese `<span>` es un ítem propio,
+   * y el espacio en blanco al final de un ítem se recorta igual que al final de cualquier línea —el
+   * texto quedaba pegado, «▸Recogiendo evidencia». `gap` no depende de que sobreviva un carácter
+   * invisible en el marcado.
+   */
+  gap: 0.35em;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: var(--papel-hondo);
+  color: var(--tinta-suave);
+}
+
+.ficha.neutra {
+  background: var(--papel-hondo);
+  border-color: var(--linea-fuerte);
+  color: var(--tinta-suave);
+}
+
+.ficha.bien {
+  background: var(--bien-fondo);
+  border-color: var(--bien-fondo);
+  color: var(--bien);
+}
+
+.ficha.mal {
+  background: var(--mal-fondo);
+  border-color: var(--mal-fondo);
+  color: var(--mal);
+}
+
+.ficha.atencion {
+  background: var(--aviso-fondo);
+  border-color: var(--atencion-borde);
+  color: var(--atencion);
+}
+
+.ficha.en-curso {
+  background: var(--acento-tenue);
+  border-color: var(--acento-tenue);
+  color: var(--acento);
+}
+
+/*
+ * ── `.meta` ──────────────────────────────────────────────────────────────────────────────
+ *
+ * La fila de metadatos del componente `<Meta>`: hoy se escribía a mano como `<p className="suave">
+ * {a} · {b}</p>`, con el punto tecleado entre medias. Ese punto suelto es el que queda huérfano al
+ * final de una línea cuando el texto envuelve en el teléfono. Acá el separador es un `::before` que
+ * vive DENTRO del trozo que sigue, así que si un trozo pasa a la línea siguiente el punto viaja con
+ * él —nunca se queda solo cerrando la línea de arriba.
+ */
+.meta {
+  color: var(--tinta-suave);
+  margin: var(--e2) 0;
+}
+
+.meta-trozo:not(:first-child)::before {
+  content: '\00b7';
+  color: var(--linea-fuerte);
+  margin-inline: var(--e2);
+}
+
+/*
+ * ── `.plazo` ─────────────────────────────────────────────────────────────────────────────
+ *
+ * El plazo del componente `<Plazo>`: número grande y unidad debajo, como una cifra que se destaca
+ * y no como una frase que hay que leer entera para saber si urge. El texto corrido —«Cierra en 3
+ * días»— sigue existiendo, pero sólo para lectores de pantalla (`.solo-lectores`); lo que ve quien
+ * mira es el número. `.urgente` recalienta a tono atención cuando falta menos de un día: es la
+ * única pieza de esta clase que cambia de color con el tiempo, y por eso el color nunca es la única
+ * señal —la palabra «urgente» no aparece en pantalla, pero el cambio de tono siempre acompaña a un
+ * número que ya dice «horas» o «minutos» en vez de «días».
+ */
+.plazo {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.05;
+  margin: 0;
+}
+
+.plazo-numero {
+  font-size: clamp(1.75rem, 1.55rem + 0.9vw, 2.25rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  color: var(--tinta);
+}
+
+.plazo-unidad {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+.plazo.urgente .plazo-numero,
+.plazo.urgente .plazo-unidad {
+  color: var(--atencion);
+}
+
+.plazo.cerrado .plazo-numero,
+.plazo.cerrado .plazo-unidad {
+  color: var(--tinta-suave);
+}
+
+/*
+ * ── `.medidor` ───────────────────────────────────────────────────────────────────────────
+ *
+ * La barra de participación del componente `<Medidor>`. No hay ni un `<meter>` ni una barra en
+ * las 23 pantallas hoy: «se manifestaron 8 de 12» es sólo texto. Ojo con lo que mide: es la
+ * participación de una decisión colectiva («cuántos de los que podían decidir ya se manifestaron»),
+ * nunca la actividad de una persona —ADR-0040 prohíbe esa segunda cosa incluso como adorno—. El
+ * número va siempre en texto, `role="progressbar"` lleva los tres `aria-value*`, y la barra en sí
+ * es decorativa (`aria-hidden`) porque el `role` ya está en su contenedor.
+ */
+.medidor {
+  margin: var(--e3) 0;
+}
+
+.medidor-cifra {
+  margin: 0 0 var(--e1);
+  color: var(--tinta-suave);
+}
+
+.medidor-cifra strong {
+  color: var(--tinta);
+}
+
+.medidor-barra {
+  height: var(--e2);
+  border: 1px solid var(--linea);
+  border-radius: 999px;
+  background: var(--papel-hondo);
+  overflow: hidden;
+}
+
+.medidor-relleno {
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--acento);
+}
+
+/*
+ * ── `.esqueleto` ─────────────────────────────────────────────────────────────────────────
+ *
+ * El estado de carga del componente `<Esqueleto>`. Comparte la clase `.tarjetas` a propósito: así
+ * cada placeholder mide exactamente el borde, el radio y el relleno de la tarjeta real, y el
+ * contenido no salta ni empuja la página cuando la API contesta. `centelleo` es la única animación
+ * nueva del fichero, y como toda animación de este proyecto queda anulada por la regla global de
+ * `prefers-reduced-motion` del principio del fichero.
+ */
+.tarjetas.esqueleto > li {
+  cursor: default;
+}
+
+.tarjetas.esqueleto > li:hover {
+  border-color: var(--linea);
+  box-shadow: var(--sombra-1);
+}
+
+.esqueleto-linea {
+  height: 0.9em;
+  margin-top: var(--e2);
+  border-radius: var(--radio-1);
+  background: linear-gradient(
+    90deg,
+    var(--papel-hondo) 25%,
+    var(--linea) 50%,
+    var(--papel-hondo) 75%
+  );
+  background-size: 200% 100%;
+  animation: centelleo 1.6s ease-in-out infinite;
+}
+
+.esqueleto-titulo {
+  width: 55%;
+  height: 1.1em;
+  margin-top: 0;
+}
+
+/* Imita la forma de `.ficha`: misma altura aproximada, misma píldora, no una línea recta más. */
+.esqueleto-pildora {
+  width: 30%;
+  height: 1.4em;
+  border-radius: 999px;
+}
+
+@keyframes centelleo {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/*
  * El estado vacío. La trama diagonal del rail izquierdo se dibuja con un `repeating-linear-gradient`
  * —cero bytes de red— y dice «acá todavía no hay nada» sin el borde discontinuo de toda la caja,
  * que es lo que hacía que un estado vacío pareciera un error de maquetación. La trama va detrás
@@ -1002,6 +1478,14 @@ ul.tarjetas h3 a:hover {
 .vacio {
   position: relative;
   overflow: hidden;
+  /*
+   * `.vacio` es prosa —título, un par de párrafos, una salida—, así que no necesita más ancho que
+   * el de lectura. Sin este tope hereda el ancho completo de `.pagina-indice`/`.interior`: en
+   * escritorio el texto queda acotado a `--medida` por la regla de `main p` más abajo, pero la CAJA
+   * no, y sobra casi la mitad de su ancho como franja muerta a la derecha del texto. El cálculo es
+   * la medida de lectura más el relleno de los dos lados y el rail de 6 px del `::before`.
+   */
+  max-width: calc(var(--medida) + var(--e5) * 2 + 6px);
   border: 1px solid var(--linea-fuerte);
   border-radius: var(--radio-2);
   padding: var(--e5);
@@ -1200,7 +1684,16 @@ ol.traza li {
   overflow-wrap: normal;
 }
 
-/* La franja de aviso: se desplaza de lado. Con palabra y signo, nunca con una sombra sola. */
+/*
+ * La franja de aviso: se desplaza de lado. Con palabra y signo en el propio texto —«➜ Desplazá
+ * para ver toda la tabla», por ejemplo—, nunca con una sombra sola de borde, que no dice nada a
+ * quien no ve bien el contraste.
+ *
+ * Definida y sin ningún consumidor todavía: el único `.tabla-desplazable` de las 23 pantallas está
+ * en `app/decisiones/[id]/resultado/page.tsx` (la tabla de una votación cerrada, con `role="region"`
+ * y `tabIndex={0}`) y ese fichero no es mío. Un `<p className="pista-tabla">` inmediatamente antes
+ * de cada `<div className="tabla-desplazable">` de esa pantalla es todo lo que falta.
+ */
 .pista-tabla {
   color: var(--tinta-suave);
   font-size: 0.875rem;
@@ -1387,6 +1880,27 @@ code.comprobante {
 
 .cargando {
   color: var(--tinta-suave);
+}
+
+/*
+ * `<Cargando completa>` es la variante que reemplaza la pantalla ENTERA mientras se resuelve el
+ * primer pedido —no hay ninguna tarjeta, ningún esqueleto, sólo esta línea sola— y sin alto propio
+ * no reserva nada: el pie de página queda pegado casi debajo del título, y cuando la API contesta
+ * todo lo de abajo aparece de golpe y empuja el pie cientos de píxeles hacia abajo. Un salto así,
+ * en el peor momento (justo cuando la persona toca algo que estaba visible mientras cargaba), hace
+ * que el toque caiga en otro elemento.
+ *
+ * Es una clase aparte y no el `min-height` de `.cargando` a secas porque `<Cargando>` también se
+ * usa suelto DENTRO de una pantalla ya montada —el placeholder de un `<select>` mientras llega su
+ * lista de opciones, por ejemplo—, y ahí reservar medio alto de pantalla sería un hueco absurdo
+ * donde debía ir un campo de 44 px. `min-height` no puede adivinar cuánto va a medir el contenido
+ * real de cada pantalla —desde una portada corta hasta el reglamento entero de `/normas`— así que
+ * esto no elimina el salto en la pantalla más larga, pero sí lo acota en las demás y evita el caso
+ * peor, el de una página que mide casi nada mientras carga. El `min()` limita el reclamo en
+ * pantallas altas, donde no hace falta tanto.
+ */
+.cargando.cargando-completa {
+  min-height: min(50vh, 22rem);
 }
 
 /* ── Organización inicial del trabajo ───────────────────────────────────────────────────── */

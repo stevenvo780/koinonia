@@ -70,7 +70,7 @@ export default function Entrar(): ReactNode {
   }
 
   return (
-    <>
+    <div className="pagina-prosa">
       <h1>Entrar</h1>
       <p>
         Te mandamos un enlace al correo institucional. No hay contraseña que recordar ni que perder.
@@ -160,6 +160,6 @@ export default function Entrar(): ReactNode {
         ¿Sólo querés mirar? Lo público se lee sin cuenta:{' '}
         <Link href="/problemas">ver los problemas</Link>.
       </p>
-    </>
+    </div>
   );
 }

@@ -20,8 +20,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import type { Historial } from '@koinonia/contracts';
 
-import { Cargando, ErrorVisible } from '../../components/marco';
-import { cerrarFrase, cuando, traer } from '../../lib/api';
+import { ErrorVisible } from '../../components/marco';
+import { Esqueleto, Meta, Tarjeta } from '../../components/piezas';
+import { cerrarFrase, cuando, fechaCorta, traer } from '../../lib/api';
 
 export default function HistorialPantalla(): ReactNode {
   const [historial, setHistorial] = useState<Historial | undefined>(undefined);
@@ -32,7 +33,7 @@ export default function HistorialPantalla(): ReactNode {
   }, []);
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Todo lo que quedó escrito</h1>
       <p>
         Acá está, en orden, cada cosa que pasó en Koinonía. Nada se borra y nada se corrige por
@@ -55,7 +56,7 @@ export default function HistorialPantalla(): ReactNode {
       </div>
 
       <ErrorVisible error={error} />
-      {historial === undefined && error === undefined && <Cargando que="el historial" />}
+      {historial === undefined && error === undefined && <Esqueleto que="el historial" />}
 
       {historial !== undefined && historial.total === 0 && (
         <div className="vacio" role="status">
@@ -87,21 +88,37 @@ export default function HistorialPantalla(): ReactNode {
             tiene la autoría oculta, decirlo acá la destaparía por el costado.
           </p>
 
-          <ol>
-            {historial.hechos.map((hecho) => (
-              <li key={hecho.numero}>
-                <h3>
-                  {hecho.enlace === undefined ? (
-                    hecho.que
-                  ) : (
-                    <Link href={hecho.enlace}>{hecho.que}</Link>
-                  )}
-                </h3>
-                <p className="suave">
-                  {hecho.sobre} · {cuando(hecho.cuando)} · número {hecho.numero}
-                </p>
-              </li>
-            ))}
+          <ol className="tarjetas">
+            {historial.hechos.map((hecho) =>
+              hecho.enlace === undefined ? (
+                <li key={hecho.numero}>
+                  <h3>{hecho.que}</h3>
+                  <Meta>
+                    {hecho.sobre}
+                    <time
+                      dateTime={new Date(hecho.cuando).toISOString()}
+                      title={cuando(hecho.cuando)}
+                    >
+                      {fechaCorta(hecho.cuando)}
+                    </time>
+                    {`número ${String(hecho.numero)}`}
+                  </Meta>
+                </li>
+              ) : (
+                <Tarjeta key={hecho.numero} titulo={hecho.que} enlace={hecho.enlace}>
+                  <Meta>
+                    {hecho.sobre}
+                    <time
+                      dateTime={new Date(hecho.cuando).toISOString()}
+                      title={cuando(hecho.cuando)}
+                    >
+                      {fechaCorta(hecho.cuando)}
+                    </time>
+                    {`número ${String(hecho.numero)}`}
+                  </Meta>
+                </Tarjeta>
+              ),
+            )}
           </ol>
 
           {historial.hayMas && (
@@ -113,6 +130,6 @@ export default function HistorialPantalla(): ReactNode {
           )}
         </section>
       )}
-    </>
+    </div>
   );
 }

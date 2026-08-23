@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState, type SyntheticEvent, type ReactNode }
 import type { PropuestaDetalle } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
+import { Ficha, Meta } from '../../../components/piezas';
 import {
   PlanEjecucionFormulario,
   PlanEjecucionVisible,
@@ -109,214 +110,258 @@ export default function DetallePropuesta(): ReactNode {
     else if (resultado.estado === 'fallo') setErrorAbrir(resultado.error);
   }
 
-  if (error !== undefined) return <ErrorVisible error={error} />;
-  if (propuesta === undefined) return <Cargando que="la propuesta" />;
+  // Mismo callejón que en el detalle de un problema o de una decisión: el aviso solo, sin
+  // reintento ni vuelta, dejaba a quien usa un lector de pantalla sin ningún encabezado que
+  // anunciar y sin más camino que recargar la pestaña entera.
+  if (error !== undefined) {
+    return (
+      <div className="pagina-prosa">
+        <h1>No pudimos abrir esta propuesta</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button className="boton" type="button" onClick={recargar}>
+            Volver a intentar
+          </button>
+        </p>
+      </div>
+    );
+  }
+  if (propuesta === undefined) {
+    return (
+      <div className="pagina-prosa">
+        <Cargando que="la propuesta" />
+      </div>
+    );
+  }
 
   const versionesAlReves = [...propuesta.versiones].reverse();
+  const hayVotacion = propuesta.decisiones.length > 0;
 
   return (
-    <>
-      {/* El problema de origen, arriba: no se lee una propuesta sin ver a qué responde. */}
-      <p className="suave">
-        Responde a:{' '}
-        <Link href={`/problemas/${propuesta.problemaId}`}>{propuesta.problemaTitulo}</Link>
-      </p>
-
+    <div className="pagina-detalle">
       <h1>{propuesta.titulo}</h1>
-      <p className="suave">
-        Va por la versión {propuesta.versionVigente}.{' '}
-        {propuesta.versionVigente > 1 &&
-          'Las versiones anteriores siguen abajo, tal como estaban: enmendar agrega, no borra.'}
-      </p>
 
-      <ErrorVisible error={errorEnmienda} />
+      {/*
+       * El carril de estado: en qué versión va y qué se puede hacer con ella —ir a la votación
+       * que ya está en curso, o abrirla si es quien cuida el procedimiento y todavía no hay
+       * ninguna—. El texto que se propone y su historial son lectura, y se quedan en el cuerpo.
+       */}
+      <aside className="carril-estado" aria-label="Estado de la propuesta">
+        <Ficha variante={hayVotacion ? 'en-curso' : 'neutra'}>
+          {hayVotacion ? 'En votación' : 'Sin votación abierta'}
+        </Ficha>
+        <Meta>{`Versión ${String(propuesta.versionVigente)}`}</Meta>
 
-      {propuesta.decisiones.length > 0 && (
-        <Aviso tipo="atencion" titulo="Hay una votación sobre esta propuesta">
-          {propuesta.decisiones.map((decision) => (
-            <span key={decision.decisionId}>
-              <Link href={`/decisiones/${decision.decisionId}`}>Ir a la votación</Link>{' '}
-            </span>
-          ))}
-        </Aviso>
-      )}
-
-      {sesion?.roles.includes('facilitator') && propuesta.decisiones.length === 0 && (
-        <section aria-labelledby="abrir-decision-titulo">
-          <h2 id="abrir-decision-titulo">Abrir una decisión</h2>
-          <p className="suave">
-            Antes de abrirla, verificá que el texto y el plan de abajo son los que la comunidad va a
-            considerar. Al abrirla no se cambian después.
-          </p>
-          <ErrorVisible error={errorAbrir} />
-          <form onSubmit={(evento) => void abrirDecision(evento)}>
-            <div className="campo">
-              <label htmlFor="metodo-decision">¿Cómo se toma esta decisión?</label>
-              <select
-                id="metodo-decision"
-                value={metodo}
-                onChange={(evento) => {
-                  setMetodo(evento.target.value as 'simple-majority' | 'sociocratic-consent');
-                }}
+        {hayVotacion && (
+          <p>
+            {propuesta.decisiones.map((decision) => (
+              <Link
+                key={decision.decisionId}
+                className="boton"
+                href={`/decisiones/${decision.decisionId}`}
               >
-                <option value="simple-majority">Mayoría simple</option>
-                <option value="sociocratic-consent">Sin objeciones que muestren un daño</option>
-              </select>
-            </div>
-            <div className="campo">
-              <label htmlFor="duracion-decision">¿Cuánto tiempo hay para responder?</label>
-              <span className="ayuda" id="ayuda-duracion-decision">
-                Entre 1 hora y 30 días. Elegí tiempo suficiente para leer y responder sin una
-                reunión.
-              </span>
-              <input
-                id="duracion-decision"
-                type="number"
-                required
-                min={1}
-                max={720}
-                inputMode="numeric"
-                aria-describedby="ayuda-duracion-decision"
-                value={duracionHoras}
-                onChange={(evento) => {
-                  setDuracionHoras(evento.target.value);
-                }}
-              />
-            </div>
-            <button className="boton" type="submit" disabled={enCurso !== undefined}>
-              {enCurso === 'abrir-decision' ? 'Abriendo…' : 'Abrir la decisión'}
-            </button>
-          </form>
-        </section>
-      )}
+                Ir a la votación
+              </Link>
+            ))}
+          </p>
+        )}
 
-      <section aria-labelledby="versiones-titulo">
-        <h2 id="versiones-titulo">Historial de versiones</h2>
-
-        {versionesAlReves.map((version) => {
-          const esVigente = version.version === propuesta.versionVigente;
-          return (
-            <article
-              className={`version${esVigente ? ' vigente' : ''}`}
-              key={version.version}
-              aria-labelledby={`v-${String(version.version)}`}
-            >
-              <h3 id={`v-${String(version.version)}`}>
-                Versión {version.version}
-                {esVigente ? ' · la que está sobre la mesa' : ' · anterior, y sigue acá entera'}
-              </h3>
-              <p className="suave">Escrita el {cuando(version.cuando)}</p>
-              {version.motivo !== undefined && (
-                <p>
-                  <strong>Qué cambió y por qué:</strong> {version.motivo}
-                </p>
-              )}
-              <p className="texto">{version.cuerpo}</p>
-              <PlanEjecucionVisible
-                plan={version.plan}
-                titulo="Qué pasa si se aprueba esta versión"
-                nivel="h4"
-              />
-              <details>
-                <summary>Ver el comprobante de esta versión</summary>
-                <p className="suave">
-                  Este número identifica <em>exactamente</em> este texto y el plan que lo acompaña.
-                  Si alguien cambiara una coma, una fecha o un criterio, el número cambiaría y la
-                  pantalla de <Link href="/verificar">Verificar</Link> lo diría en rojo.
-                </p>
-                <code className="comprobante">{version.huella}</code>
-              </details>
-            </article>
-          );
-        })}
-      </section>
-
-      {sesion !== undefined && (
-        <section aria-labelledby="enmendar-titulo">
-          <h2 id="enmendar-titulo">Proponer una enmienda</h2>
-          {propuesta.esMia ? (
-            enmendando ? (
-              <form onSubmit={(e) => void guardarEnmienda(e)}>
-                <div className="campo">
-                  <label htmlFor="titulo-enmienda">Título</label>
-                  <input
-                    id="titulo-enmienda"
-                    type="text"
-                    required
-                    minLength={10}
-                    maxLength={140}
-                    value={titulo}
-                    onChange={(e) => {
-                      setTitulo(e.target.value);
-                    }}
-                  />
-                </div>
-                <div className="campo">
-                  <label htmlFor="cuerpo-enmienda">Texto de la propuesta</label>
-                  <span className="ayuda" id="ayuda-cuerpo-enmienda">
-                    La versión anterior no se toca: esto crea la siguiente.
-                  </span>
-                  <textarea
-                    id="cuerpo-enmienda"
-                    required
-                    minLength={50}
-                    maxLength={4000}
-                    aria-describedby="ayuda-cuerpo-enmienda"
-                    value={cuerpo}
-                    onChange={(e) => {
-                      setCuerpo(e.target.value);
-                    }}
-                  />
-                </div>
-                <div className="campo">
-                  <label htmlFor="motivo-enmienda">¿Qué cambia y por qué?</label>
-                  <span className="ayuda" id="ayuda-motivo">
-                    Mínimo 20 caracteres. Sin esto, «versión 2» es un número sin información.
-                  </span>
-                  <textarea
-                    id="motivo-enmienda"
-                    required
-                    minLength={20}
-                    maxLength={1000}
-                    aria-describedby="ayuda-motivo"
-                    value={motivo}
-                    onChange={(e) => {
-                      setMotivo(e.target.value);
-                    }}
-                  />
-                </div>
-                <PlanEjecucionFormulario value={plan} onChange={setPlan} prefijo="plan-enmienda" />
-                <button className="boton" type="submit" disabled={enCurso !== undefined}>
-                  {enCurso === 'enmendar' ? 'Guardando…' : 'Guardar la versión nueva'}
-                </button>{' '}
-                <button
-                  className="boton secundario"
-                  type="button"
-                  disabled={enCurso !== undefined}
-                  onClick={() => {
-                    setEnmendando(false);
+        {sesion?.roles.includes('facilitator') && !hayVotacion && (
+          <div>
+            <p className="suave">
+              Antes de abrirla, verificá que el texto y el plan de abajo son los que la comunidad va
+              a considerar. Al abrirla no se cambian después.
+            </p>
+            <ErrorVisible error={errorAbrir} />
+            <form onSubmit={(evento) => void abrirDecision(evento)}>
+              <div className="campo">
+                <label htmlFor="metodo-decision">¿Cómo se toma esta decisión?</label>
+                <select
+                  id="metodo-decision"
+                  value={metodo}
+                  onChange={(evento) => {
+                    setMetodo(evento.target.value as 'simple-majority' | 'sociocratic-consent');
                   }}
                 >
-                  Dejarlo así
-                </button>
-              </form>
-            ) : (
-              <button className="boton" type="button" onClick={abrirEnmienda}>
-                Enmendar mi propuesta
+                  <option value="simple-majority">Mayoría simple</option>
+                  <option value="sociocratic-consent">Sin objeciones que muestren un daño</option>
+                </select>
+              </div>
+              <div className="campo">
+                <label htmlFor="duracion-decision">¿Cuánto tiempo hay para responder?</label>
+                <span className="ayuda" id="ayuda-duracion-decision">
+                  Entre 1 hora y 30 días. Elegí tiempo suficiente para leer y responder sin una
+                  reunión.
+                </span>
+                <input
+                  id="duracion-decision"
+                  type="number"
+                  required
+                  min={1}
+                  max={720}
+                  inputMode="numeric"
+                  aria-describedby="ayuda-duracion-decision"
+                  value={duracionHoras}
+                  onChange={(evento) => {
+                    setDuracionHoras(evento.target.value);
+                  }}
+                />
+              </div>
+              <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                {enCurso === 'abrir-decision' ? 'Abriendo…' : 'Abrir la decisión'}
               </button>
-            )
-          ) : (
-            <Aviso tipo="atencion" titulo="Esta propuesta la escribió otra persona">
-              Sólo quien la escribió puede cambiar su texto. Vos podés escribir otra propuesta al
-              mismo problema, que queda con tu nombre y su propio historial.{' '}
-              <Link href={`/propuestas/nueva?problema=${propuesta.problemaId}`}>
-                Escribir otra propuesta
-              </Link>
-              .
-            </Aviso>
+            </form>
+          </div>
+        )}
+      </aside>
+
+      <div className="cuerpo-detalle">
+        {/* El problema de origen, arriba del cuerpo: no se lee una propuesta sin ver a qué responde. */}
+        <p className="suave">
+          Responde a:{' '}
+          <Link href={`/problemas/${propuesta.problemaId}`}>{propuesta.problemaTitulo}</Link>
+        </p>
+
+        <ErrorVisible error={errorEnmienda} />
+
+        <section aria-labelledby="versiones-titulo">
+          <h2 id="versiones-titulo">Historial de versiones</h2>
+          {propuesta.versionVigente > 1 && (
+            <p className="suave">
+              Las versiones anteriores siguen abajo, tal como estaban: enmendar agrega, no borra.
+            </p>
           )}
+
+          {versionesAlReves.map((version) => {
+            const esVigente = version.version === propuesta.versionVigente;
+            return (
+              <article
+                className={`version${esVigente ? ' vigente' : ''}`}
+                key={version.version}
+                aria-labelledby={`v-${String(version.version)}`}
+              >
+                <h3 id={`v-${String(version.version)}`}>
+                  Versión {version.version}
+                  {esVigente ? ' · la que está sobre la mesa' : ' · anterior, y sigue acá entera'}
+                </h3>
+                <p className="suave">Escrita el {cuando(version.cuando)}</p>
+                {version.motivo !== undefined && (
+                  <p>
+                    <strong>Qué cambió y por qué:</strong> {version.motivo}
+                  </p>
+                )}
+                <p className="texto">{version.cuerpo}</p>
+                <PlanEjecucionVisible
+                  plan={version.plan}
+                  titulo="Qué pasa si se aprueba esta versión"
+                  nivel="h4"
+                />
+                <details>
+                  <summary>Ver el comprobante de esta versión</summary>
+                  <p className="suave">
+                    Este número identifica <em>exactamente</em> este texto y el plan que lo
+                    acompaña. Si alguien cambiara una coma, una fecha o un criterio, el número
+                    cambiaría y la pantalla de <Link href="/verificar">Verificar</Link> lo diría en
+                    rojo.
+                  </p>
+                  <code className="comprobante">{version.huella}</code>
+                </details>
+              </article>
+            );
+          })}
         </section>
-      )}
-    </>
+
+        {sesion !== undefined && (
+          <section aria-labelledby="enmendar-titulo">
+            <h2 id="enmendar-titulo">Proponer una enmienda</h2>
+            {propuesta.esMia ? (
+              enmendando ? (
+                <form onSubmit={(e) => void guardarEnmienda(e)}>
+                  <div className="campo">
+                    <label htmlFor="titulo-enmienda">Título</label>
+                    <input
+                      id="titulo-enmienda"
+                      type="text"
+                      required
+                      minLength={10}
+                      maxLength={140}
+                      value={titulo}
+                      onChange={(e) => {
+                        setTitulo(e.target.value);
+                      }}
+                    />
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="cuerpo-enmienda">Texto de la propuesta</label>
+                    <span className="ayuda" id="ayuda-cuerpo-enmienda">
+                      La versión anterior no se toca: esto crea la siguiente.
+                    </span>
+                    <textarea
+                      id="cuerpo-enmienda"
+                      required
+                      minLength={50}
+                      maxLength={4000}
+                      aria-describedby="ayuda-cuerpo-enmienda"
+                      value={cuerpo}
+                      onChange={(e) => {
+                        setCuerpo(e.target.value);
+                      }}
+                    />
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="motivo-enmienda">¿Qué cambia y por qué?</label>
+                    <span className="ayuda" id="ayuda-motivo">
+                      Mínimo 20 caracteres. Sin esto, «versión 2» es un número sin información.
+                    </span>
+                    <textarea
+                      id="motivo-enmienda"
+                      required
+                      minLength={20}
+                      maxLength={1000}
+                      aria-describedby="ayuda-motivo"
+                      value={motivo}
+                      onChange={(e) => {
+                        setMotivo(e.target.value);
+                      }}
+                    />
+                  </div>
+                  <PlanEjecucionFormulario
+                    value={plan}
+                    onChange={setPlan}
+                    prefijo="plan-enmienda"
+                  />
+                  <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                    {enCurso === 'enmendar' ? 'Guardando…' : 'Guardar la versión nueva'}
+                  </button>{' '}
+                  <button
+                    className="boton secundario"
+                    type="button"
+                    disabled={enCurso !== undefined}
+                    onClick={() => {
+                      setEnmendando(false);
+                    }}
+                  >
+                    Dejarlo así
+                  </button>
+                </form>
+              ) : (
+                <button className="boton" type="button" onClick={abrirEnmienda}>
+                  Enmendar mi propuesta
+                </button>
+              )
+            ) : (
+              <Aviso tipo="atencion" titulo="Esta propuesta la escribió otra persona">
+                Sólo quien la escribió puede cambiar su texto. Vos podés escribir otra propuesta al
+                mismo problema, que queda con tu nombre y su propio historial.{' '}
+                <Link href={`/propuestas/nueva?problema=${propuesta.problemaId}`}>
+                  Escribir otra propuesta
+                </Link>
+                .
+              </Aviso>
+            )}
+          </section>
+        )}
+      </div>
+    </div>
   );
 }

@@ -30,6 +30,7 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
+import { Ficha, Meta, type VarianteFicha } from '../../../components/piezas';
 import { useAccionUnica } from '../../../lib/acciones';
 import { cerrarFrase, cuando, enviar, ErrorDeApi, traer } from '../../../lib/api';
 
@@ -45,6 +46,25 @@ const ESTADO_TAREA_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
   completada: 'Completada',
   rechazada: 'No fue aceptada',
   'reasignacion-solicitada': 'Necesita otra persona',
+};
+
+/*
+ * El color de `<Ficha>` para cada estado de tarea. `completada` es el único resultado positivo
+ * firme (`bien`); `rechazada` es el único negativo firme (`mal`); `bloqueada`, `en-apoyo` y
+ * `reasignacion-solicitada` piden que alguien mire o actúe (`atencion`); `en-curso` y `entregada`
+ * siguen moviéndose por el proceso sin veredicto todavía (`en-curso`); `ofrecida` y `aceptada`
+ * todavía no arrancaron (`neutra`).
+ */
+const VARIANTE_TAREA_FICHA: Readonly<Record<Tarea['estado'], VarianteFicha>> = {
+  ofrecida: 'neutra',
+  aceptada: 'neutra',
+  'en-curso': 'en-curso',
+  bloqueada: 'atencion',
+  'en-apoyo': 'atencion',
+  entregada: 'en-curso',
+  completada: 'bien',
+  rechazada: 'mal',
+  'reasignacion-solicitada': 'atencion',
 };
 
 export default function DetalleIniciativa(): ReactNode {
@@ -372,7 +392,30 @@ export default function DetalleIniciativa(): ReactNode {
   if (claveSesion === 'cargando' || iniciativaPara !== claveSesion) {
     return <Cargando que="la iniciativa y tus permisos actuales" />;
   }
-  if (error !== undefined) return <ErrorVisible error={error} />;
+  // Mismo callejón que en el detalle de un problema o de una decisión: el aviso solo, sin
+  // encabezado ni reintento, no daba ni un lugar en el índice de encabezados ni un camino de vuelta.
+  if (error !== undefined) {
+    return (
+      <div className="pagina-prosa">
+        <h1>No pudimos abrir esta iniciativa</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button
+            className="boton"
+            type="button"
+            onClick={() => {
+              void recargar(claveSesion);
+            }}
+          >
+            Volver a intentar
+          </button>{' '}
+          <Link className="boton secundario" href="/iniciativas">
+            Ver todas las iniciativas
+          </Link>
+        </p>
+      </div>
+    );
+  }
   if (iniciativa === undefined) return <Cargando que="la iniciativa" />;
 
   const puedeRatificar =
@@ -387,408 +430,423 @@ export default function DetalleIniciativa(): ReactNode {
     iniciativa.hitos.find((hito) => hito.id === hitoTarea)?.venceEn ?? iniciativa.revisarEn;
 
   return (
-    <>
-      <p className="suave">
-        Nace de un{' '}
-        <Link href={`/decisiones/${iniciativa.decisionId}/resultado`}>resultado aprobado</Link>.
-      </p>
+    <div className="pagina-detalle">
       <h1>El cambio que buscamos</h1>
-      <p className="texto destacado">{iniciativa.objetivo}</p>
 
-      <section aria-labelledby="estado-iniciativa-titulo">
-        <h2 id="estado-iniciativa-titulo">Estado</h2>
-        {iniciativa.activa ? (
-          <Aviso tipo="bien" titulo="Iniciativa activa">
-            La decisión ya fue ratificada. Se pueden organizar hitos y ofrecer tareas sin borrar las
-            decisiones anteriores.
-            {iniciativa.activadaEn !== undefined && (
-              <> Quedó activa el {cerrarFrase(cuando(iniciativa.activadaEn))}</>
-            )}
-          </Aviso>
-        ) : (
-          <Aviso tipo="atencion" titulo="En revisión">
-            La decisión fue aprobada, pero todavía puede impugnarse. No corresponde iniciar trabajo
-            irreversible hasta que quede ratificada.
-            {iniciativa.ratificableEn !== undefined && (
-              <>
-                {' '}
-                La ratificación puede hacerse desde el{' '}
-                {cerrarFrase(cuando(iniciativa.ratificableEn))}
-              </>
-            )}
-          </Aviso>
-        )}
+      {/*
+       * El carril pegajoso: acá va el estado de la iniciativa y lo que hay que hacer con ella —el
+       * veredicto activa/en revisión, el botón de ratificar, quién quedó a cargo del primer paso y
+       * cuándo se vuelve a mirar—. La lectura de fondo (el objetivo, los criterios de éxito, los
+       * hitos y tareas) queda en el cuerpo. El orden en el marcado no cambia respecto de la versión
+       * anterior —Estado, después quién organiza, después cuándo se revisa—, sólo se agrupa en un
+       * `<aside>` para que la maqueta lo fije a la derecha desde 64rem.
+       */}
+      <aside className="carril-estado" aria-label="Estado de la iniciativa">
+        <section aria-labelledby="estado-iniciativa-titulo">
+          <h2 id="estado-iniciativa-titulo">Estado</h2>
+          {iniciativa.activa ? (
+            <Aviso tipo="bien" titulo="Iniciativa activa">
+              La decisión ya fue ratificada. Se pueden organizar hitos y ofrecer tareas sin borrar
+              las decisiones anteriores.
+              {iniciativa.activadaEn !== undefined && (
+                <> Quedó activa el {cerrarFrase(cuando(iniciativa.activadaEn))}</>
+              )}
+            </Aviso>
+          ) : (
+            <Aviso tipo="atencion" titulo="En revisión">
+              La decisión fue aprobada, pero todavía puede impugnarse. No corresponde iniciar
+              trabajo irreversible hasta que quede ratificada.
+              {iniciativa.ratificableEn !== undefined && (
+                <>
+                  {' '}
+                  La ratificación puede hacerse desde el{' '}
+                  {cerrarFrase(cuando(iniciativa.ratificableEn))}
+                </>
+              )}
+            </Aviso>
+          )}
 
-        {!iniciativa.activa && puedeRatificar && (
-          <div className="accion-procedimiento">
-            <p className="suave" id="ayuda-ratificacion">
-              Este acto abre la organización del trabajo. Si el plazo aún no terminó, el historial
-              no cambia y la pantalla explica cuánto falta.
-            </p>
-            <button
-              className="boton"
-              type="button"
-              aria-describedby="ayuda-ratificacion"
-              disabled={accionEnCurso !== undefined}
-              onClick={() => void ratificar()}
-            >
-              {accionEnCurso === 'ratificar'
-                ? 'Ratificando…'
-                : 'Ratificar y abrir la organización del trabajo'}
-            </button>
-          </div>
-        )}
-      </section>
-
-      <div id="resultado-accion" ref={resultadoAccionRef} tabIndex={-1}>
-        <ErrorVisible error={errorAccion} />
-        {errorAccion instanceof ErrorDeApi && errorAccion.estado === 401 && (
-          <Aviso tipo="atencion" titulo="Tu sesión terminó">
-            El formulario y su reintento se conservan mientras esta página siga abierta.{' '}
-            <Link href="/entrar" target="_blank" rel="noopener noreferrer">
-              Entrá de nuevo en otra pestaña
-            </Link>{' '}
-            y, al volver, enviá la misma acción otra vez.
-          </Aviso>
-        )}
-        {mensaje !== undefined && (
-          <Aviso tipo="bien" titulo="Quedó registrado">
-            {mensaje}
-          </Aviso>
-        )}
-      </div>
-
-      <section aria-labelledby="responsable-iniciativa-titulo">
-        <h2 id="responsable-iniciativa-titulo">Quién organiza el primer paso</h2>
-        <p>
-          El plan aprobado dejó una persona responsable inicial. Puede dividir el acuerdo en hitos y
-          ofrecer tareas, pero una oferta no obliga a nadie: cada persona decide si la acepta.
-        </p>
-        {iniciativa.esResponsableInicial && (
-          <p>
-            <span className="etiqueta">Sos la persona responsable inicial</span>
-          </p>
-        )}
-      </section>
-
-      <section aria-labelledby="revision-iniciativa-titulo">
-        <h2 id="revision-iniciativa-titulo">Cuándo volvemos a mirar</h2>
-        <p>{cerrarFrase(cuando(iniciativa.revisarEn))}</p>
-      </section>
-
-      <section aria-labelledby="criterios-iniciativa-titulo">
-        <h2 id="criterios-iniciativa-titulo">Cómo sabremos si funcionó</h2>
-        <ul>
-          {iniciativa.criteriosDeExito.map((criterio) => (
-            <li key={`${criterio.descripcion}-${criterio.fuenteDeVerificacion}`}>
-              <p>{criterio.descripcion}</p>
-              <p className="suave">Lo comprobamos en: {criterio.fuenteDeVerificacion}.</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section aria-labelledby="hitos-titulo">
-        <h2 id="hitos-titulo">Hitos y tareas</h2>
-        {!iniciativa.activa && (
-          <div className="vacio">
-            <p>Los hitos aparecerán acá después de la ratificación.</p>
-          </div>
-        )}
-        {iniciativa.activa && iniciativa.hitos.length === 0 && (
-          <div className="vacio">
-            <p>Todavía no se organizó ningún hito.</p>
-          </div>
-        )}
-        {iniciativa.activa && iniciativa.hitos.length > 0 && (
-          <ol className="hitos" aria-label="Hitos de la iniciativa">
-            {iniciativa.hitos.map((hito) => {
-              const tareas = iniciativa.tareas.filter((tarea) => tarea.hitoId === hito.id);
-              return (
-                <li key={hito.id}>
-                  <article className="tarjeta-trabajo" aria-labelledby={`hito-${hito.id}`}>
-                    <h3 id={`hito-${hito.id}`}>{hito.titulo}</h3>
-                    <p>{hito.criterioDeTerminacion}</p>
-                    <p className="suave">Fecha límite: {cerrarFrase(cuando(hito.venceEn))}</p>
-                    {tareas.length === 0 ? (
-                      <p className="suave">Este hito todavía no tiene tareas ofrecidas.</p>
-                    ) : (
-                      <ul className="tareas" aria-label={`Tareas de ${hito.titulo}`}>
-                        {tareas.map((tarea) => (
-                          <TareaVisible
-                            key={tarea.id}
-                            iniciativaId={id}
-                            tarea={tarea}
-                            todas={iniciativa.tareas}
-                            esResponsableInicial={iniciativa.esResponsableInicial}
-                            miembros={miembros}
-                            accionEnCurso={accionEnCurso}
-                            respuesta={respuestaPorTarea[tarea.id]}
-                            motivo={motivoPorTarea[tarea.id]}
-                            reoferta={reofertaPorTarea[tarea.id] ?? ''}
-                            onRespuesta={(respuesta) => {
-                              setRespuestaPorTarea((actual) => ({
-                                ...actual,
-                                [tarea.id]: respuesta,
-                              }));
-                            }}
-                            onMotivo={(motivo) => {
-                              setMotivoPorTarea((actual) => ({
-                                ...actual,
-                                [tarea.id]: motivo,
-                              }));
-                            }}
-                            onReoferta={(destinatario) => {
-                              setReofertaPorTarea((actual) => ({
-                                ...actual,
-                                [tarea.id]: destinatario,
-                              }));
-                            }}
-                            onResponder={(evento) => void responderTarea(evento, tarea)}
-                            onReofrecer={(evento) => void reofrecerTarea(evento, tarea)}
-                            onEjecutar={ejecutar}
-                          />
-                        ))}
-                      </ul>
-                    )}
-                  </article>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </section>
-
-      {iniciativa.activa && iniciativa.esResponsableInicial && (
-        <section aria-labelledby="organizar-titulo">
-          <h2 id="organizar-titulo">Organizar el trabajo inicial</h2>
-          <p className="suave">
-            Acá registrás plazos y ofertas. La capacidad exacta sólo se valida con la persona al
-            aceptar; después cada tarea conserva su seguimiento y revisión.
-          </p>
-
-          <form className="formulario-acotado" onSubmit={(e) => void planificarHito(e)}>
-            <fieldset disabled={accionEnCurso !== undefined}>
-              <legend>Agregar un hito</legend>
-              <div className="campo">
-                <label htmlFor="titulo-hito">¿Qué momento concreto queremos alcanzar?</label>
-                <input
-                  id="titulo-hito"
-                  required
-                  minLength={10}
-                  maxLength={140}
-                  value={tituloHito}
-                  onChange={(e) => {
-                    setTituloHito(e.target.value);
-                  }}
-                />
-              </div>
-              <div className="campo">
-                <label htmlFor="criterio-hito">
-                  ¿Qué tendría que verse para decir que se logró?
-                </label>
-                <textarea
-                  id="criterio-hito"
-                  required
-                  minLength={20}
-                  maxLength={500}
-                  value={criterioHito}
-                  onChange={(e) => {
-                    setCriterioHito(e.target.value);
-                  }}
-                />
-              </div>
-              <div className="campo">
-                <label htmlFor="vence-hito">Fecha y hora límite, en hora de Colombia</label>
-                <input
-                  id="vence-hito"
-                  aria-describedby="ayuda-vence-hito"
-                  type="datetime-local"
-                  required
-                  // El servidor ya rechaza una fecha posterior a la revisión; el campo lo dice
-                  // antes, para que el selector del teléfono no ofrezca meses imposibles.
-                  max={datetimeLocalColombia(iniciativa.revisarEn)}
-                  value={venceHito}
-                  onChange={(e) => {
-                    setVenceHito(e.target.value);
-                  }}
-                />
-                <span className="ayuda" id="ayuda-vence-hito">
-                  No puede ser posterior a la revisión acordada:{' '}
-                  {cerrarFrase(cuando(iniciativa.revisarEn))}
-                </span>
-              </div>
-              <button className="boton secundario" disabled={accionEnCurso !== undefined}>
-                {accionEnCurso === 'crear-hito' ? 'Guardando…' : 'Agregar el hito'}
+          {!iniciativa.activa && puedeRatificar && (
+            <div className="accion-procedimiento">
+              <p className="suave" id="ayuda-ratificacion">
+                Este acto abre la organización del trabajo. Si el plazo aún no terminó, el historial
+                no cambia y la pantalla explica cuánto falta.
+              </p>
+              <button
+                className="boton"
+                type="button"
+                aria-describedby="ayuda-ratificacion"
+                disabled={accionEnCurso !== undefined}
+                onClick={() => void ratificar()}
+              >
+                {accionEnCurso === 'ratificar'
+                  ? 'Ratificando…'
+                  : 'Ratificar y abrir la organización del trabajo'}
               </button>
-            </fieldset>
-          </form>
+            </div>
+          )}
+        </section>
 
-          {iniciativa.hitos.length > 0 && (
-            <form className="formulario-acotado" onSubmit={(e) => void ofrecerTarea(e)}>
+        <div id="resultado-accion" ref={resultadoAccionRef} tabIndex={-1}>
+          <ErrorVisible error={errorAccion} />
+          {errorAccion instanceof ErrorDeApi && errorAccion.estado === 401 && (
+            <Aviso tipo="atencion" titulo="Tu sesión terminó">
+              El formulario y su reintento se conservan mientras esta página siga abierta.{' '}
+              <Link href="/entrar" target="_blank" rel="noopener noreferrer">
+                Entrá de nuevo en otra pestaña
+              </Link>{' '}
+              y, al volver, enviá la misma acción otra vez.
+            </Aviso>
+          )}
+          {mensaje !== undefined && (
+            <Aviso tipo="bien" titulo="Quedó registrado">
+              {mensaje}
+            </Aviso>
+          )}
+        </div>
+
+        <section aria-labelledby="responsable-iniciativa-titulo">
+          <h2 id="responsable-iniciativa-titulo">Quién organiza el primer paso</h2>
+          <p>
+            El plan aprobado dejó una persona responsable inicial. Puede dividir el acuerdo en hitos
+            y ofrecer tareas, pero una oferta no obliga a nadie: cada persona decide si la acepta.
+          </p>
+          {iniciativa.esResponsableInicial && (
+            <p>
+              <span className="etiqueta">Sos la persona responsable inicial</span>
+            </p>
+          )}
+        </section>
+
+        <section aria-labelledby="revision-iniciativa-titulo">
+          <h2 id="revision-iniciativa-titulo">Cuándo volvemos a mirar</h2>
+          <p>{cerrarFrase(cuando(iniciativa.revisarEn))}</p>
+        </section>
+      </aside>
+
+      <div className="cuerpo-detalle">
+        <p className="suave">
+          Nace de un{' '}
+          <Link href={`/decisiones/${iniciativa.decisionId}/resultado`}>resultado aprobado</Link>.
+        </p>
+        <p className="texto destacado">{iniciativa.objetivo}</p>
+
+        <section aria-labelledby="criterios-iniciativa-titulo">
+          <h2 id="criterios-iniciativa-titulo">Cómo sabremos si funcionó</h2>
+          <ul>
+            {iniciativa.criteriosDeExito.map((criterio) => (
+              <li key={`${criterio.descripcion}-${criterio.fuenteDeVerificacion}`}>
+                <p>{criterio.descripcion}</p>
+                <p className="suave">
+                  Lo comprobamos en: {cerrarFrase(criterio.fuenteDeVerificacion)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section aria-labelledby="hitos-titulo">
+          <h2 id="hitos-titulo">Hitos y tareas</h2>
+          {!iniciativa.activa && (
+            <div className="vacio" role="status">
+              <p>Los hitos aparecerán acá después de la ratificación.</p>
+            </div>
+          )}
+          {iniciativa.activa && iniciativa.hitos.length === 0 && (
+            <div className="vacio" role="status">
+              <p>Todavía no se organizó ningún hito.</p>
+            </div>
+          )}
+          {iniciativa.activa && iniciativa.hitos.length > 0 && (
+            <ol className="hitos" aria-label="Hitos de la iniciativa">
+              {iniciativa.hitos.map((hito) => {
+                const tareas = iniciativa.tareas.filter((tarea) => tarea.hitoId === hito.id);
+                return (
+                  <li key={hito.id}>
+                    <article className="tarjeta-trabajo" aria-labelledby={`hito-${hito.id}`}>
+                      <h3 id={`hito-${hito.id}`}>{hito.titulo}</h3>
+                      <p>{hito.criterioDeTerminacion}</p>
+                      <p className="suave">Fecha límite: {cerrarFrase(cuando(hito.venceEn))}</p>
+                      {tareas.length === 0 ? (
+                        <p className="suave">Este hito todavía no tiene tareas ofrecidas.</p>
+                      ) : (
+                        <ul className="tareas" aria-label={`Tareas de ${hito.titulo}`}>
+                          {tareas.map((tarea) => (
+                            <TareaVisible
+                              key={tarea.id}
+                              iniciativaId={id}
+                              tarea={tarea}
+                              todas={iniciativa.tareas}
+                              esResponsableInicial={iniciativa.esResponsableInicial}
+                              miembros={miembros}
+                              accionEnCurso={accionEnCurso}
+                              respuesta={respuestaPorTarea[tarea.id]}
+                              motivo={motivoPorTarea[tarea.id]}
+                              reoferta={reofertaPorTarea[tarea.id] ?? ''}
+                              onRespuesta={(respuesta) => {
+                                setRespuestaPorTarea((actual) => ({
+                                  ...actual,
+                                  [tarea.id]: respuesta,
+                                }));
+                              }}
+                              onMotivo={(motivo) => {
+                                setMotivoPorTarea((actual) => ({
+                                  ...actual,
+                                  [tarea.id]: motivo,
+                                }));
+                              }}
+                              onReoferta={(destinatario) => {
+                                setReofertaPorTarea((actual) => ({
+                                  ...actual,
+                                  [tarea.id]: destinatario,
+                                }));
+                              }}
+                              onResponder={(evento) => void responderTarea(evento, tarea)}
+                              onReofrecer={(evento) => void reofrecerTarea(evento, tarea)}
+                              onEjecutar={ejecutar}
+                            />
+                          ))}
+                        </ul>
+                      )}
+                    </article>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </section>
+
+        {iniciativa.activa && iniciativa.esResponsableInicial && (
+          <section aria-labelledby="organizar-titulo">
+            <h2 id="organizar-titulo">Organizar el trabajo inicial</h2>
+            <p className="suave">
+              Acá registrás plazos y ofertas. La capacidad exacta sólo se valida con la persona al
+              aceptar; después cada tarea conserva su seguimiento y revisión.
+            </p>
+
+            <form className="formulario-acotado" onSubmit={(e) => void planificarHito(e)}>
               <fieldset disabled={accionEnCurso !== undefined}>
-                <legend>Ofrecer una tarea</legend>
-                {/* Mientras no haya hito elegido, el tope que se puede prometer es el de la
-                    revisión de la iniciativa; en cuanto lo hay, manda el del hito. */}
+                <legend>Agregar un hito</legend>
                 <div className="campo">
-                  <label htmlFor="hito-tarea">¿A qué hito aporta?</label>
-                  <select
-                    id="hito-tarea"
-                    required
-                    value={hitoTarea}
-                    onChange={(e) => {
-                      setHitoTarea(e.target.value);
-                    }}
-                  >
-                    <option value="">Elegí un hito</option>
-                    {iniciativa.hitos.map((hito) => (
-                      <option key={hito.id} value={hito.id}>
-                        {hito.titulo}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="campo">
-                  <label htmlFor="titulo-tarea">¿Qué hay que hacer?</label>
+                  <label htmlFor="titulo-hito">¿Qué momento concreto queremos alcanzar?</label>
                   <input
-                    id="titulo-tarea"
+                    id="titulo-hito"
                     required
                     minLength={10}
                     maxLength={140}
-                    value={tituloTarea}
+                    value={tituloHito}
                     onChange={(e) => {
-                      setTituloTarea(e.target.value);
+                      setTituloHito(e.target.value);
                     }}
                   />
                 </div>
                 <div className="campo">
-                  <label htmlFor="descripcion-tarea">¿Qué incluye esta tarea?</label>
+                  <label htmlFor="criterio-hito">
+                    ¿Qué tendría que verse para decir que se logró?
+                  </label>
                   <textarea
-                    id="descripcion-tarea"
-                    aria-describedby="ayuda-descripcion-tarea"
+                    id="criterio-hito"
                     required
                     minLength={20}
-                    maxLength={4000}
-                    value={descripcionTarea}
+                    maxLength={500}
+                    value={criterioHito}
                     onChange={(e) => {
-                      setDescripcionTarea(e.target.value);
+                      setCriterioHito(e.target.value);
                     }}
                   />
-                  <span className="ayuda" id="ayuda-descripcion-tarea">
-                    Esto queda en el historial público. Describí el trabajo, no datos personales ni
-                    situaciones privadas de quien lo hará.
-                  </span>
                 </div>
                 <div className="campo">
-                  <label htmlFor="destinatario-tarea">¿A quién querés ofrecérsela?</label>
-                  {miembros === undefined && errorMiembros === undefined ? (
-                    <Cargando que="las personas del círculo" />
-                  ) : (
-                    <select
-                      id="destinatario-tarea"
-                      aria-describedby="ayuda-destinatario-tarea"
-                      required
-                      value={destinatarioTarea}
-                      onChange={(e) => {
-                        setDestinatarioTarea(e.target.value);
-                      }}
-                    >
-                      <option value="">Elegí una persona</option>
-                      {miembros?.map((miembro) => (
-                        <option key={miembro.id} value={miembro.id}>
-                          {miembro.alias}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <span className="ayuda" id="ayuda-destinatario-tarea">
-                    Elegís un alias del círculo; nunca tenés que copiar un identificador técnico.
-                  </span>
-                  <ErrorVisible error={errorMiembros} />
-                </div>
-                <div className="campo">
-                  <label htmlFor="vence-tarea">Fecha y hora límite, en hora de Colombia</label>
+                  <label htmlFor="vence-hito">Fecha y hora límite, en hora de Colombia</label>
                   <input
-                    id="vence-tarea"
+                    id="vence-hito"
+                    aria-describedby="ayuda-vence-hito"
                     type="datetime-local"
                     required
-                    aria-describedby="ayuda-vence-tarea"
-                    // El tope es el del hito elegido, que es lo que el servidor comprueba; si
-                    // todavía no hay hito elegido, el de la revisión de la iniciativa.
-                    max={datetimeLocalColombia(topeTarea)}
-                    value={venceTarea}
+                    // El servidor ya rechaza una fecha posterior a la revisión; el campo lo dice
+                    // antes, para que el selector del teléfono no ofrezca meses imposibles.
+                    max={datetimeLocalColombia(iniciativa.revisarEn)}
+                    value={venceHito}
                     onChange={(e) => {
-                      setVenceTarea(e.target.value);
+                      setVenceHito(e.target.value);
                     }}
                   />
-                  <span className="ayuda" id="ayuda-vence-tarea">
-                    No puede pasar de la fecha de su hito: {cerrarFrase(cuando(topeTarea))}
+                  <span className="ayuda" id="ayuda-vence-hito">
+                    No puede ser posterior a la revisión acordada:{' '}
+                    {cerrarFrase(cuando(iniciativa.revisarEn))}
                   </span>
                 </div>
-                <div className="campo">
-                  <label htmlFor="esfuerzo-tarea">Tiempo estimado, en minutos</label>
-                  <input
-                    id="esfuerzo-tarea"
-                    aria-describedby="ayuda-esfuerzo-tarea"
-                    type="number"
-                    required
-                    min={1}
-                    max={10_080}
-                    step={1}
-                    inputMode="numeric"
-                    value={esfuerzoTarea}
-                    onChange={(e) => {
-                      setEsfuerzoTarea(e.target.value);
-                    }}
-                  />
-                  <span className="ayuda" id="ayuda-esfuerzo-tarea">
-                    Es sólo una estimación compartida; todavía no se usa para medir ni comparar
-                    personas.
-                  </span>
-                </div>
-                {iniciativa.tareas.length > 0 && (
-                  <fieldset className="opciones">
-                    <legend>¿Necesita que otra tarea termine primero?</legend>
-                    {iniciativa.tareas.map((tarea) => (
-                      <div className="opcion" key={tarea.id}>
-                        <input
-                          id={`dependencia-${tarea.id}`}
-                          type="checkbox"
-                          checked={dependencias.includes(tarea.id)}
-                          onChange={(e) => {
-                            setDependencias((actuales) =>
-                              e.target.checked
-                                ? [...actuales, tarea.id]
-                                : actuales.filter((idTarea) => idTarea !== tarea.id),
-                            );
-                          }}
-                        />
-                        <label htmlFor={`dependencia-${tarea.id}`}>{tarea.titulo}</label>
-                      </div>
-                    ))}
-                  </fieldset>
-                )}
-                <button className="boton" disabled={accionEnCurso !== undefined}>
-                  {accionEnCurso === 'ofrecer-tarea' ? 'Ofreciendo…' : 'Ofrecer la tarea'}
+                <button className="boton secundario" disabled={accionEnCurso !== undefined}>
+                  {accionEnCurso === 'crear-hito' ? 'Guardando…' : 'Agregar el hito'}
                 </button>
               </fieldset>
             </form>
-          )}
-        </section>
-      )}
 
-      <details>
-        <summary>Ver comprobantes relacionados</summary>
-        <p className="suave">
-          Estos comprobantes permiten revisar que esta iniciativa corresponde a esa decisión y a la
-          versión que se consideró. No hace falta entenderlos para participar.
-        </p>
-        <h2>Comprobante de la decisión</h2>
-        <code className="comprobante">{iniciativa.comprobanteDecision}</code>
-        <h2>Comprobante de la versión</h2>
-        <code className="comprobante">{iniciativa.comprobanteVersion}</code>
-      </details>
-    </>
+            {iniciativa.hitos.length > 0 && (
+              <form className="formulario-acotado" onSubmit={(e) => void ofrecerTarea(e)}>
+                <fieldset disabled={accionEnCurso !== undefined}>
+                  <legend>Ofrecer una tarea</legend>
+                  {/* Mientras no haya hito elegido, el tope que se puede prometer es el de la
+                    revisión de la iniciativa; en cuanto lo hay, manda el del hito. */}
+                  <div className="campo">
+                    <label htmlFor="hito-tarea">¿A qué hito aporta?</label>
+                    <select
+                      id="hito-tarea"
+                      required
+                      value={hitoTarea}
+                      onChange={(e) => {
+                        setHitoTarea(e.target.value);
+                      }}
+                    >
+                      <option value="">Elegí un hito</option>
+                      {iniciativa.hitos.map((hito) => (
+                        <option key={hito.id} value={hito.id}>
+                          {hito.titulo}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="titulo-tarea">¿Qué hay que hacer?</label>
+                    <input
+                      id="titulo-tarea"
+                      required
+                      minLength={10}
+                      maxLength={140}
+                      value={tituloTarea}
+                      onChange={(e) => {
+                        setTituloTarea(e.target.value);
+                      }}
+                    />
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="descripcion-tarea">¿Qué incluye esta tarea?</label>
+                    <textarea
+                      id="descripcion-tarea"
+                      aria-describedby="ayuda-descripcion-tarea"
+                      required
+                      minLength={20}
+                      maxLength={4000}
+                      value={descripcionTarea}
+                      onChange={(e) => {
+                        setDescripcionTarea(e.target.value);
+                      }}
+                    />
+                    <span className="ayuda" id="ayuda-descripcion-tarea">
+                      Esto queda en el historial público. Describí el trabajo, no datos personales
+                      ni situaciones privadas de quien lo hará.
+                    </span>
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="destinatario-tarea">¿A quién querés ofrecérsela?</label>
+                    {miembros === undefined && errorMiembros === undefined ? (
+                      <Cargando que="las personas del círculo" />
+                    ) : (
+                      <select
+                        id="destinatario-tarea"
+                        aria-describedby="ayuda-destinatario-tarea"
+                        required
+                        value={destinatarioTarea}
+                        onChange={(e) => {
+                          setDestinatarioTarea(e.target.value);
+                        }}
+                      >
+                        <option value="">Elegí una persona</option>
+                        {miembros?.map((miembro) => (
+                          <option key={miembro.id} value={miembro.id}>
+                            {miembro.alias}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <span className="ayuda" id="ayuda-destinatario-tarea">
+                      Elegís un alias del círculo; nunca tenés que copiar un identificador técnico.
+                    </span>
+                    <ErrorVisible error={errorMiembros} />
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="vence-tarea">Fecha y hora límite, en hora de Colombia</label>
+                    <input
+                      id="vence-tarea"
+                      type="datetime-local"
+                      required
+                      aria-describedby="ayuda-vence-tarea"
+                      // El tope es el del hito elegido, que es lo que el servidor comprueba; si
+                      // todavía no hay hito elegido, el de la revisión de la iniciativa.
+                      max={datetimeLocalColombia(topeTarea)}
+                      value={venceTarea}
+                      onChange={(e) => {
+                        setVenceTarea(e.target.value);
+                      }}
+                    />
+                    <span className="ayuda" id="ayuda-vence-tarea">
+                      No puede pasar de la fecha de su hito: {cerrarFrase(cuando(topeTarea))}
+                    </span>
+                  </div>
+                  <div className="campo">
+                    <label htmlFor="esfuerzo-tarea">Tiempo estimado, en minutos</label>
+                    <input
+                      id="esfuerzo-tarea"
+                      aria-describedby="ayuda-esfuerzo-tarea"
+                      type="number"
+                      required
+                      min={1}
+                      max={10_080}
+                      step={1}
+                      inputMode="numeric"
+                      value={esfuerzoTarea}
+                      onChange={(e) => {
+                        setEsfuerzoTarea(e.target.value);
+                      }}
+                    />
+                    <span className="ayuda" id="ayuda-esfuerzo-tarea">
+                      Es sólo una estimación compartida; todavía no se usa para medir ni comparar
+                      personas.
+                    </span>
+                  </div>
+                  {iniciativa.tareas.length > 0 && (
+                    <fieldset className="opciones">
+                      <legend>¿Necesita que otra tarea termine primero?</legend>
+                      {iniciativa.tareas.map((tarea) => (
+                        <div className="opcion" key={tarea.id}>
+                          <input
+                            id={`dependencia-${tarea.id}`}
+                            type="checkbox"
+                            checked={dependencias.includes(tarea.id)}
+                            onChange={(e) => {
+                              setDependencias((actuales) =>
+                                e.target.checked
+                                  ? [...actuales, tarea.id]
+                                  : actuales.filter((idTarea) => idTarea !== tarea.id),
+                              );
+                            }}
+                          />
+                          <label htmlFor={`dependencia-${tarea.id}`}>{tarea.titulo}</label>
+                        </div>
+                      ))}
+                    </fieldset>
+                  )}
+                  <button className="boton" disabled={accionEnCurso !== undefined}>
+                    {accionEnCurso === 'ofrecer-tarea' ? 'Ofreciendo…' : 'Ofrecer la tarea'}
+                  </button>
+                </fieldset>
+              </form>
+            )}
+          </section>
+        )}
+
+        <details className="de-donde-sale">
+          <summary>Ver comprobantes relacionados</summary>
+          <p className="suave">
+            Estos comprobantes permiten revisar que esta iniciativa corresponde a esa decisión y a
+            la versión que se consideró. No hace falta entenderlos para participar.
+          </p>
+          <h2>Comprobante de la decisión</h2>
+          <code className="comprobante">{iniciativa.comprobanteDecision}</code>
+          <h2>Comprobante de la versión</h2>
+          <code className="comprobante">{iniciativa.comprobanteVersion}</code>
+        </details>
+      </div>
+    </div>
   );
 }
 
@@ -960,7 +1018,11 @@ function TareaVisible({
         <dl className="datos-trabajo">
           <div>
             <dt>Estado</dt>
-            <dd>{ESTADO_TAREA_EN_PALABRAS[tarea.estado]}</dd>
+            <dd>
+              <Ficha variante={VARIANTE_TAREA_FICHA[tarea.estado]}>
+                {ESTADO_TAREA_EN_PALABRAS[tarea.estado]}
+              </Ficha>
+            </dd>
           </div>
           <div>
             <dt>Fecha límite</dt>
@@ -1042,11 +1104,12 @@ function TareaVisible({
                 <ul className="lista-evidencias">
                   {tarea.evidencias.map((evidencia) => (
                     <li key={evidencia.id}>
-                      <span>
-                        {evidencia.tipo}, tamaño {evidencia.tamano},{' '}
-                        {evidencia.visibilidad === 'restricted' ? 'restringida' : 'pública'} ·{' '}
+                      <Meta>
+                        {`${evidencia.tipo}, tamaño ${evidencia.tamano}, ${
+                          evidencia.visibilidad === 'restricted' ? 'restringida' : 'pública'
+                        }`}
                         {cuando(evidencia.agregadaEn)}
-                      </span>
+                      </Meta>
                       {evidencia.puedeAbrirse && contenidoAbierto[evidencia.id] === undefined && (
                         <button
                           className="boton texto"

@@ -1,0 +1,175 @@
+# Koinonía — fragmento de Caddyfile: registro de acceso + cabeceras de seguridad.
+#
+# ESTO NO ES UN FICHERO QUE CADDY LEA. Es el contenido con el que hay que REEMPLAZAR los dos
+# bloques de sitio de Koinonía dentro de /etc/caddy/Caddyfile (el fichero real, único, compartido
+# con una decena de sitios ajenos — nunca se toca directo sin el procedimiento de
+# infra/produccion/DESPLIEGUE.md §9). Los dos bloques de abajo son la versión completa que debe
+# quedar en el Caddyfile real: no un diff, para poder copiar y pegar sin ambigüedad.
+#
+# Verificado contra el binario real de la VPS: `caddy version` da 2.6.2. La sintaxis de abajo
+# (`skip_log`, `format filter … fields { … }`, `roll_size`/`roll_keep`/`roll_keep_for`) es la de esa
+# versión exacta — en 2.8 la directiva se renombró a `log_skip`; si algún día se actualiza Caddy,
+# revisar el nombre antes de reaplicar esto. NO se pudo ejecutar `caddy validate` contra este
+# fragmento desde aquí: la VPS es de sólo lectura para quien lo escribió. Es exactamente el motivo
+# por el que el procedimiento del §9 exige correr `caddy validate` ANTES de recargar — esa es la
+# red de seguridad que reemplaza la prueba que no se pudo hacer aquí.
+#
+# ═══ Qué hace cada pieza, y por qué ═══
+#
+# 1. `skip_log` sobre la ruta de emisión de papeleta. THREAT_MODEL.md (T-20, «Correlación
+#    votante↔voto por temporización») y ADR-0014 (sellado por lotes, sin timestamp en la urna) existen
+#    para que el momento exacto en que alguien vota no quede escrito en ningún sitio: con 300
+#    personas y participación dispersa, una hora de acceso —aunque no lleve identidad— cruzada con
+#    cualquier marca de participación reconstruye quién votó. THREAT_MODEL.md lo dice explícito para
+#    el proxy: «registro de rutas de emisión desactivado en el proxy» (línea 286 del documento). Esta
+#    línea es esa promesa, cumplida. La ruta se excluye en las DOS formas en que un navegador llega a
+#    ella: directa contra la API (`/decisiones/:id/papeletas`) y a través del proxy de la interfaz
+#    (`/api/decisiones/:id/papeletas` — ver `apps/web/app/api/[...ruta]/route.ts`, que reenvía
+#    `/api/<resto>` a `<resto>` en la API tal cual, sin transformarlo).
+#
+# 2. `log … format filter … fields { … }`: registro de acceso a fichero, con cada campo peligroso
+#    borrado explícitamente antes de escribir la línea — no ofuscado, BORRADO (`delete`, el mismo
+#    verbo y el mismo criterio que ya usa `redact`/`remove: true` en el registro propio de la API,
+#    services/api/src/http/app.ts). Sin esto, el registro JSON por defecto de Caddy trae la IP del
+#    cliente, la cabecera `Cookie` (la sesión, en claro) y la cabecera de respuesta `Set-Cookie` (la
+#    sesión que el servidor ACABA de emitir) — sería peor que no registrar nada.
+#
+#    - `request>remote_ip`, `request>remote_port`, `request>client_ip`,
+#      `request>headers>X-Forwarded-For`, `request>headers>X-Real-Ip`: ninguna IP, en ninguna forma.
+#      Es C17 del corpus (THREAT_MODEL.md / docs/HANDOFF.md línea 372): «No se registran direcciones
+#      IP en la aplicación», aplicado aquí también al borde, que es de donde viene la IP real.
+#    - `request>headers>Cookie`, `request>headers>Authorization`, `resp_headers>Set-Cookie`: la
+#      sesión no se registra ni de ida ni de vuelta.
+#    - `request>uri regexp "\?.*" ""`: recorta la cadena de consulta de la URL registrada. Hoy nada
+#      la necesita —el enlace mágico viaja por POST, nunca por query string, THREAT_MODEL.md línea
+#      114—, pero si algún día una ruta nueva la usa, esta línea ya la protege sin que nadie tenga
+#      que acordarse de tocar el Caddyfile otra vez.
+#
+#    Lo que SÍ queda, porque es justo lo que hace investigable un incidente sin identificar a nadie:
+#    método, ruta (con el identificador de recurso interpolado — una propuesta o una decisión no son
+#    datos personales), estado HTTP, hora, duración.
+#
+#    Rotación: 10 MiB × 5 ficheros por sitio (como ya acota `docker-compose.yml` para los tres
+#    contenedores) y purga a los 30 días (`roll_keep_for 720h`) — el mismo horizonte de retención que
+#    ya usa el proyecto para `consent_logs` (THREAT_MODEL.md, resolución de C17, línea 292). Tope
+#    duro: 50 MB por sitio, 100 MB entre los dos, contra 81 GB libres en el disco medidos el
+#    2026-08-23 (`df -h /` en la VPS). El directorio `/var/log/caddy` ya existe con dueño
+#    `caddy:caddy` (comprobado el 2026-08-23): Caddy puede escribir ahí sin ningún paso previo.
+#
+# 3. `header { … }`: cabeceras de seguridad. `Strict-Transport-Security`, `X-Frame-Options` y
+#    `Cross-Origin-Opener-Policy` son estáticas, no dependen de qué devuelva la aplicación y ya están
+#    en la lista de controles del MVP (THREAT_MODEL.md §6, «Cabeceras») — se agregan en modo
+#    obligatorio en los dos dominios. `next.config.mjs` (apps/web, de otro workflow, no tocado aquí)
+#    ya sirve `x-content-type-options`, `referrer-policy: no-referrer` y `permissions-policy`; estas
+#    tres son las que faltaban de esa misma lista y que SÍ puede poner el proxy sin pisarle nada a
+#    Next. `Content-Security-Policy-Report-Only` va SÓLO en el dominio de la interfaz (el de la API
+#    sirve JSON, no HTML: una CSP ahí no protege nada) y en modo de sólo informe — ver el porqué en
+#    el comentario dentro del bloque.
+#
+# ═══ Los dos bloques completos ═══
+# (reemplazan a los que hoy existen al final de /etc/caddy/Caddyfile con ese mismo nombre de sitio)
+
+api.167.114.118.213.sslip.io {
+	# Ver punto 1 arriba. Nunca se registra que se emitió una papeleta, ni con qué código respondió.
+	@papeletas {
+		method POST
+		path /decisiones/*/papeletas
+	}
+	skip_log @papeletas
+
+	log {
+		output file /var/log/caddy/koinonia-api-acceso.log {
+			roll_size 10MiB
+			roll_keep 5
+			roll_keep_for 720h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers>X-Forwarded-For delete
+				request>headers>X-Real-Ip delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+				request>uri regexp "\?.*" ""
+			}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+	}
+
+	reverse_proxy 127.0.0.1:18090
+}
+
+koinonia.167.114.118.213.sslip.io {
+	# Misma ruta de emisión, vista desde el proxy de la interfaz: `/api/<resto>` reenvía a `<resto>`
+	# en la API sin tocarlo (apps/web/app/api/[...ruta]/route.ts), así que aquí lleva el prefijo /api.
+	@papeletas {
+		method POST
+		path /api/decisiones/*/papeletas
+	}
+	skip_log @papeletas
+
+	log {
+		output file /var/log/caddy/koinonia-web-acceso.log {
+			roll_size 10MiB
+			roll_keep 5
+			roll_keep_for 720h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers>X-Forwarded-For delete
+				request>headers>X-Real-Ip delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+				request>uri regexp "\?.*" ""
+			}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+		# SÓLO INFORME, a propósito — no se pudo verificar sin bloquear la aplicación.
+		#
+		# THREAT_MODEL.md §6 fija una CSP con nonce por respuesta («script-src 'self'
+		# 'nonce-<por-respuesta>'») pero esta interfaz (apps/web) no genera ese nonce hoy: no hay
+		# middleware.ts ni mecanismo de nonce en el código (comprobado el 2026-08-23; es de otro
+		# workflow y no se puede tocar aquí para agregarlo). Un Caddy estático no puede inventar un
+		# nonce distinto por respuesta y hacer que coincida con lo que Next.js escribe en el HTML —
+		# necesita cooperación de la aplicación, que no existe todavía.
+		#
+		# Por eso esto va en `-Report-Only`: un navegador NUNCA bloquea nada por esta cabecera, sólo
+		# reporta a la consola qué habría bloqueado. Es deliberadamente la política ESTRICTA de
+		# THREAT_MODEL.md sin nonce y sin 'unsafe-inline' —no una versión ya relajada— precisamente
+		# para que el informe diga la verdad completa: cada script o estilo en línea que Next.js meta
+		# sin nonce va a aparecer ahí. No lleva `report-uri`: THREAT_MODEL.md pide que apunte a «un
+		# endpoint local que no registre IP» y ese endpoint no existe todavía en services/api (no se
+		# creó aquí: es una ruta pública nueva, decisión que le corresponde a quien pida esa pieza,
+		# no un efecto secundario de este cambio) — sin `report-uri`, el navegador igual escribe cada
+		# violación en su consola, así que sigue sirviendo para observar a mano.
+		#
+		# ANTES DE VOLVERLA OBLIGATORIA (quitar `-Report-Only`): abrir la interfaz varios días con
+		# las herramientas de desarrollo abiertas (o mirar `chrome://net-export`), revisar qué
+		# violaciones reporta, y decidir con quien mantenga apps/web si hace falta 'unsafe-inline',
+		# un nonce real, o si ya no hace falta nada. Aplicarla en modo obligatorio sin haber mirado
+		# los informes puede dejar la aplicación en blanco: Next.js normalmente sí usa script/estilo
+		# en línea.
+		Content-Security-Policy-Report-Only "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+	}
+
+	reverse_proxy 127.0.0.1:18091
+}

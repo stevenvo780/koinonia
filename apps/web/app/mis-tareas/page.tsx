@@ -17,8 +17,17 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
+import { Esqueleto, Ficha, Meta, Vacio, type VarianteFicha } from '../../components/piezas';
 import { useAccionUnica } from '../../lib/acciones';
-import { cerrarFrase, cuando, enviar, ErrorDeApi, reemplazar, traer } from '../../lib/api';
+import {
+  cerrarFrase,
+  cuando,
+  enviar,
+  ErrorDeApi,
+  fechaCortaEnFrase,
+  reemplazar,
+  traer,
+} from '../../lib/api';
 
 const MAXIMO_SEMANAL = 10_080;
 
@@ -32,6 +41,25 @@ const ESTADO_EN_PALABRAS: Readonly<Record<Tarea['estado'], string>> = {
   'en-apoyo': 'En apoyo',
   entregada: 'Entregada para revisión',
   completada: 'Completada',
+};
+
+/**
+ * Qué variante de `<Ficha>` le toca a cada estado. `bien` sólo para el desenlace real
+ * (completada); `mal` sólo para lo que quedó fuera (rechazada); `en-curso` para todo lo que sigue
+ * vivo y sin resultado todavía —incluida «aceptada», que ya es un compromiso pero no arrancó—; y
+ * `atencion` para lo que le pide algo a la persona ahora mismo: responder una oferta, resolver un
+ * bloqueo, conseguir ayuda o que le reasignen el trabajo.
+ */
+const ESTADO_A_VARIANTE: Readonly<Record<Tarea['estado'], VarianteFicha>> = {
+  ofrecida: 'atencion',
+  aceptada: 'en-curso',
+  rechazada: 'mal',
+  'reasignacion-solicitada': 'atencion',
+  'en-curso': 'en-curso',
+  bloqueada: 'atencion',
+  'en-apoyo': 'atencion',
+  entregada: 'en-curso',
+  completada: 'bien',
 };
 
 /**
@@ -362,16 +390,50 @@ export default function MisTareas(): ReactNode {
     enfocarTarea();
   }
 
-  if (cargandoSesion) return <Cargando que="tu sesión" />;
+  // El título y la introducción no dependen de ningún dato: se quedan fijos, igual que en
+  // /iniciativas, y sólo el cuerpo —que sí depende de la sesión— muestra un esqueleto mientras se
+  // resuelve. Antes este `return` reemplazaba la página entera, `<h1>` incluido, y el salto al
+  // resolver la sesión era de cientos de píxeles.
+  if (cargandoSesion) {
+    return (
+      <div className="pagina-indice">
+        <h1>Mis tareas</h1>
+        <p>
+          Acá ves solamente las ofertas que te hicieron y el trabajo que decidiste asumir. Tu
+          capacidad exacta no aparece en iniciativas, directorios ni perfiles de otras personas.
+        </p>
+
+        <div aria-hidden="true">
+          <div className="esqueleto-linea esqueleto-titulo" style={{ width: '35%' }} />
+          <div className="esqueleto-linea" style={{ width: '60%' }} />
+          <div
+            className="esqueleto-linea esqueleto-titulo"
+            style={{ marginTop: 'var(--e6)', width: '40%' }}
+          />
+          <ul className="tarjetas esqueleto">
+            {Array.from({ length: 3 }, (_valor, indice) => (
+              <li key={indice}>
+                <div className="esqueleto-linea esqueleto-titulo" />
+                <div className="esqueleto-linea" />
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="solo-lectores">
+          <Cargando que="tu sesión" />
+        </div>
+      </div>
+    );
+  }
   if (sesion === undefined) {
     return (
-      <>
+      <div className="pagina-indice">
         <h1>Mis tareas</h1>
         <Aviso tipo="atencion" titulo="Primero entrá">
           Tu capacidad y tus compromisos son privados.{' '}
           <Link href="/entrar">Entrá con el correo institucional</Link> para verlos.
         </Aviso>
-      </>
+      </div>
     );
   }
 
@@ -391,7 +453,7 @@ export default function MisTareas(): ReactNode {
   );
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Mis tareas</h1>
       <p>
         Acá ves solamente las ofertas que te hicieron y el trabajo que decidiste asumir. Tu
@@ -509,18 +571,16 @@ export default function MisTareas(): ReactNode {
             Reintentar tareas
           </button>
         )}
-        {tareasVisibles === undefined && errorTareas === undefined && <Cargando que="tus tareas" />}
+        {tareasVisibles === undefined && errorTareas === undefined && (
+          <Esqueleto que="tus tareas" />
+        )}
         {tareasVisibles !== undefined && tareas.length === 0 && (
-          <div className="vacio">
-            <p>
-              <strong>No tenés tareas. Eso está bien:</strong> no todo el mundo tiene que estar
-              haciendo algo todo el tiempo.
-            </p>
-            <p>
-              Si querés conocer el trabajo abierto, podés{' '}
-              <Link href="/iniciativas">recorrer las iniciativas</Link> sin asumir nada.
-            </p>
-          </div>
+          <Vacio
+            titulo="No tenés tareas"
+            salida={{ href: '/iniciativas', texto: 'Recorrer las iniciativas' }}
+          >
+            <p>Eso está bien: no todo el mundo tiene que estar haciendo algo todo el tiempo.</p>
+          </Vacio>
         )}
         {tareasVisibles !== undefined && tareas.length > 0 && (
           <>
@@ -545,7 +605,7 @@ export default function MisTareas(): ReactNode {
           </>
         )}
       </section>
-    </>
+    </div>
   );
 }
 
@@ -643,13 +703,19 @@ function TareaRapida({
       tabIndex={-1}
       aria-labelledby={`mi-tarea-titulo-${tarea.id}`}
     >
-      <span className="etiqueta">{ESTADO_EN_PALABRAS[tarea.estado]}</span>
+      <Ficha variante={ESTADO_A_VARIANTE[tarea.estado]}>{ESTADO_EN_PALABRAS[tarea.estado]}</Ficha>
       <h3 id={`mi-tarea-titulo-${tarea.id}`}>{tarea.titulo}</h3>
       <p>{tarea.descripcion}</p>
-      <p className="suave">
-        {esfuerzoEnPalabras(tarea.esfuerzoMinutos)} · vence el {cuando(tarea.venceEn)}
-      </p>
-      <p className="suave">Iniciativa: {objetivo}</p>
+      <Meta>
+        {esfuerzoEnPalabras(tarea.esfuerzoMinutos)}
+        <>
+          vence{' '}
+          <time dateTime={new Date(tarea.venceEn).toISOString()} title={cuando(tarea.venceEn)}>
+            {fechaCortaEnFrase(tarea.venceEn)}
+          </time>
+        </>
+        {`Iniciativa: ${objetivo}`}
+      </Meta>
 
       {tarea.estado === 'ofrecida' && (
         <div className="respuesta-tarea">

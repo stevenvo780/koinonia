@@ -14,6 +14,15 @@
 #
 # El puerto es 55432 y no 5432 a propósito: chocar con el PostgreSQL del sistema es la forma más
 # rápida de correr las pruebas contra la base equivocada.
+#
+# ADVERTENCIA — este fichero es para una máquina de desarrollo, NO para la VPS de producción.
+# El mapeo de abajo es `55432:5432`, sin `127.0.0.1:` delante: eso publica el puerto en TODAS las
+# interfaces (0.0.0.0), no sólo en localhost. En un portátil detrás de un router eso no se nota;
+# en un servidor con firewall inactivo (como la VPS: `ufw` apagado y la cadena DOCKER-USER vacía,
+# ver infra/produccion/DESPLIEGUE.md) equivale a abrir PostgreSQL a Internet con la contraseña de
+# arriba, que además está en texto plano en este fichero versionado. El despliegue real usa
+# infra/produccion/docker-compose.yml, que NO publica ningún puerto de PostgreSQL: sólo la API lo
+# alcanza, por nombre de contenedor en la red docker `koinonia_net`.
 
 name: koinonia-dev
 

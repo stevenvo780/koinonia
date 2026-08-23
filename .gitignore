@@ -10,6 +10,10 @@ coverage/
 .env
 .env.*
 !.env.example
+# Plantilla de infra/produccion/: es un calco de las variables reales con los secretos sustituidos
+# por marcadores (ver ese fichero y DESPLIEGUE.md). Sin esta excepción, el patrón `.env.*` de
+# arriba se la comía también a ella.
+!infra/produccion/.env.ejemplo
 *.pem
 *.key
 

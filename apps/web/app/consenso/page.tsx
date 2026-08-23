@@ -23,7 +23,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import type { Consenso, ListaDeConsenso } from '@koinonia/contracts';
 
-import { Cargando, ErrorVisible } from '../../components/marco';
+import { Aviso, ErrorVisible } from '../../components/marco';
+import { Esqueleto } from '../../components/piezas';
 import { traer } from '../../lib/api';
 
 function Lista({ lista, id }: { readonly lista: ListaDeConsenso; readonly id: string }): ReactNode {
@@ -107,7 +108,7 @@ export default function ConsensoPantalla(): ReactNode {
   }, []);
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>En qué coincidimos</h1>
       <p>
         Acá no se vota nada. Se mira cómo respondió la gente en las votaciones que ya cerraron y se
@@ -116,10 +117,17 @@ export default function ConsensoPantalla(): ReactNode {
       </p>
 
       <ErrorVisible error={error} />
-      {consenso === undefined && error === undefined && <Cargando que="el análisis" />}
+      {consenso === undefined && error === undefined && <Esqueleto que="el análisis" />}
 
       {consenso?.tipo === 'todavia-no' && (
-        <div className="vacio" role="status">
+        // `.vacio` no trae su propio ancho máximo y hereda el de `.pagina-indice` entero: en
+        // escritorio queda una franja muerta a la derecha del texto, que sí está acotado a
+        // `--medida`. Acá se limita la caja al mismo ancho de lectura más su propio relleno.
+        <div
+          className="vacio"
+          role="status"
+          style={{ maxWidth: 'calc(var(--medida) + var(--e5) * 2 + 6px)' }}
+        >
           <h2>{consenso.titulo}</h2>
           <p>{consenso.descripcion}</p>
           <p>
@@ -136,10 +144,9 @@ export default function ConsensoPantalla(): ReactNode {
 
       {consenso?.tipo === 'sin-grupos' && (
         <>
-          <div className="aviso atencion" role="status">
-            <strong>{consenso.titulo}: </strong>
+          <Aviso tipo="atencion" titulo={consenso.titulo}>
             {consenso.descripcion}
-          </div>
+          </Aviso>
           <p className="suave">
             Salió de {consenso.votaciones}{' '}
             {consenso.votaciones === 1 ? 'votación cerrada' : 'votaciones cerradas'} y de las
@@ -211,6 +218,6 @@ export default function ConsensoPantalla(): ReactNode {
           </section>
         </>
       )}
-    </>
+    </div>
   );
 }

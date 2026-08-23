@@ -18,6 +18,39 @@
  * contador con pimienta rotada de `rate-limit.ts`. En una comunidad de 300 personas que se conectan
  * desde la misma facultad, una IP con marca temporal es un dato de ubicación de una persona
  * identificable.
+ *
+ * ═══ Sobre el registro de peticiones (quién pidió qué) ═══
+ *
+ * `KOINONIA_LOG` decide el nivel; por código es `warn` — sin rastro de peticiones — porque así deben
+ * quedar las pruebas y el desarrollo local. **En producción el despliegue fija `KOINONIA_LOG=info`**
+ * (documentado en `infra/produccion/`), y entonces `onResponse` más abajo escribe una línea por
+ * petición: método, **el patrón de la ruta tal como se declaró** (`request.routeOptions.url`, p. ej.
+ * `/decisiones/:id/papeletas`), código de estado, duración y el `reqId` que Fastify ya genera. Nunca
+ * la URL resuelta: se probó con el serializador por defecto de Fastify (`logger:true`) y esa línea
+ * trae la URL **con los identificadores de recurso interpolados** — `/problemas/5c55a9…` — que para
+ * una ruta como `/circulos/:id/miembros` es exactamente el «identificador de miembro en claro» que
+ * este proyecto prohíbe registrar. Por eso `disableRequestLogging: true` apaga ese registro
+ * automático y este módulo escribe el suyo, a mano, sin ese campo.
+ *
+ * Dos exclusiones deliberadas, no un descuido:
+ *
+ * 1. **Nunca se registra el cuerpo, las cabeceras (salvo lo que ya redacta la config de abajo) ni la
+ *    cadena de consulta.** Un correo o un token de sesión viajan ahí, no en la ruta.
+ * 2. **`POST /decisiones/:id/papeletas` — la emisión de una papeleta — no genera línea alguna**, ni
+ *    siquiera con el patrón de ruta. THREAT_MODEL.md §3 (T-20, «Correlación votante↔voto por
+ *    temporización») exige que ninguna pieza del sistema deje una marca temporal asociada a *que se
+ *    emitió una papeleta*: ADR-0014 ya quita el timestamp de la urna y sella por lotes barajados
+ *    precisamente para que el momento de inserción no delate quién votó. Una línea de registro con
+ *    hora exacta de esa ruta —aunque no lleve `MemberId`— reconstruye ese mismo reloj por la puerta de
+ *    atrás: quien tenga el registro y una marca de participación con hora aproximada puede cruzarlos
+ *    igual que si la urna tuviera timestamp. THREAT_MODEL.md lo exige explícitamente para el proxy
+ *    («registro de rutas de emisión desactivado en el proxy», línea 286); aquí se aplica la misma
+ *    regla en la propia API, porque hasta ahora `level: warn` volvía el punto discutible al no existir
+ *    registro de peticiones — y este cambio lo hace existir.
+ *
+ * `redact` sigue activo por si algún día otro código de este archivo llama a `request.log` pasándole
+ * el objeto `req` completo; hoy no lo hace nadie, pero la lista cuesta una línea y evita que ese día,
+ * si llega, sea silencioso.
  */
 
 import cookie from '@fastify/cookie';
@@ -79,7 +112,12 @@ import {
   type MemberId,
   UnauthorizedError,
 } from '@koinonia/domain';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, {
+  LogController,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from 'fastify';
 import { z } from 'zod';
 
 import type { PgPool } from '../db/client.js';
@@ -387,6 +425,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // calcular `request.ip`, es decir, reintroduciría la dirección de la persona por la puerta de
     // atrás justo después de que hayamos decidido no tenerla.
     trustProxy: false,
+    // Apaga el «incoming request» / «request completed» automáticos de Fastify: van con la URL ya
+    // resuelta (identificadores de recurso incluidos) y sin forma de excluir una ruta. El registro
+    // propio va más abajo, en el hook `onResponse`. Ver el comentario de cabecera del archivo.
+    // `LogController` y no el viejo `disableRequestLogging` de nivel superior: ese está obsoleto
+    // desde Fastify 5.12 y desaparece en Fastify 6 (aviso `FSTDEP023`).
+    logController: new LogController({ disableRequestLogging: true }),
   });
 
   await app.register(cookie);
@@ -410,6 +454,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     } finally {
       client.release();
     }
+  });
+
+  // ── Quién pidió qué ────────────────────────────────────────────────────────────────────────
+  //
+  // El registro de acceso propio: una línea por petición, sin nada que identifique a una persona
+  // ni revele un voto. Ver el comentario de cabecera del archivo para el porqué de cada exclusión.
+  const RUTAS_SIN_REGISTRO = new Set<string>([
+    // Emisión de papeleta (THREAT_MODEL.md T-20, ADR-0014): ni la hora de esta ruta se registra.
+    'POST /decisiones/:id/papeletas',
+  ]);
+  app.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
+    const patron = request.routeOptions.url;
+    if (patron !== undefined && RUTAS_SIN_REGISTRO.has(`${request.method} ${patron}`)) return;
+    request.log.info(
+      {
+        metodo: request.method,
+        // El patrón de la ruta (`/decisiones/:id`), nunca `request.url`: esa trae el identificador
+        // de recurso ya resuelto.
+        ruta: patron ?? 'sin_ruta_registrada',
+        estado: reply.statusCode,
+        ms: Math.round(reply.elapsedTime),
+      },
+      'peticion',
+    );
   });
 
   app.setErrorHandler((error, _request, reply) => {

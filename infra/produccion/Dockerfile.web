@@ -1,0 +1,54 @@
+# Imagen de la INTERFAZ de Koinonía (Next.js).
+#
+# Base fijada a `node:22.17.0-alpine3.22`: es la que YA está en la caché de esta máquina, la misma
+# que usa la imagen de la API. No se descarga una base nueva y no se instala Node en el host.
+#
+# El contexto de build es /opt/koinonia/repo, que llega por rsync SIN node_modules, SIN dist, SIN
+# .next y SIN *.tsbuildinfo. Lo último importa: un tsbuildinfo viejo sin su dist haría que
+# `tsc --build` se creyera al día y no emitiera nada, y entonces `next build` no encontraría
+# `@koinonia/contracts/dist/index.js`.
+
+FROM node:22.17.0-alpine3.22
+
+ENV PNPM_HOME=/pnpm
+ENV PATH="/pnpm:$PATH"
+# Antes de instalar y de compilar: que el build no llame a casa.
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN corepack enable
+
+WORKDIR /app
+COPY . /app
+
+# Tres pasos, en este orden y no en otro:
+#   1. `pnpm install` con las dependencias de desarrollo — hacen falta para compilar (typescript,
+#      @types/react). pnpm 10+ no ejecuta scripts de build de dependencias salvo lista blanca, y
+#      pnpm-workspace.yaml deniega los cuatro que hay (cpu-features, protobufjs, ssh2, sharp).
+#   2. `pnpm run build` = `tsc --build` en la raíz: emite el `dist/` de los paquetes del monorepo.
+#      Sin esto `@koinonia/contracts` no existe en disco y la interfaz no resuelve sus tipos.
+#   3. `pnpm run build:web` = `next build` en apps/web. Ya con contracts compilado.
+RUN pnpm install --frozen-lockfile \
+ && pnpm run build \
+ && pnpm run build:web
+
+# El árbol llega con los modos del origen (rsync -a los conserva) y en el repositorio son 750. El
+# proceso corre como `node`, no como root, así que sin esto no puede ni atravesar /app.
+# Lectura, no escritura: el servicio lee su propio código y no puede modificarlo.
+RUN chmod -R a+rX /app
+# Única excepción: `.next/cache`. Next escribe ahí en caliente; si no puede, avisa en cada petición.
+RUN mkdir -p /app/apps/web/.next/cache && chown -R node:node /app/apps/web/.next
+
+# NODE_ENV se pone DESPUÉS del install a propósito: antes habría saltado las devDependencies y no
+# habría con qué compilar.
+ENV NODE_ENV=production
+USER node
+WORKDIR /app/apps/web
+EXPOSE 3000
+
+# `/entrar` es la pantalla de acceso: no depende de que haya sesión ni de que la API responda, así
+# que un 200 aquí significa «la interfaz está viva», que es justo lo que un healthcheck debe medir.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD wget -q -O /dev/null http://127.0.0.1:3000/entrar || exit 1
+
+# El bind a 0.0.0.0 es DENTRO del contenedor: es lo que permite que Docker enrute hacia él. La
+# exposición al exterior la decide el mapeo de puertos del compose, que es 127.0.0.1:18091.
+CMD ["node_modules/.bin/next", "start", "--port", "3000", "--hostname", "0.0.0.0"]

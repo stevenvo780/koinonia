@@ -23,6 +23,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Normas } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../components/marco';
+import { Ficha, Vacio } from '../../components/piezas';
 import { cerrarFrase, cuando, traer } from '../../lib/api';
 
 export default function NormasPantalla(): ReactNode {
@@ -34,15 +35,69 @@ export default function NormasPantalla(): ReactNode {
   }, []);
 
   return (
-    <>
+    <div className="pagina-prosa">
       <h1>Las reglas del juego</h1>
 
       <ErrorVisible error={error} />
-      {normas === undefined && error === undefined && <Cargando que="las reglas" />}
+
+      {/* Esta pantalla es la que más crece al llegar los datos (núcleo, vías de reforma y todas
+          las versiones): un esqueleto de una sola línea dejaba el pie de página pegado al título
+          mientras cargaba, y todo el resto aparecía de golpe. Acá se reserva la forma de las tres
+          secciones que van a aparecer. */}
+      {normas === undefined && error === undefined && (
+        <>
+          <div aria-hidden="true">
+            <div className="esqueleto-linea" style={{ width: '90%' }} />
+            <div className="esqueleto-linea" style={{ width: '70%' }} />
+
+            <div
+              className="esqueleto-linea esqueleto-titulo"
+              style={{ marginTop: 'var(--e6)', width: '45%' }}
+            />
+            <div className="aviso atencion">
+              <div className="esqueleto-linea" style={{ width: '80%' }} />
+            </div>
+            {Array.from({ length: 4 }, (_valor, indice) => (
+              <div key={indice} style={{ marginTop: 'var(--e4)' }}>
+                <div className="esqueleto-linea esqueleto-titulo" style={{ width: '35%' }} />
+                <div className="esqueleto-linea" />
+              </div>
+            ))}
+
+            <div
+              className="esqueleto-linea esqueleto-titulo"
+              style={{ marginTop: 'var(--e6)', width: '45%' }}
+            />
+            {Array.from({ length: 2 }, (_valor, indice) => (
+              <div key={indice} style={{ marginTop: 'var(--e4)' }}>
+                <div className="esqueleto-linea esqueleto-titulo" style={{ width: '30%' }} />
+                <div className="esqueleto-linea" />
+              </div>
+            ))}
+
+            <div
+              className="esqueleto-linea esqueleto-titulo"
+              style={{ marginTop: 'var(--e6)', width: '45%' }}
+            />
+            <ul className="tarjetas esqueleto">
+              {Array.from({ length: 3 }, (_valor, indice) => (
+                <li key={indice}>
+                  <div className="esqueleto-linea esqueleto-titulo" />
+                  <div className="esqueleto-linea" />
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="solo-lectores">
+            <Cargando que="las reglas" />
+          </div>
+        </>
+      )}
 
       {normas !== undefined && (
         <>
-          <p>{normas.descripcion}</p>
+          <p className="lede">{normas.descripcion}</p>
 
           {/*
             El núcleo va PRIMERO y no al final. Es lo que la gente necesita saber antes que nada:
@@ -64,7 +119,10 @@ export default function NormasPantalla(): ReactNode {
                   <h3>{regla.titulo}</h3>
                   <p>{regla.texto}</p>
                   {/* En palabras y no sólo con un borde de color: el criterio 1.4.1 no admite
-                      que la única señal de «esto es irreformable» sea visual. */}
+                      que la única señal de «esto es irreformable» sea visual.
+                      `.etiqueta` y no `<Ficha>`: esto no es un estado que cambia con el tiempo
+                      —como «Cerrada» o «Te toca»—, es una clasificación permanente de la regla,
+                      y esa es justo la distinción que documenta `.etiqueta` en globals.css. */}
                   <p className="etiqueta">No se puede cambiar por ninguna vía</p>
                 </li>
               ))}
@@ -102,7 +160,12 @@ export default function NormasPantalla(): ReactNode {
                   >
                     <h3>
                       Versión {version.version}
-                      {version.vigente && <span className="etiqueta"> Es la que rige hoy</span>}
+                      {version.vigente && (
+                        <>
+                          {' '}
+                          <Ficha variante="en-curso">Es la que rige hoy</Ficha>
+                        </>
+                      )}
                     </h3>
                     <p className="suave">
                       Rige desde el {cerrarFrase(cuando(version.rigeDesde))} y vence el{' '}
@@ -120,10 +183,12 @@ export default function NormasPantalla(): ReactNode {
               // Estado vacío diseñado, y honesto sobre por qué está vacío. Sin esto, la pantalla
               // insinuaría que las reglas de arriba están fijadas y fechadas dentro de la
               // plataforma, y no lo están todavía.
-              <div className="vacio" role="status">
+              <Vacio
+                titulo="Todavía no hay ninguna versión aprobada dentro de Koinonía"
+                salida={{ href: '/decisiones', texto: 'Mirá las votaciones abiertas' }}
+              >
                 <p>
-                  <strong>Todavía no hay ninguna versión aprobada dentro de Koinonía.</strong> Lo
-                  que leés arriba son las reglas con las que arranca la plataforma, pero la
+                  Lo que leés arriba son las reglas con las que arranca la plataforma, pero la
                   comunidad no las ha votado todavía como documento propio: no hay una versión 1 con
                   su fecha, su votación y su vencimiento.
                 </p>
@@ -133,26 +198,28 @@ export default function NormasPantalla(): ReactNode {
                   respecto de la anterior, y ninguna se va a poder borrar.
                 </p>
                 <p>
-                  <Link href="/decisiones">Mirá las votaciones abiertas</Link> ·{' '}
                   <Link href="/historial">Ver el historial completo</Link>
                 </p>
-              </div>
+              </Vacio>
             )}
           </section>
 
           <section aria-labelledby="reformas-titulo">
             <h2 id="reformas-titulo">Reformas en curso</h2>
             {normas.reformasEnCurso.length === 0 ? (
-              <div className="vacio" role="status">
+              <Vacio
+                titulo="No hay ninguna reforma en curso"
+                salida={{
+                  href: '/problemas',
+                  texto: 'Si algo no funciona, escribilo como problema',
+                }}
+              >
                 <p>
-                  No hay ninguna reforma en curso. <strong>Es lo normal y lo deseable:</strong> las
-                  reglas se cambian pocas veces y despacio.
+                  <strong>Es lo normal y lo deseable:</strong> las reglas se cambian pocas veces y
+                  despacio.
                 </p>
-                <p>
-                  <Link href="/problemas">Si algo no funciona, escribilo como problema</Link>. Las
-                  reformas salen de ahí, no de una idea suelta.
-                </p>
-              </div>
+                <p>Las reformas salen de ahí, no de una idea suelta.</p>
+              </Vacio>
             ) : (
               <ul className="tarjetas">
                 {normas.reformasEnCurso.map((reforma) => (
@@ -166,6 +233,6 @@ export default function NormasPantalla(): ReactNode {
           </section>
         </>
       )}
-    </>
+    </div>
   );
 }

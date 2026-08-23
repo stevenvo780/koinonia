@@ -14,6 +14,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Circulo, Sesion } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible, useSesion } from '../../components/marco';
+import { Ficha, Tarjeta, Vacio } from '../../components/piezas';
 import { traer } from '../../lib/api';
 
 /**
@@ -37,63 +38,61 @@ export default function Circulos(): ReactNode {
   }, []);
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Quién decide qué</h1>
-      <p>
+      <p className="lede">
         Koinonía no es una asamblea permanente. Hay grupos con asuntos propios, y cada uno decide lo
         suyo <strong>sin pedirle permiso a nadie</strong>. Lo que no le corresponde a ninguno, lo
         decide la Asamblea.
       </p>
 
       <ErrorVisible error={error} />
-      {circulos === undefined && error === undefined && <Cargando que="los grupos" />}
 
-      {circulos !== undefined && circulos.length === 0 && (
-        <div className="vacio" role="status">
-          <p>
-            Todavía no hay ningún grupo definido. Mientras tanto, todo lo decide la Asamblea
-            completa.
-          </p>
-          <p>
-            <Link href="/problemas">Mirá los problemas abiertos</Link> o{' '}
-            <Link href="/normas">leé las reglas del juego</Link>.
-          </p>
-        </div>
-      )}
+      <section aria-labelledby="grupos-titulo">
+        <h2 id="grupos-titulo">Los grupos</h2>
 
-      {circulos !== undefined && circulos.length > 0 && (
-        <ul className="tarjetas">
-          {circulos.map((circulo) => (
-            <li key={circulo.id}>
-              <h2>
-                {/*
-                 * `prefetch={false}` porque esta lista crece con los grupos y la precarga no: por
-                 * defecto, Next se descarga en segundo plano el detalle de **cada** tarjeta que
-                 * entre en la pantalla, y de esas se abre una. Quien lee esto desde el bus paga por
-                 * megabyte las que no abrió, y al salir de la página las que iban a medias se
-                 * cancelan y quedan escritas en la consola como peticiones abortadas. El enlace
-                 * sigue navegando igual; lo único que cambia es que el detalle se pide cuando se
-                 * pulsa.
-                 */}
-                <Link href={`/circulos/${circulo.id}`} prefetch={false}>
-                  {circulo.nombre}
-                </Link>
-              </h2>
-              <p>
-                <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}
-              </p>
-              <p className="suave">
+        {circulos === undefined && error === undefined && <Cargando que="los grupos" />}
+
+        {circulos !== undefined && circulos.length === 0 && (
+          <Vacio
+            titulo="Todavía no hay ningún grupo definido"
+            salida={{ href: '/problemas', texto: 'Mirá los problemas abiertos' }}
+          >
+            <p>Mientras tanto, todo lo decide la Asamblea completa.</p>
+            <p>
+              <Link href="/problemas">Mirá los problemas abiertos</Link> o{' '}
+              <Link href="/normas">leé las reglas del juego</Link>.
+            </p>
+          </Vacio>
+        )}
+
+        {circulos !== undefined && circulos.length > 0 && (
+          <ul className="tarjetas">
+            {circulos.map((circulo) => (
+              <Tarjeta key={circulo.id} titulo={circulo.nombre} enlace={`/circulos/${circulo.id}`}>
+                <p>
+                  <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}
+                </p>
                 {(() => {
                   const soy = pertenece(sesion, circulo);
-                  if (soy === undefined) return 'Todavía no sé si estás en este grupo.';
-                  if (soy) return 'Estás en este grupo.';
-                  return 'No estás en este grupo, así que no podés ver quiénes lo integran.';
+                  if (soy === undefined) {
+                    return <p className="suave">Todavía no sé si estás en este grupo.</p>;
+                  }
+                  if (soy) {
+                    return <Ficha variante="bien">Estás en este grupo</Ficha>;
+                  }
+                  return (
+                    <p className="suave">
+                      <Ficha variante="neutra">No estás en este grupo</Ficha>, así que no podés ver
+                      quiénes lo integran.
+                    </p>
+                  );
                 })()}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
+              </Tarjeta>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section aria-labelledby="limites-titulo">
         <h2 id="limites-titulo">Lo que ningún grupo puede hacer</h2>
@@ -104,6 +103,6 @@ export default function Circulos(): ReactNode {
           desplegar y hacer copias, no gobernar.
         </p>
       </section>
-    </>
+    </div>
   );
 }

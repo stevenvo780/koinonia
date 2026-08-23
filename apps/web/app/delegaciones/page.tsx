@@ -20,8 +20,9 @@ import { useCallback, useEffect, useState, type ReactNode, type SyntheticEvent }
 import type { DelegacionesDeDecision, PanelDeDelegaciones } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
+import { Plazo, Vacio } from '../../components/piezas';
 import { useAccionUnica } from '../../lib/acciones';
-import { cerrarFrase, cuando, enviar, plazo, traer } from '../../lib/api';
+import { cerrarFrase, cuando, enviar, traer } from '../../lib/api';
 
 function Reparto({ votacion }: { readonly votacion: DelegacionesDeDecision }): ReactNode {
   const { reparto } = votacion;
@@ -137,7 +138,7 @@ export default function Delegaciones(): ReactNode {
   }
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Prestar tu voto</h1>
       <p>
         Si sabés que no vas a poder mirar una votación, podés pedirle a otra persona que lleve tu
@@ -146,7 +147,45 @@ export default function Delegaciones(): ReactNode {
       </p>
 
       <ErrorVisible error={error} />
-      {panel === undefined && error === undefined && <Cargando que="las votaciones" />}
+
+      {/* El contenido real no son tarjetas cortas: es «Cómo funciona» con una lista larga, más dos
+          tarjetas de votación con título, fecha, dos párrafos y tres cajas de estadística cada
+          una. El `<Esqueleto>` genérico se quedaba corto y la página crecía de golpe al responder;
+          acá se reserva esa forma. */}
+      {panel === undefined && error === undefined && (
+        <>
+          <div aria-hidden="true">
+            <div className="esqueleto-linea esqueleto-titulo" style={{ width: '35%' }} />
+            {Array.from({ length: 4 }, (_valor, indice) => (
+              <div
+                key={indice}
+                className="esqueleto-linea"
+                style={{ width: `${String(75 - indice * 8)}%` }}
+              />
+            ))}
+
+            {Array.from({ length: 2 }, (_valor, indice) => (
+              <article className="tarjeta-trabajo" key={indice} style={{ marginTop: 'var(--e5)' }}>
+                <div className="esqueleto-linea esqueleto-titulo" style={{ width: '50%' }} />
+                <div className="esqueleto-linea" style={{ width: '30%' }} />
+                <div className="esqueleto-linea" style={{ marginTop: 'var(--e3)' }} />
+                <div className="esqueleto-linea" style={{ width: '80%' }} />
+                <dl className="datos-trabajo">
+                  {Array.from({ length: 3 }, (_valorInterno, indiceInterno) => (
+                    <div key={indiceInterno}>
+                      <div className="esqueleto-linea" style={{ width: '70%' }} />
+                      <div className="esqueleto-linea esqueleto-titulo" style={{ width: '40%' }} />
+                    </div>
+                  ))}
+                </dl>
+              </article>
+            ))}
+          </div>
+          <div className="solo-lectores">
+            <Cargando que="las votaciones" />
+          </div>
+        </>
+      )}
 
       {panel !== undefined && (
         <section aria-labelledby="como-titulo">
@@ -163,22 +202,19 @@ export default function Delegaciones(): ReactNode {
           pulsa «Recuperar mi voto», la tarjeta cambia, y no se entera de nada. */}
       {hecho !== undefined && <Aviso tipo="bien">{hecho}</Aviso>}
 
-      {!cargandoSesion && sesion === undefined && (
-        <div className="vacio" role="status">
-          <p>
-            Estás mirando sin cuenta. Para prestar tu voto hay que entrar con el correo
-            institucional.
-          </p>
-          <p>
-            <Link className="boton accion" href="/entrar">
-              Entrar
-            </Link>
-          </p>
-        </div>
-      )}
-
       <section aria-labelledby="votaciones-titulo">
         <h2 id="votaciones-titulo">Votaciones abiertas</h2>
+
+        {/*
+         * `<Vacio>` impone `h3`, y cuando la sesión resuelve a «sin cuenta» antes de que el panel
+         * termine de cargar, este era el primer encabezado después del `h1`: un salto de nivel.
+         * Puesto acá, siempre lo precede el `h2` de esta sección.
+         */}
+        {!cargandoSesion && sesion === undefined && (
+          <Vacio titulo="Estás mirando sin cuenta" salida={{ href: '/entrar', texto: 'Entrar' }}>
+            <p>Para prestar tu voto hay que entrar con el correo institucional.</p>
+          </Vacio>
+        )}
 
         {panel !== undefined && panel.votaciones.length === 0 && (
           <div className="vacio" role="status">
@@ -205,9 +241,8 @@ export default function Delegaciones(): ReactNode {
               <h3>
                 <Link href={`/decisiones/${votacion.decisionId}`}>{votacion.titulo}</Link>
               </h3>
-              <p className="suave">
-                {plazo(votacion.cierraEn)} · {cuando(votacion.cierraEn)}
-              </p>
+              <Plazo ms={votacion.cierraEn} />
+              <p className="suave">{cuando(votacion.cierraEn)}</p>
 
               {votacion.yaVote && (
                 <Aviso tipo="bien" titulo="Ya votaste">
@@ -313,6 +348,6 @@ export default function Delegaciones(): ReactNode {
           );
         })}
       </section>
-    </>
+    </div>
   );
 }

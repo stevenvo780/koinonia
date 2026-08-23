@@ -45,8 +45,9 @@ import {
 } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, Pasos, useSesion } from '../../../components/marco';
+import { Ficha, Meta, Plazo } from '../../../components/piezas';
 import { useAccionUnica } from '../../../lib/acciones';
-import { cuando, enviar, plazo, traer } from '../../../lib/api';
+import { cuando, enviar, traer } from '../../../lib/api';
 
 const ETAPAS: readonly { readonly id: string; readonly nombre: string }[] = Object.entries(
   ETAPA_EN_PALABRAS,
@@ -259,7 +260,24 @@ export default function DetalleDeliberacion(): ReactNode {
     else if (resultado.estado === 'fallo') setErrorAporte(resultado.error);
   }
 
-  if (error !== undefined) return <ErrorVisible error={error} />;
+  // Mismo callejón que en el detalle de un problema o de una decisión: el aviso solo, sin
+  // encabezado ni reintento, no daba ni un lugar en el índice de encabezados ni un camino de vuelta.
+  if (error !== undefined) {
+    return (
+      <div className="pagina-prosa">
+        <h1>No pudimos abrir esta conversación</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button className="boton" type="button" onClick={recargar}>
+            Volver a intentar
+          </button>{' '}
+          <Link className="boton secundario" href="/deliberaciones">
+            Ver todas las conversaciones
+          </Link>
+        </p>
+      </div>
+    );
+  }
   if (deliberacion === undefined) return <Cargando que="la conversación" />;
 
   const opciones = opcionesDe(deliberacion);
@@ -288,257 +306,293 @@ export default function DetalleDeliberacion(): ReactNode {
         Conversación sobre{' '}
         <Link href={`/problemas/${deliberacion.problemaId}`}>{deliberacion.problemaTitulo}</Link>
       </p>
-      <h1>{deliberacion.problemaTitulo}</h1>
 
-      <Pasos titulo="Etapas de la conversación" pasos={ETAPAS} actual={deliberacion.etapa} />
+      <div className="pagina-detalle">
+        <h1>{deliberacion.problemaTitulo}</h1>
 
-      <p>
-        <span className="etiqueta">{deliberacion.etapaEnPalabras}</span>{' '}
-        {plazo(deliberacion.cierraEn)}{' '}
-        <span className="suave">(hasta el {cuando(deliberacion.cierraEn)})</span>
-      </p>
-      <p>{deliberacion.queSeHaceEnEstaEtapa}</p>
+        <aside className="carril-estado" aria-label="Estado de la conversación">
+          <Ficha variante="en-curso">{deliberacion.etapaEnPalabras}</Ficha>
+          <Plazo ms={deliberacion.cierraEn} />
+          <p className="suave">hasta el {cuando(deliberacion.cierraEn)}</p>
 
-      <Aviso
-        tipo={deliberacion.autoriaVisible ? 'bien' : 'atencion'}
-        titulo={deliberacion.autoriaVisible ? 'Cada aporte tiene nombre' : 'Todavía sin nombres'}
-      >
-        {deliberacion.avisoDeAutoria}
-      </Aviso>
+          <Pasos titulo="Etapas de la conversación" pasos={ETAPAS} actual={deliberacion.etapa} />
 
-      <ErrorVisible error={errorAporte} />
+          <p>{deliberacion.queSeHaceEnEstaEtapa}</p>
 
-      <section aria-labelledby="aportes-titulo">
-        <h2 id="aportes-titulo">Lo que se dijo</h2>
-        {deliberacion.aportes.length === 0 ? (
-          <div className="vacio">
-            <p>Todavía no escribió nadie. {deliberacion.queSePuedeEscribirAhora}</p>
-          </div>
-        ) : (
-          <ol className="tarjetas">
-            {deliberacion.aportes.map((aporte) => (
-              <li key={aporte.id} id={`aporte-${aporte.id}`}>
-                <h3>
-                  <span className="etiqueta">{aporte.comoSeLlama}</span>{' '}
-                  {!aporte.vigente && (
-                    <span className="suave">
-                      <span aria-hidden="true">↺ </span>alguien lo corrigió después
-                    </span>
-                  )}
-                </h3>
-                <p style={{ whiteSpace: 'pre-wrap' }}>{aporte.texto}</p>
+          <Aviso
+            tipo={deliberacion.autoriaVisible ? 'bien' : 'atencion'}
+            titulo={
+              deliberacion.autoriaVisible ? 'Cada aporte tiene nombre' : 'Todavía sin nombres'
+            }
+          >
+            {deliberacion.avisoDeAutoria}
+          </Aviso>
 
-                {aporte.gravedad !== undefined && (
-                  <p>
-                    Qué tan grave sería:{' '}
-                    <strong>
-                      {aporte.gravedadEnPalabras ?? GRAVEDAD_EN_PALABRAS[aporte.gravedad]}
-                    </strong>
-                  </p>
-                )}
-                {aporte.mitigacion !== undefined && (
-                  <p style={{ whiteSpace: 'pre-wrap' }}>Cómo se reduciría: {aporte.mitigacion}</p>
-                )}
-                {aporte.fuente !== undefined && (
-                  <p className="suave">De dónde sale: {aporte.fuente}</p>
-                )}
-
-                {aporte.responde.map((vinculo) => {
-                  const destinoAporte = porId.get(vinculo.aporteId);
-                  return (
-                    <p key={`${aporte.id}-${vinculo.aporteId}`} className="suave">
-                      {vinculo.comoSeRelaciona}:{' '}
-                      {destinoAporte === undefined ? (
-                        'un aporte de esta misma conversación'
-                      ) : (
-                        <a href={`#aporte-${vinculo.aporteId}`}>{resumen(destinoAporte)}</a>
-                      )}
-                    </p>
-                  );
-                })}
-                {aporte.corrigeA !== undefined && (
-                  <p className="suave">
-                    Corrige a:{' '}
-                    <a href={`#aporte-${aporte.corrigeA}`}>
-                      {textoDelCorregido(porId, aporte.corrigeA)}
-                    </a>
-                  </p>
-                )}
-
-                <p className="suave">
-                  {quienLoEscribio(aporte)} ·{' '}
-                  {aporte.cuando === undefined
-                    ? `escrito en «${aporte.etapaEnPalabras}»`
-                    : cuando(aporte.cuando)}
+          {deliberacion.puedoAvanzarEtapa &&
+            deliberacion.etapaSiguienteEnPalabras !== undefined && (
+              <section aria-labelledby="etapa-titulo" className="accion-procedimiento">
+                <h2 id="etapa-titulo">Pasar a la etapa siguiente</h2>
+                <p>
+                  Cerrar «{deliberacion.etapaEnPalabras}» no se deshace: después de esto ya nadie
+                  puede escribir lo que iba en esta etapa.
+                  {!deliberacion.autoriaVisible &&
+                    ' Y al cerrarla aparecen los nombres de todos los aportes, incluido el tuyo.'}
                 </p>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+                <button
+                  className="boton"
+                  type="button"
+                  disabled={enCurso !== undefined}
+                  onClick={() => void avanzar()}
+                >
+                  Cerrar «{deliberacion.etapaEnPalabras}» y pasar a «
+                  {deliberacion.etapaSiguienteEnPalabras}»
+                </button>
+              </section>
+            )}
+        </aside>
 
-      {deliberacion.puedoAportar ? (
-        <section aria-labelledby="aportar-titulo">
-          <h2 id="aportar-titulo">Aportar</h2>
-          <p>{deliberacion.queSePuedeEscribirAhora}</p>
+        <div className="cuerpo-detalle">
+          <ErrorVisible error={errorAporte} />
 
-          <fieldset className="opciones">
-            <legend>¿Qué querés escribir?</legend>
-            {opciones.map((item) => (
-              <div className="opcion" key={item.clave}>
-                <input
-                  type="radio"
-                  id={`opcion-${item.clave}`}
-                  name="opcion"
-                  value={item.clave}
-                  checked={clave === item.clave}
-                  onChange={() => {
-                    setClave(item.clave);
-                    limpiar();
-                  }}
-                />
-                <label htmlFor={`opcion-${item.clave}`}>{item.nombre}</label>
-                <span className="explica">{item.ayuda}</span>
+          <section aria-labelledby="aportes-titulo">
+            <h2 id="aportes-titulo">Lo que se dijo</h2>
+            {deliberacion.aportes.length === 0 ? (
+              <div className="vacio" role="status">
+                <p>Todavía no escribió nadie. {deliberacion.queSePuedeEscribirAhora}</p>
               </div>
-            ))}
-          </fieldset>
+            ) : (
+              <ol className="tarjetas">
+                {deliberacion.aportes.map((aporte) => (
+                  <li key={aporte.id} id={`aporte-${aporte.id}`}>
+                    <h3>
+                      <Ficha variante="neutra">{aporte.comoSeLlama}</Ficha>{' '}
+                      {!aporte.vigente && (
+                        <span className="suave">
+                          <span aria-hidden="true">↺ </span>alguien lo corrigió después
+                        </span>
+                      )}
+                    </h3>
+                    <p style={{ whiteSpace: 'pre-wrap' }}>{aporte.texto}</p>
 
-          {opcion !== undefined && (
-            <form
-              className="formulario-acotado"
-              onSubmit={(e) => void aportar(e, opcion)}
-              noValidate
-            >
-              {opcion.etiquetaDestino !== undefined &&
-                (opcion.variosDestinos === true ? (
-                  <fieldset className="opciones">
-                    <legend>{opcion.etiquetaDestino}</legend>
-                    {candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).length === 0 ? (
-                      <p className="suave">
-                        Todavía no hay ningún aporte al que referirse. Escribí primero lo que va
-                        antes.
+                    {aporte.gravedad !== undefined && (
+                      <p>
+                        Qué tan grave sería:{' '}
+                        <strong>
+                          {aporte.gravedadEnPalabras ?? GRAVEDAD_EN_PALABRAS[aporte.gravedad]}
+                        </strong>
                       </p>
-                    ) : (
-                      candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).map((candidato) => (
-                        <div className="opcion" key={candidato.id}>
-                          <input
-                            type="checkbox"
-                            id={`destino-${candidato.id}`}
-                            checked={destinos.includes(candidato.id)}
-                            onChange={(e) => {
-                              setDestinos((antes) =>
-                                e.target.checked
-                                  ? [...antes, candidato.id]
-                                  : antes.filter((x) => x !== candidato.id),
-                              );
-                            }}
-                          />
-                          <label htmlFor={`destino-${candidato.id}`}>{resumen(candidato)}</label>
-                        </div>
-                      ))
                     )}
-                  </fieldset>
-                ) : (
-                  <div className="campo">
-                    <label htmlFor="destino">{opcion.etiquetaDestino}</label>
-                    <select
-                      id="destino"
-                      required
-                      value={destino}
-                      onChange={(e) => {
-                        setDestino(e.target.value);
+                    {aporte.mitigacion !== undefined && (
+                      <p style={{ whiteSpace: 'pre-wrap' }}>
+                        Cómo se reduciría: {aporte.mitigacion}
+                      </p>
+                    )}
+                    {aporte.fuente !== undefined && (
+                      <p className="suave">De dónde sale: {aporte.fuente}</p>
+                    )}
+
+                    {aporte.responde.map((vinculo) => {
+                      const destinoAporte = porId.get(vinculo.aporteId);
+                      return (
+                        <p key={`${aporte.id}-${vinculo.aporteId}`} className="suave">
+                          {vinculo.comoSeRelaciona}:{' '}
+                          {destinoAporte === undefined ? (
+                            'un aporte de esta misma conversación'
+                          ) : (
+                            <a href={`#aporte-${vinculo.aporteId}`}>{resumen(destinoAporte)}</a>
+                          )}
+                        </p>
+                      );
+                    })}
+                    {aporte.corrigeA !== undefined && (
+                      <p className="suave">
+                        Corrige a:{' '}
+                        <a href={`#aporte-${aporte.corrigeA}`}>
+                          {textoDelCorregido(porId, aporte.corrigeA)}
+                        </a>
+                      </p>
+                    )}
+
+                    <Meta>
+                      {quienLoEscribio(aporte)}
+                      {aporte.cuando === undefined
+                        ? `escrito en «${aporte.etapaEnPalabras}»`
+                        : cuando(aporte.cuando)}
+                    </Meta>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+
+          {deliberacion.puedoAportar ? (
+            <section aria-labelledby="aportar-titulo">
+              <h2 id="aportar-titulo">Aportar</h2>
+              <p>{deliberacion.queSePuedeEscribirAhora}</p>
+
+              <fieldset className="opciones">
+                <legend>¿Qué querés escribir?</legend>
+                {opciones.map((item) => (
+                  <div className="opcion" key={item.clave}>
+                    <input
+                      type="radio"
+                      id={`opcion-${item.clave}`}
+                      name="opcion"
+                      value={item.clave}
+                      checked={clave === item.clave}
+                      onChange={() => {
+                        setClave(item.clave);
+                        limpiar();
                       }}
-                    >
-                      <option value="">Elegí uno</option>
-                      {candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).map((candidato) => (
-                        <option key={candidato.id} value={candidato.id}>
-                          {resumen(candidato)}
-                        </option>
-                      ))}
-                    </select>
+                    />
+                    <label htmlFor={`opcion-${item.clave}`}>{item.nombre}</label>
+                    <span className="explica">{item.ayuda}</span>
                   </div>
                 ))}
+              </fieldset>
 
-              <div className="campo">
-                <label htmlFor="texto">
-                  {opcion.clave === 'riesgo' ? '¿Qué puede salir mal?' : 'Escribilo'}
-                </label>
-                <span className="ayuda" id="ayuda-texto">
-                  Mínimo 20 caracteres. {opcion.ayuda}
-                </span>
-                <textarea
-                  id="texto"
-                  required
-                  minLength={20}
-                  maxLength={4000}
-                  aria-describedby="ayuda-texto"
-                  value={texto}
-                  onChange={(e) => {
-                    setTexto(e.target.value);
-                  }}
-                />
-              </div>
-
-              {opcion.clave === 'evidencia' && (
-                <div className="campo">
-                  <label htmlFor="fuente">¿De dónde sale? (opcional)</label>
-                  <input
-                    id="fuente"
-                    type="text"
-                    maxLength={140}
-                    value={fuente}
-                    onChange={(e) => {
-                      setFuente(e.target.value);
-                    }}
-                  />
-                </div>
-              )}
-
-              {opcion.clave === 'riesgo' && (
-                <>
-                  <fieldset className="opciones">
-                    <legend>¿Qué tan grave sería?</legend>
-                    {GRAVEDADES.map((valor) => (
-                      <div className="opcion" key={valor}>
-                        <input
-                          type="radio"
-                          id={`gravedad-${String(valor)}`}
-                          name="gravedad"
-                          checked={gravedad === valor}
-                          onChange={() => {
-                            setGravedad(valor);
+              {opcion !== undefined && (
+                <form
+                  className="formulario-acotado"
+                  onSubmit={(e) => void aportar(e, opcion)}
+                  noValidate
+                >
+                  {opcion.etiquetaDestino !== undefined &&
+                    (opcion.variosDestinos === true ? (
+                      <fieldset className="opciones">
+                        <legend>{opcion.etiquetaDestino}</legend>
+                        {candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).length === 0 ? (
+                          <p className="suave">
+                            Todavía no hay ningún aporte al que referirse. Escribí primero lo que va
+                            antes.
+                          </p>
+                        ) : (
+                          candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).map(
+                            (candidato) => (
+                              <div className="opcion" key={candidato.id}>
+                                <input
+                                  type="checkbox"
+                                  id={`destino-${candidato.id}`}
+                                  checked={destinos.includes(candidato.id)}
+                                  onChange={(e) => {
+                                    setDestinos((antes) =>
+                                      e.target.checked
+                                        ? [...antes, candidato.id]
+                                        : antes.filter((x) => x !== candidato.id),
+                                    );
+                                  }}
+                                />
+                                <label htmlFor={`destino-${candidato.id}`}>
+                                  {resumen(candidato)}
+                                </label>
+                              </div>
+                            ),
+                          )
+                        )}
+                      </fieldset>
+                    ) : (
+                      <div className="campo">
+                        <label htmlFor="destino">{opcion.etiquetaDestino}</label>
+                        <select
+                          id="destino"
+                          required
+                          value={destino}
+                          onChange={(e) => {
+                            setDestino(e.target.value);
                           }}
-                        />
-                        <label htmlFor={`gravedad-${String(valor)}`}>
-                          {GRAVEDAD_EN_PALABRAS[valor]}
-                        </label>
+                        >
+                          <option value="">Elegí uno</option>
+                          {candidatos(opcion.destinoDeTipo, opcion.destinoDeModo).map(
+                            (candidato) => (
+                              <option key={candidato.id} value={candidato.id}>
+                                {resumen(candidato)}
+                              </option>
+                            ),
+                          )}
+                        </select>
                       </div>
                     ))}
-                  </fieldset>
+
                   <div className="campo">
-                    <label htmlFor="mitigacion">¿Cómo se reduciría?</label>
+                    <label htmlFor="texto">
+                      {opcion.clave === 'riesgo' ? '¿Qué puede salir mal?' : 'Escribilo'}
+                    </label>
+                    <span className="ayuda" id="ayuda-texto">
+                      Mínimo 20 caracteres. {opcion.ayuda}
+                    </span>
                     <textarea
-                      id="mitigacion"
+                      id="texto"
                       required
                       minLength={20}
                       maxLength={4000}
-                      value={mitigacion}
+                      aria-describedby="ayuda-texto"
+                      value={texto}
                       onChange={(e) => {
-                        setMitigacion(e.target.value);
+                        setTexto(e.target.value);
                       }}
                     />
                   </div>
-                </>
-              )}
 
-              {(deliberacion.laSalidaDebeCorregirAOtra || opcion.tipo !== 'alternativa') && (
-                <div className="campo">
-                  <label htmlFor="corrige">
-                    {deliberacion.laSalidaDebeCorregirAOtra && opcion.tipo === 'alternativa'
-                      ? '¿Qué salida estás corrigiendo?'
-                      : '¿Estás corrigiendo un aporte anterior? (opcional)'}
-                  </label>
-                  {/*
+                  {opcion.clave === 'evidencia' && (
+                    <div className="campo">
+                      <label htmlFor="fuente">¿De dónde sale? (opcional)</label>
+                      <input
+                        id="fuente"
+                        type="text"
+                        maxLength={140}
+                        value={fuente}
+                        onChange={(e) => {
+                          setFuente(e.target.value);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {opcion.clave === 'riesgo' && (
+                    <>
+                      <fieldset className="opciones">
+                        <legend>¿Qué tan grave sería?</legend>
+                        {GRAVEDADES.map((valor) => (
+                          <div className="opcion" key={valor}>
+                            <input
+                              type="radio"
+                              id={`gravedad-${String(valor)}`}
+                              name="gravedad"
+                              checked={gravedad === valor}
+                              onChange={() => {
+                                setGravedad(valor);
+                              }}
+                            />
+                            <label htmlFor={`gravedad-${String(valor)}`}>
+                              {GRAVEDAD_EN_PALABRAS[valor]}
+                            </label>
+                          </div>
+                        ))}
+                      </fieldset>
+                      <div className="campo">
+                        <label htmlFor="mitigacion">¿Cómo se reduciría?</label>
+                        <textarea
+                          id="mitigacion"
+                          required
+                          minLength={20}
+                          maxLength={4000}
+                          value={mitigacion}
+                          onChange={(e) => {
+                            setMitigacion(e.target.value);
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {(deliberacion.laSalidaDebeCorregirAOtra || opcion.tipo !== 'alternativa') && (
+                    <div className="campo">
+                      <label htmlFor="corrige">
+                        {deliberacion.laSalidaDebeCorregirAOtra && opcion.tipo === 'alternativa'
+                          ? '¿Qué salida estás corrigiendo?'
+                          : '¿Estás corrigiendo un aporte anterior? (opcional)'}
+                      </label>
+                      {/*
                     Antes esta ayuda decía «puede ser de otra persona», porque el motor no
                     comprobaba la autoría al corregir y prometer lo contrario habría sido mentir.
                     Ya la comprueba, así que la frase cambia con la regla.
@@ -550,67 +604,48 @@ export default function DetalleDeliberacion(): ReactNode {
                     suyo. Ahí se ofrecen todos y quien escribió reconoce el suyo; si se equivoca, el
                     motor lo rechaza con estas mismas palabras y no ha revelado nada de nadie.
                   */}
-                  <span className="ayuda" id="ayuda-corrige">
-                    Sólo podés corregir lo que escribiste vos: lo de otra persona no se corrige, se
-                    le responde. Lo que corregís no se borra: queda con su fecha y se marca que hay
-                    algo más nuevo.
-                  </span>
-                  <select
-                    id="corrige"
-                    aria-describedby="ayuda-corrige"
-                    required={
-                      deliberacion.laSalidaDebeCorregirAOtra && opcion.tipo === 'alternativa'
-                    }
-                    value={corrigeA}
-                    onChange={(e) => {
-                      setCorrigeA(e.target.value);
-                    }}
-                  >
-                    <option value="">No corrijo nada</option>
-                    {candidatos(opcion.tipo)
-                      .filter((candidato) => candidato.esMio !== false)
-                      .map((candidato) => (
-                        <option key={candidato.id} value={candidato.id}>
-                          {resumen(candidato)}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+                      <span className="ayuda" id="ayuda-corrige">
+                        Sólo podés corregir lo que escribiste vos: lo de otra persona no se corrige,
+                        se le responde. Lo que corregís no se borra: queda con su fecha y se marca
+                        que hay algo más nuevo.
+                      </span>
+                      <select
+                        id="corrige"
+                        aria-describedby="ayuda-corrige"
+                        required={
+                          deliberacion.laSalidaDebeCorregirAOtra && opcion.tipo === 'alternativa'
+                        }
+                        value={corrigeA}
+                        onChange={(e) => {
+                          setCorrigeA(e.target.value);
+                        }}
+                      >
+                        <option value="">No corrijo nada</option>
+                        {candidatos(opcion.tipo)
+                          .filter((candidato) => candidato.esMio !== false)
+                          .map((candidato) => (
+                            <option key={candidato.id} value={candidato.id}>
+                              {resumen(candidato)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <button className="boton" type="submit" disabled={enCurso !== undefined}>
+                    {enCurso === 'aportar' ? 'Guardando…' : 'Guardar mi aporte'}
+                  </button>
+                </form>
               )}
-
-              <button className="boton" type="submit" disabled={enCurso !== undefined}>
-                {enCurso === 'aportar' ? 'Guardando…' : 'Guardar mi aporte'}
-              </button>
-            </form>
+            </section>
+          ) : (
+            <Aviso tipo="atencion" titulo="No podés escribir acá">
+              {deliberacion.motivoNoPuedoAportar ?? 'En esta etapa no se escribe.'}{' '}
+              {sesion === undefined && <Link href="/entrar">Entrar</Link>}
+            </Aviso>
           )}
-        </section>
-      ) : (
-        <Aviso tipo="atencion" titulo="No podés escribir acá">
-          {deliberacion.motivoNoPuedoAportar ?? 'En esta etapa no se escribe.'}{' '}
-          {sesion === undefined && <Link href="/entrar">Entrar</Link>}
-        </Aviso>
-      )}
-
-      {deliberacion.puedoAvanzarEtapa && deliberacion.etapaSiguienteEnPalabras !== undefined && (
-        <section aria-labelledby="etapa-titulo" className="accion-procedimiento">
-          <h2 id="etapa-titulo">Pasar a la etapa siguiente</h2>
-          <p>
-            Cerrar «{deliberacion.etapaEnPalabras}» no se deshace: después de esto ya nadie puede
-            escribir lo que iba en esta etapa.
-            {!deliberacion.autoriaVisible &&
-              ' Y al cerrarla aparecen los nombres de todos los aportes, incluido el tuyo.'}
-          </p>
-          <button
-            className="boton"
-            type="button"
-            disabled={enCurso !== undefined}
-            onClick={() => void avanzar()}
-          >
-            Cerrar «{deliberacion.etapaEnPalabras}» y pasar a «
-            {deliberacion.etapaSiguienteEnPalabras}»
-          </button>
-        </section>
-      )}
+        </div>
+      </div>
     </>
   );
 }

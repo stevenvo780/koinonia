@@ -16,12 +16,28 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
-import { ErrorDeApi, traer } from '../lib/api';
+import { ErrorDeApi, sesionActual } from '../lib/api';
 import type { Sesion } from '@koinonia/contracts';
 
-export function Cargando({ que }: { readonly que: string }): ReactNode {
+/**
+ * `completa`: la pantalla entera está esperando este dato y no hay ningún otro contenido montado
+ * todavía —el caso de `/`, `/normas`, `/verificar` y de cada `return <Cargando .../>` temprano que
+ * reemplaza el árbol entero de una pantalla de detalle—. Ahí reserva alto (ver `.cargando-completa`
+ * en `globals.css`) para que el pie de página no quede pegado al título y no salte cientos de
+ * píxeles cuando la respuesta llega. Sin `completa` (el valor por omisión) es la línea suelta de
+ * siempre, pensada para cuando `<Cargando>` reemplaza sólo una pieza chica de una pantalla que ya
+ * tiene el resto montado —el placeholder de un `<select>` mientras llega su lista, por ejemplo—,
+ * donde reservar medio alto de pantalla sería un hueco absurdo.
+ */
+export function Cargando({
+  que,
+  completa = false,
+}: {
+  readonly que: string;
+  readonly completa?: boolean;
+}): ReactNode {
   return (
-    <p className="cargando" role="status">
+    <p className={completa ? 'cargando cargando-completa' : 'cargando'} role="status">
       Cargando {que}…
     </p>
   );
@@ -110,7 +126,12 @@ export function useSesion(): {
   useEffect(() => {
     let vivo = true;
     setCargando(true);
-    traer<Sesion>('/auth/yo')
+    // `sesionActual()` pregunta contra `/auth/estado`, que contesta 200 tanto si hay sesión como
+    // si no: ver el comentario de esa función en `lib/api.ts`. `/auth/yo` sigue devolviendo 401 sin
+    // credencial, y en cada carga de cada pantalla eso pintaba una línea roja en la consola del
+    // navegador para lo que es la pregunta más común de toda la interfaz —«¿hay alguien mirando
+    // con cuenta?»—, que no es un error, es la respuesta esperada la mitad del tiempo.
+    sesionActual()
       .then((s) => {
         if (vivo) setSesion(s);
       })
@@ -159,7 +180,15 @@ export function Pasos({
   const indiceActual = pasos.findIndex((paso) => paso.id === actual);
   return (
     <nav aria-label={titulo}>
-      <ol className="tarjetas">
+      {/*
+       * `.pasos`, no `.tarjetas`: un paso del recorrido no es un ítem de índice, es un tramo de un
+       * único recorrido, y compartir clase con las tarjetas le prestaba una caja —sombra, filete
+       * que se tiñe al pasar el mouse— que no le correspondía. `role="list"` porque `.pasos` le
+       * quita a este `<ol>` el `list-style` nativo, y sin marcador VoiceOver deja de anunciarlo
+       * como lista si no se lo decimos explícitamente (el mismo motivo por el que el recorrido de
+       * la cabecera, más abajo en este fichero, también lo lleva).
+       */}
+      <ol className="pasos" role="list">
         {pasos.map((paso, indice) => {
           const esActual = indice === indiceActual;
           const yaPaso = indiceActual >= 0 && indice < indiceActual;
@@ -180,16 +209,25 @@ export function Pasos({
 export function BarraSesion(): ReactNode {
   const { sesion, cargando } = useSesion();
   if (cargando) return null;
+  // La frase va envuelta en un `<span>` y no suelta dentro del `<p>`. `.tira-sesion` es un
+  // contenedor flexible para poder alinear la etiqueta del encargo con el texto, y en un contenedor
+  // flexible **cada nodo de texto suelto es un ítem**: el punto final de la oración se convertía en
+  // una caja propia y aparecía en pantalla separado por el hueco de 0,75 rem, como «institucional .».
+  // Envolver la oración entera la vuelve un solo ítem y el punto vuelve a pegarse a la palabra.
   if (sesion === undefined) {
     return (
       <p className="tira-sesion">
-        Estás mirando sin cuenta. <Link href="/entrar">Entrar con el correo institucional</Link>.
+        <span>
+          Estás mirando sin cuenta. <Link href="/entrar">Entrar con el correo institucional</Link>.
+        </span>
       </p>
     );
   }
   return (
     <p className="tira-sesion">
-      Entraste como <strong>{sesion.alias}</strong>.{' '}
+      <span>
+        Entraste como <strong>{sesion.alias}</strong>.
+      </span>
       {sesion.roles.includes('facilitator') && (
         <span className="etiqueta">Cuidás el procedimiento</span>
       )}

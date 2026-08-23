@@ -1,0 +1,103 @@
+# Koinonía en producción. Fichero PROPIO del despliegue: NO es infra/docker/docker-compose.yml del
+# repositorio, que publica el 55432 y en esta máquina eso significaría abrir PostgreSQL a Internet
+# (ufw inactivo + cadena DOCKER-USER vacía = una publicación en 0.0.0.0 es pública al instante).
+#
+# Reglas de esta máquina que este fichero respeta:
+#   · Todo con prefijo `koinonia-`, en la red propia `koinonia_net` (externa, creada a mano).
+#   · PostgreSQL SIN puerto publicado. Sólo lo alcanza la API, por nombre de contenedor.
+#   · La API sólo en 127.0.0.1:18090. Nunca en 0.0.0.0.
+#   · Rotación de logs acotada: el disco es compartido con 66 contenedores ajenos.
+
+name: koinonia
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: koinonia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en /opt/koinonia/.env}
+      POSTGRES_DB: koinonia
+      # Determinista y sin sorpresas de intercalación (igual que el compose del repositorio).
+      LANG: C
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    command:
+      - postgres
+      - '-c'
+      - 'max_connections=200'
+      - '-c'
+      - 'log_statement=ddl'
+      - '-c'
+      - 'log_connections=on'
+    volumes:
+      - koinonia-pgdata:/var/lib/postgresql/data
+    networks:
+      - koinonia_net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d koinonia']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  api:
+    image: koinonia-api:20260823-e9c68d9
+    container_name: koinonia-api
+    restart: unless-stopped
+    env_file:
+      - /opt/koinonia/.env
+    # Loopback explícito. Sin el 127.0.0.1 delante quedaría expuesta a Internet.
+    ports:
+      - '127.0.0.1:18090:3001'
+    networks:
+      - koinonia_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  web:
+    image: koinonia-web:20260823-e9c68d9
+    container_name: koinonia-web
+    restart: unless-stopped
+    # NO lleva `env_file`, a propósito. La interfaz no necesita ni la contraseña de PostgreSQL ni la
+    # clave maestra del baúl ni la pimienta de los cupos, y lo que un proceso no tiene no lo puede
+    # filtrar. Sólo se le declara lo que usa.
+    environment:
+      # Por la red interna de Docker, por nombre de contenedor. No sale de la máquina: ni pasa por
+      # Caddy, ni por TLS, ni por Internet.
+      KOINONIA_API_URL: 'http://koinonia-api:3001'
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: '1'
+    # Loopback explícito, igual que la API. Sin el 127.0.0.1 delante quedaría en Internet: en esta
+    # máquina `ufw` está inactivo y la cadena DOCKER-USER vacía. Quien entra, entra por Caddy.
+    ports:
+      - '127.0.0.1:18091:3000'
+    networks:
+      - koinonia_net
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+networks:
+  koinonia_net:
+    name: koinonia_net
+    external: true
+
+volumes:
+  koinonia-pgdata:
+    name: koinonia-pgdata

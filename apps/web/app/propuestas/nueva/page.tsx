@@ -61,19 +61,19 @@ function Formulario(): ReactNode {
   // No se propone sin problema (PRODUCT §4). Y en vez de un error, se ofrece crearlo.
   if (problemaId === '') {
     return (
-      <>
+      <div className="pagina-prosa">
         <h1>Escribir una propuesta</h1>
         <Aviso tipo="atencion" titulo="Falta el problema">
           Toda propuesta responde a un problema. Elegí uno de la{' '}
           <Link href="/problemas">lista</Link> o{' '}
           <Link href="/problemas/nuevo">escribí el problema primero</Link>.
         </Aviso>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="pagina-prosa">
       {problema !== undefined && (
         <p className="suave">
           Responde a: <Link href={`/problemas/${problemaId}`}>{problema.titulo}</Link>
@@ -141,7 +141,7 @@ function Formulario(): ReactNode {
           {enCurso === 'guardar' ? 'Guardando…' : 'Guardar la propuesta'}
         </button>
       </form>
-    </>
+    </div>
   );
 }
 
@@ -151,9 +151,11 @@ export default function NuevaPropuesta(): ReactNode {
     // queda ante una página que no dice nada mientras se resuelven los parámetros de la dirección.
     <Suspense
       fallback={
-        <p className="cargando" role="status">
-          Cargando el formulario…
-        </p>
+        <div className="pagina-prosa">
+          <p className="cargando" role="status">
+            Cargando el formulario…
+          </p>
+        </div>
       }
     >
       <Formulario />

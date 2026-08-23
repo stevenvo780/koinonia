@@ -13,7 +13,8 @@ import { useCallback, useEffect, useState, type ReactNode, type SyntheticEvent }
 
 import type { DeliberacionResumen, ProblemaResumen } from '@koinonia/contracts';
 
-import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
+import { Aviso, ErrorVisible, useSesion } from '../../components/marco';
+import { Esqueleto, Ficha, Meta, Tarjeta, Vacio } from '../../components/piezas';
 import { useAccionUnica } from '../../lib/acciones';
 import { enviar, plazo, traer } from '../../lib/api';
 
@@ -63,7 +64,7 @@ export default function Deliberaciones(): ReactNode {
   }
 
   return (
-    <>
+    <div className="pagina-indice">
       <h1>Deliberaciones</h1>
       <p>
         Una deliberación es una conversación con etapas y con plazo. Primero se entiende el
@@ -72,51 +73,63 @@ export default function Deliberaciones(): ReactNode {
       </p>
 
       <ErrorVisible error={error} />
-      {lista === undefined && error === undefined && <Cargando que="las conversaciones" />}
-
-      {lista !== undefined && lista.length === 0 && (
-        <div className="vacio">
-          <p>
-            Todavía no hay ninguna conversación abierta. Se abre sobre un problema que ya esté
-            escrito: <Link href="/problemas">mirá la lista de problemas</Link>.
-          </p>
-        </div>
+      {lista === undefined && error === undefined && (
+        <Esqueleto que="las conversaciones" cuantos={6} />
       )}
 
-      {lista !== undefined && lista.length > 0 && (
-        <ul className="tarjetas">
-          {lista.map((deliberacion) => (
-            <li key={deliberacion.id}>
-              <h2>
-                <Link href={`/deliberaciones/${deliberacion.id}`}>
-                  {deliberacion.problemaTitulo}
-                </Link>
-              </h2>
-              <p className="suave">
-                <span className="etiqueta">{deliberacion.etapaEnPalabras}</span>{' '}
-                {plazo(deliberacion.cierraEn)} · {deliberacion.cuantosAportes}{' '}
-                {deliberacion.cuantosAportes === 1 ? 'aporte' : 'aportes'}
-              </p>
-              <p>{deliberacion.queSeHaceEnEstaEtapa}</p>
-              {/*
-                Decir sólo «no se ve quién escribió» es mentir por omisión, y en la pantalla donde
-                alguien decide si escribe o no. La ficha de detalle ya dice la verdad entera en
-                `avisoDeAutoria`; acá va la misma verdad en corto, con las tres cosas que cambian
-                la decisión: de quién protege, de quién no, y que el historial descargable sí lo
-                dice. La palabra «anónimo» no aparece porque prometería algo que esto no da.
-              */}
-              {!deliberacion.autoriaVisible && (
-                <p>
-                  <span aria-hidden="true">◍ </span>
-                  Mientras esta etapa siga abierta no se ve quién escribió cada aporte. Eso te
-                  protege de las demás personas que participan, no de quien administra el servidor;
-                  y quien descargue el historial completo desde «Verificar» sí puede ver quién
-                  escribió cada aporte.
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+      {lista !== undefined && (
+        // Sección única alrededor de las DOS ramas —vacía y con datos—: `<Vacio>` y `<Tarjeta>`
+        // imponen `h3`, y sin este `h2` envolviendo también la rama vacía el salto pasaría de `h1`
+        // a `h3` directo cada vez que no hubiera ninguna conversación abierta.
+        <section aria-labelledby="deliberaciones-titulo">
+          <h2 id="deliberaciones-titulo">Conversaciones abiertas</h2>
+          {lista.length === 0 ? (
+            <Vacio
+              titulo="Todavía no hay ninguna conversación abierta"
+              salida={{ href: '/problemas', texto: 'Ver los problemas' }}
+            >
+              <p>Se abre sobre un problema que ya esté escrito.</p>
+            </Vacio>
+          ) : (
+            <ul className="tarjetas">
+              {lista.map((deliberacion) => (
+                <Tarjeta
+                  key={deliberacion.id}
+                  titulo={deliberacion.problemaTitulo}
+                  enlace={`/deliberaciones/${deliberacion.id}`}
+                >
+                  <Ficha variante="en-curso">{deliberacion.etapaEnPalabras}</Ficha>
+                  <Meta>
+                    {plazo(deliberacion.cierraEn)}
+                    {deliberacion.cuantosAportes > 0
+                      ? `${String(deliberacion.cuantosAportes)} ${
+                          deliberacion.cuantosAportes === 1 ? 'aporte' : 'aportes'
+                        }`
+                      : null}
+                  </Meta>
+                  <p>{deliberacion.queSeHaceEnEstaEtapa}</p>
+                  {/*
+                    Decir sólo «no se ve quién escribió» es mentir por omisión, y en la pantalla
+                    donde alguien decide si escribe o no. La ficha de detalle ya dice la verdad
+                    entera en `avisoDeAutoria`; acá va la misma verdad en corto, con las tres cosas
+                    que cambian la decisión: de quién protege, de quién no, y que el historial
+                    descargable sí lo dice. La palabra «anónimo» no aparece porque prometería algo
+                    que esto no da.
+                  */}
+                  {!deliberacion.autoriaVisible && (
+                    <p>
+                      <span aria-hidden="true">◍ </span>
+                      Mientras esta etapa siga abierta no se ve quién escribió cada aporte. Eso te
+                      protege de las demás personas que participan, no de quien administra el
+                      servidor; y quien descargue el historial completo desde «Verificar» sí puede
+                      ver quién escribió cada aporte.
+                    </p>
+                  )}
+                </Tarjeta>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       {cuidaElProcedimiento && (
@@ -187,6 +200,6 @@ export default function Deliberaciones(): ReactNode {
           <Link href="/entrar">Entrar</Link>.
         </Aviso>
       )}
-    </>
+    </div>
   );
 }

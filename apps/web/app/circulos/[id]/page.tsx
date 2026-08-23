@@ -16,6 +16,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Circulo, MiembrosCirculo } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../../components/marco';
+import { Esqueleto, Vacio } from '../../../components/piezas';
 import { respuestaEsperada, traer } from '../../../lib/api';
 
 export default function DetalleCirculo(): ReactNode {
@@ -62,91 +63,103 @@ export default function DetalleCirculo(): ReactNode {
   }, [id]);
 
   if (noExiste) {
+    // Sin `<Vacio>` acá: impone su propio `h3`, y puesto directo bajo el `h1` de esta rama
+    // saltaría de `h1` a `h3` sin ningún `h2` en medio. Esta rama reemplaza a la pantalla entera
+    // —no es el hueco de una lista dentro de una sección con su propio `h2`, que es para lo que
+    // `<Vacio>` está pensado—, así que va con el mismo patrón liso que usan los demás detalles
+    // cuando no pueden abrir lo que buscaban (ver `decisiones/[id]/page.tsx`).
     return (
-      <>
+      <div className="pagina-prosa">
         <h1>Ese grupo no existe</h1>
-        <div className="vacio" role="status">
-          <p>
-            Puede que el enlace esté mal copiado o que el grupo se haya disuelto. Lo que decidió
-            mientras existía sigue en el historial y no se borra.
-          </p>
-          <p>
-            <Link href="/circulos">Ver todos los grupos</Link> ·{' '}
-            <Link href="/historial">Ver el historial</Link>
-          </p>
-        </div>
-      </>
+        <p>
+          Puede que el enlace esté mal copiado o que el grupo se haya disuelto. Lo que decidió
+          mientras existía sigue en el historial y no se borra.
+        </p>
+        <p>
+          <Link className="boton secundario" href="/circulos">
+            Ver todos los grupos
+          </Link>{' '}
+          <Link className="boton secundario" href="/historial">
+            Ver el historial
+          </Link>
+        </p>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="pagina-detalle">
       <h1>{circulo?.nombre ?? 'Un grupo'}</h1>
 
-      <ErrorVisible error={error} />
-      {/* `noExiste` no se comprueba: si fuera cierto, esta rama ya habría vuelto arriba. */}
-      {circulo === undefined && error === undefined && <Cargando que="el grupo" />}
+      {/*
+       * El carril es «quién decide qué» —literalmente el asunto de esta pantalla—: la competencia
+       * del grupo es lo único que se parece a un estado acá, así que va arriba y viaja pegado a la
+       * lectura. El error de carga también cae acá: es parte de «qué tan bien se sabe el estado».
+       */}
+      <aside className="carril-estado" aria-label="Estado del grupo">
+        <ErrorVisible error={error} />
+        {/* `noExiste` no se comprueba: si fuera cierto, esta rama ya habría vuelto arriba. */}
+        {circulo === undefined && error === undefined && <Cargando que="el grupo" />}
+        {circulo !== undefined && (
+          <p>
+            <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}
+          </p>
+        )}
+      </aside>
 
-      {circulo !== undefined && (
+      <div className="cuerpo-detalle">
+        <section aria-labelledby="quienes-titulo">
+          <h2 id="quienes-titulo">Quiénes lo integran</h2>
+
+          {sinPermiso !== undefined && (
+            <Vacio
+              titulo={sinPermiso}
+              salida={{ href: '/entrar', texto: 'Entrar con el correo institucional' }}
+            >
+              <p>
+                Lo que este grupo <strong>decidió</strong> sí es público, aunque no lo sea quién lo
+                integra: <Link href="/decisiones">mirá las votaciones</Link> o{' '}
+                <Link href="/historial">el historial</Link>.
+              </p>
+            </Vacio>
+          )}
+
+          {miembros === undefined && sinPermiso === undefined && error === undefined && (
+            <Esqueleto que="las personas del grupo" />
+          )}
+
+          {miembros !== undefined && miembros.length === 0 && (
+            <Vacio
+              titulo="Este grupo todavía no tiene a nadie"
+              salida={{ href: '/circulos', texto: 'Ver los demás grupos' }}
+            >
+              <p>
+                Mientras no tenga integrantes, lo que le correspondería lo decide la Asamblea
+                completa.
+              </p>
+            </Vacio>
+          )}
+
+          {miembros !== undefined && miembros.length > 0 && (
+            <>
+              <p className="suave">
+                {miembros.length} {miembros.length === 1 ? 'persona' : 'personas'}. Sólo el nombre
+                con el que cada quien aparece: acá no hay correos, ni semestres, ni cuánto participó
+                cada cual.
+              </p>
+              <ul className="tarjetas">
+                {miembros.map((miembro) => (
+                  <li key={miembro.id}>{miembro.alias}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+
         <p>
-          <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}
+          <Link href="/circulos">Volver a todos los grupos</Link>
         </p>
-      )}
-
-      <section aria-labelledby="quienes-titulo">
-        <h2 id="quienes-titulo">Quiénes lo integran</h2>
-
-        {sinPermiso !== undefined && (
-          <div className="vacio" role="status">
-            <p>{sinPermiso}</p>
-            <p>
-              Lo que este grupo <strong>decidió</strong> sí es público, aunque no lo sea quién lo
-              integra: <Link href="/decisiones">mirá las votaciones</Link> o{' '}
-              <Link href="/historial">el historial</Link>.
-            </p>
-            <p>
-              <Link className="boton secundario" href="/entrar">
-                Entrar con el correo institucional
-              </Link>
-            </p>
-          </div>
-        )}
-
-        {miembros === undefined && sinPermiso === undefined && error === undefined && (
-          <Cargando que="las personas del grupo" />
-        )}
-
-        {miembros !== undefined && miembros.length === 0 && (
-          <div className="vacio" role="status">
-            <p>
-              Este grupo todavía no tiene a nadie. Mientras no tenga integrantes, lo que le
-              correspondería lo decide la Asamblea completa.
-            </p>
-            <p>
-              <Link href="/circulos">Ver los demás grupos</Link>
-            </p>
-          </div>
-        )}
-
-        {miembros !== undefined && miembros.length > 0 && (
-          <>
-            <p className="suave">
-              {miembros.length} {miembros.length === 1 ? 'persona' : 'personas'}. Sólo el nombre con
-              el que cada quien aparece: acá no hay correos, ni semestres, ni cuánto participó cada
-              cual.
-            </p>
-            <ul className="tarjetas">
-              {miembros.map((miembro) => (
-                <li key={miembro.id}>{miembro.alias}</li>
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
-
-      <p>
-        <Link href="/circulos">Volver a todos los grupos</Link>
-      </p>
-    </>
+      </div>
+    </div>
   );
 }

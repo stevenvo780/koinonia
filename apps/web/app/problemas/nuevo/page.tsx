@@ -61,7 +61,7 @@ export default function NuevoProblema(): ReactNode {
   const elegido = circulos?.find((circulo) => circulo.id === circuloId);
 
   return (
-    <>
+    <div className="pagina-prosa">
       <h1>Tengo un problema o una idea</h1>
 
       {!cargando && sesion === undefined && (
@@ -96,7 +96,19 @@ export default function NuevoProblema(): ReactNode {
           </p>
         </>
       ) : circulos === undefined ? (
-        <Cargando que="los grupos que deciden" />
+        <>
+          <div aria-hidden="true">
+            <div className="esqueleto-linea" style={{ width: '55%' }} />
+            <div
+              className="esqueleto-linea"
+              style={{ height: '2.75rem', marginTop: 'var(--e2)' }}
+            />
+            <div className="esqueleto-linea" style={{ width: '70%' }} />
+          </div>
+          <div className="solo-lectores">
+            <Cargando que="los grupos que deciden" />
+          </div>
+        </>
       ) : (
         <form onSubmit={(e) => void guardar(e)} noValidate>
           <div className="campo">
@@ -186,6 +198,6 @@ export default function NuevoProblema(): ReactNode {
           </button>
         </form>
       )}
-    </>
+    </div>
   );
 }

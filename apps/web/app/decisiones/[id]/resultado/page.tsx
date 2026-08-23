@@ -46,7 +46,7 @@ export default function Resultado(): ReactNode {
 
   if (error !== undefined) {
     return (
-      <>
+      <div className="pagina-prosa">
         <h1>No pudimos mostrar el resultado</h1>
         <ErrorVisible error={error} />
         <p>
@@ -57,15 +57,21 @@ export default function Resultado(): ReactNode {
             Ver todas las decisiones
           </Link>
         </p>
-      </>
+      </div>
     );
   }
-  if (resultado === undefined) return <Cargando que="el resultado" />;
+  if (resultado === undefined) {
+    return (
+      <div className="pagina-prosa">
+        <Cargando que="el resultado" />
+      </div>
+    );
+  }
 
   const aprobada = resultado.desenlace === 'approved';
 
   return (
-    <>
+    <div className="pagina-prosa">
       {/*
        * El encabezado decía «Resultado» y nada más. A esta pantalla se llega casi siempre desde un
        * enlace que alguien pasó, así que quien llega no trae contexto: un veredicto sin decir de
@@ -153,6 +159,7 @@ export default function Resultado(): ReactNode {
              * decidir si esto interesa— en repetir lo que la siguiente ya dijo. Se apunta al mismo
              * `h2` que nombra la sección para que el nombre no pueda quedar desfasado del título.
              */}
+            <p className="pista-tabla">➜ Desplazá para ver toda la tabla</p>
             <div className="tabla-desplazable" role="region" aria-labelledby={idTabla} tabIndex={0}>
               <table className="datos">
                 <thead>
@@ -206,7 +213,7 @@ export default function Resultado(): ReactNode {
           <code className="comprobante">{resultado.comprobanteLista}</code>
         </details>
       </section>
-    </>
+    </div>
   );
 }
 

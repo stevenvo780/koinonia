@@ -163,6 +163,68 @@ export function cuando(ms: number): string {
 }
 
 /**
+ * La misma fecha, en la forma corta que le hace falta a una tarjeta: «hoy», «ayer», «hace 3 días»,
+ * o «23 de agosto» (con el año sólo si no es el actual). `cuando()` sigue siendo la forma completa
+ * —con hora y minuto— para el detalle, donde la precisión importa; acá lo que importa es no repetir
+ * cuatro veces por tarjeta una frase de doce palabras. Quien necesite la hora exacta la sigue
+ * teniendo, en el `title` o el `<time datetime>` que arma cada pantalla junto a esta forma corta.
+ */
+export function fechaCorta(ms: number, ahora: number = Date.now()): string {
+  return formaCorta(ms, ahora).texto;
+}
+
+/**
+ * La misma forma corta, pero lista para ir **detrás de una preposición o de un verbo**.
+ *
+ * `fechaCorta()` devuelve dos clases de cosa que no se comportan igual en español: una expresión
+ * **relativa** —«hoy», «ayer», «hace 3 días»— y una fecha **absoluta** —«23 de agosto»—. El
+ * artículo «el» sólo le corresponde a la segunda. Anteponerlo en la pantalla, que es lo que estaban
+ * haciendo seis sitios, produce «desde el hoy», «Cerró el hace 3 días» y «vence el mañana».
+ *
+ * Acá el artículo viaja con la fecha y sólo cuando hace falta: la pantalla escribe
+ * `desde {fechaCortaEnFrase(x)}` y obtiene «desde hoy» o «desde el 23 de agosto», las dos bien.
+ * No se decide mirando el texto ya formado —eso rompería en cuanto alguien añada «anteayer»—: la
+ * decisión la toma `formaCorta`, que es quien sabe cuál de las dos ramas tomó.
+ */
+export function fechaCortaEnFrase(ms: number, ahora: number = Date.now()): string {
+  const { texto, relativa } = formaCorta(ms, ahora);
+  return relativa ? texto : `el ${texto}`;
+}
+
+/** El cálculo compartido. `relativa` es lo que decide si la frase admite artículo o no. */
+function formaCorta(
+  ms: number,
+  ahora: number,
+): { readonly texto: string; readonly relativa: boolean } {
+  const fecha = new Date(ms);
+  const hoyRef = new Date(ahora);
+  const inicioDelDia = (d: Date): number =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diasDeDiferencia = Math.round((inicioDelDia(fecha) - inicioDelDia(hoyRef)) / 86_400_000);
+
+  if (diasDeDiferencia === 0) return { texto: 'hoy', relativa: true };
+  if (diasDeDiferencia === -1) return { texto: 'ayer', relativa: true };
+  if (diasDeDiferencia === 1) return { texto: 'mañana', relativa: true };
+  if (diasDeDiferencia < 0 && diasDeDiferencia >= -6) {
+    return { texto: `hace ${String(Math.abs(diasDeDiferencia))} días`, relativa: true };
+  }
+  if (diasDeDiferencia > 0 && diasDeDiferencia <= 6) {
+    return { texto: `en ${String(diasDeDiferencia)} días`, relativa: true };
+  }
+
+  const mismoAno = fecha.getFullYear() === hoyRef.getFullYear();
+  return {
+    texto: new Intl.DateTimeFormat('es-CO', {
+      day: 'numeric',
+      month: 'long',
+      year: mismoAno ? undefined : 'numeric',
+      timeZone: 'America/Bogota',
+    }).format(fecha),
+    relativa: false,
+  };
+}
+
+/**
  * Cierra una frase con punto **sin duplicarlo**.
  *
  * `cuando()` acaba en «9:29 p. m.» y ese punto ya cierra la frase; la plantilla que añadía el suyo
