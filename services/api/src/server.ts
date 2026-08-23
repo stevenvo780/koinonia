@@ -15,6 +15,8 @@
  */
 
 import { configuracionDeAnclajeDesdeEntorno } from './anchor/configuracion.js';
+import type { ModoTls } from './anchor/smtp.js';
+import { nodeConnect } from './anchor/socket.js';
 import { crearTareaDeAnclaje } from './anchor/tarea.js';
 import { createPool } from './db/client.js';
 import { migrate } from './db/migrate.js';
@@ -24,11 +26,12 @@ import {
   consoleMailer,
   cryptoRandom,
   NodeAes256GcmVaultCrypto,
+  smtpMailer,
   systemClock,
   udeaIdentityAdapter,
   unavailableVaultCrypto,
 } from './http/adapters.js';
-import type { VaultCryptoPort } from './http/ports.js';
+import type { MailerPort, VaultCryptoPort } from './http/ports.js';
 
 function lista(nombre: string): readonly string[] {
   const valor = process.env[nombre];
@@ -66,12 +69,122 @@ function vaultFromEnvironment(modoDesarrollo: boolean): VaultCryptoPort {
   }
 }
 
+type Entorno = Readonly<Partial<Record<string, string>>>;
+
+function variable(env: Entorno, nombre: string): string | undefined {
+  const valor = env[nombre];
+  if (valor === undefined) return undefined;
+  const limpio = valor.trim();
+  return limpio === '' ? undefined : limpio;
+}
+
+/**
+ * `KOINONIA_SMTP_TLS` es un «sí/no» sobre STARTTLS, y además admite `implicita`.
+ *
+ * El sí/no es lo que pide el encargo y cubre los dos casos normales: 587 con STARTTLS y un relé de
+ * la casa sin cifrar. `implicita` está porque hay servidores institucionales que sólo escuchan en
+ * 465 con TLS desde el primer byte, y sin esa palabra el despliegue no tendría forma de llegar a
+ * ellos con las variables que existen. **El defecto es STARTTLS**: el defecto seguro, no el cómodo.
+ */
+export function modoTlsDeEntorno(valor: string | undefined): ModoTls {
+  if (valor === undefined) return 'starttls';
+  const v = valor.toLowerCase();
+  if (/^(1|si|sí|s|true|t|yes|y|on|starttls)$/u.test(v)) return 'starttls';
+  if (/^(0|no|n|false|f|off|ninguna|ninguno)$/u.test(v)) return 'ninguna';
+  if (v === 'implicita' || v === 'implícita' || v === 'tls') return 'implicita';
+  throw new Error(
+    `KOINONIA_SMTP_TLS no entiende «${valor}»: usá «sí» (STARTTLS), «no» (sin cifrar) o «implicita» (TLS desde el primer byte)`,
+  );
+}
+
+/**
+ * Elige el adaptador de correo y **dice cuál eligió**.
+ *
+ * Sin correo nadie entra: no hay contraseñas, la única puerta es un enlace que llega al buzón. Por
+ * eso la decisión no puede ser silenciosa en ninguno de los dos sentidos. Con `KOINONIA_SMTP_HOST`
+ * se manda de verdad; sin ella se imprime en el registro, que es lo que hace falta en desarrollo y
+ * es una avería con forma de éxito en producción.
+ *
+ * El entorno entra **como dato** —igual que en `configuracionDeAnclajeDesdeEntorno`— para que esta
+ * decisión se pueda comprobar sin arrancar un servidor ni escribir en `process.env` global.
+ */
+export function mailerDeEntorno(
+  env: Entorno,
+  opciones: { readonly modoDesarrollo: boolean },
+): {
+  readonly mailer: MailerPort;
+  readonly anuncio: string;
+  readonly grave: boolean;
+} {
+  const modoDesarrollo = opciones.modoDesarrollo;
+  const host = variable(env, 'KOINONIA_SMTP_HOST');
+  if (host === undefined) {
+    return {
+      mailer: consoleMailer,
+      grave: !modoDesarrollo,
+      anuncio: modoDesarrollo
+        ? 'Correo: adaptador de CONSOLA (no hay KOINONIA_SMTP_HOST). Los enlaces de entrada se imprimen aquí; no sale ningún correo.'
+        : '⚠ Correo: adaptador de CONSOLA en PRODUCCIÓN porque falta KOINONIA_SMTP_HOST. No se manda ni un correo, así que NADIE puede entrar, y los enlaces de entrada quedan IMPRESOS EN EL REGISTRO: quien lo lea puede tomar la sesión de otra persona durante 15 minutos. Configurá KOINONIA_SMTP_HOST y KOINONIA_SMTP_FROM.',
+    };
+  }
+
+  const from = variable(env, 'KOINONIA_SMTP_FROM');
+  if (from === undefined) {
+    // Fallar al arrancar y no al primer intento de entrar: un remitente inventado por el programa
+    // es un correo que sale y lo rechaza el receptor por SPF, sin que nadie mire ese registro.
+    throw new Error(
+      'KOINONIA_SMTP_HOST está configurada pero falta KOINONIA_SMTP_FROM: sin remitente no hay correo que mandar',
+    );
+  }
+
+  const tls = modoTlsDeEntorno(variable(env, 'KOINONIA_SMTP_TLS'));
+  const puertoCrudo = variable(env, 'KOINONIA_SMTP_PORT');
+  const puerto =
+    puertoCrudo === undefined
+      ? { starttls: 587, implicita: 465, ninguna: 25 }[tls]
+      : Number(puertoCrudo);
+  if (!Number.isInteger(puerto) || puerto < 1 || puerto > 65_535) {
+    throw new Error(`KOINONIA_SMTP_PORT debe ser un puerto TCP, y es «${String(puertoCrudo)}»`);
+  }
+
+  const user = variable(env, 'KOINONIA_SMTP_USER');
+  const pass = variable(env, 'KOINONIA_SMTP_PASS');
+  if ((user === undefined) !== (pass === undefined)) {
+    throw new Error('KOINONIA_SMTP_USER y KOINONIA_SMTP_PASS van juntas o no van');
+  }
+  const auth = user === undefined || pass === undefined ? undefined : { user, pass };
+
+  return {
+    mailer: smtpMailer({
+      host,
+      port: puerto,
+      tls,
+      from,
+      auth,
+      connect: nodeConnect(),
+      clock: systemClock,
+      random: cryptoRandom,
+    }),
+    grave: tls === 'ninguna',
+    anuncio:
+      `Correo: SMTP contra ${host} puerto ${String(puerto)}, ` +
+      `${{ starttls: 'STARTTLS', implicita: 'TLS implícito', ninguna: '⚠ SIN CIFRAR' }[tls]}, ` +
+      `${auth === undefined ? 'sin autenticar' : `autenticado como ${auth.user}`}, ` +
+      `remitente ${from}. Los enlaces de entrada NO se imprimen.`,
+  };
+}
+
 export async function main(): Promise<void> {
   const url =
     process.env['DATABASE_URL'] ?? 'postgresql://postgres:koinonia@localhost:55432/koinonia';
   const puerto = Number.parseInt(process.env['PORT'] ?? '3001', 10);
   const modoDesarrollo = process.env['NODE_ENV'] !== 'production';
   const vault = vaultFromEnvironment(modoDesarrollo);
+
+  // Antes de tocar la base: si el correo está mal configurado, que se sepa en la primera línea del
+  // registro y no cuando alguien se quede sin poder entrar.
+  const correo = mailerDeEntorno(process.env, { modoDesarrollo });
+  (correo.grave ? process.stderr : process.stdout).write(`${correo.anuncio}\n`);
 
   const pepper = process.env['KOINONIA_RATE_PEPPER'];
   if (pepper === undefined || pepper.length < 16) {
@@ -97,7 +210,7 @@ export async function main(): Promise<void> {
     ports: {
       clock: systemClock,
       random: cryptoRandom,
-      mailer: consoleMailer,
+      mailer: correo.mailer,
       identity: udeaIdentityAdapter({
         facilitadores: lista('KOINONIA_FACILITADORES'),
         garantias: lista('KOINONIA_GARANTIAS'),

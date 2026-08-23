@@ -12,6 +12,9 @@ import {
   type Role,
 } from '@koinonia/domain';
 
+import { sinDireccionesIp } from '../anchor/http.js';
+import { enviarPorSmtp, type ModoTls } from '../anchor/smtp.js';
+import type { Conectar } from '../anchor/socket.js';
 import { CIRCULOS } from './circles.js';
 import { MAX_RESTRICTED_PRIVATE_TEXT_BYTES } from './ports.js';
 import type {
@@ -521,6 +524,277 @@ export class MemoryMailer implements MailerPort {
   ultimoPara(to: string): OutgoingMail | undefined {
     return this.enviados.filter((mail) => mail.to === to).at(-1);
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Correo por SMTP: el adaptador sin el cual NADIE puede entrar
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Correo real por SMTP.
+ *
+ * Koinonía no tiene contraseñas: se entra con un enlace de un solo uso que llega al correo
+ * institucional. Sin este adaptador el despliegue arranca, responde `202` a `/auth/enlace` y **nadie
+ * entra nunca**, porque el enlace se queda impreso en un registro que la persona no lee.
+ *
+ * ═══ Qué se reutiliza y por qué ═══
+ *
+ * El diálogo SMTP —saludo, `EHLO`, `STARTTLS`, `AUTH PLAIN`, `MAIL FROM`, `RCPT TO`, `DATA` con
+ * relleno de puntos, respuestas de varias líneas, códigos ampliados RFC 3463— ya estaba escrito y
+ * probado en `anchor/smtp.ts` para los testigos del anclaje. Aquí se **usa**, no se copia: este
+ * módulo sólo aporta lo que le falta a aquél para un correo a una persona, que es el mensaje RFC
+ * 5322 y la política de fallo. Un segundo cliente SMTP en el mismo servicio sería un segundo sitio
+ * donde equivocarse con `STARTTLS`.
+ *
+ * ═══ La decisión que importa: este adaptador NUNCA rechaza ═══
+ *
+ * `app.ts` hace `await ports.mailer.send(...)` sin protección y después responde `202` con un cuerpo
+ * que es **idéntico exista o no la cuenta**: la pantalla de entrada tiene la propiedad deliberada de
+ * no revelar quién tiene cuenta, y hay pruebas que la sostienen. Si este adaptador lanzara al
+ * rechazar el servidor un destinatario —`550 5.1.1 User unknown`, que es exactamente «esa dirección
+ * no existe»—, Fastify devolvería `500` para las direcciones inexistentes y `202` para las buenas.
+ * Eso es un oráculo de enumeración servido en bandeja: con el dominio institucional fijo, probar
+ * nombres pasa a ser un método fiable de averiguar quién está registrado.
+ *
+ * Por eso la promesa de `send()` **siempre se cumple**, pase lo que pase: destinatario rechazado,
+ * autenticación fallida, servidor caído o `STARTTLS` ausente. El fallo se registra —con detalle, y
+ * en `stderr`, que es donde se miran los problemas— pero no cruza la frontera HTTP. Uniforme por
+ * construcción: no hay ninguna diferencia observable desde fuera entre un envío bueno y uno malo.
+ *
+ * La contrapartida es real y hay que decirla: un servidor SMTP mal configurado produce `202`
+ * impecables sin mandar un solo correo. Contra eso está el registro de cada fallo y la línea que
+ * `server.ts` escribe al arrancar diciendo por qué adaptador optó.
+ *
+ * ═══ Qué NO se registra ═══
+ *
+ * El token, el enlace y el cuerpo del mensaje. `consoleMailer` los imprime porque su razón de ser es
+ * que en desarrollo se puedan leer; en un despliegue eso significa que cualquiera con acceso al
+ * registro —o a una copia de seguridad de él, o al agregador de trazas— puede tomar la sesión de
+ * otra persona durante los quince minutos que vive el enlace. Aquí se registra el destinatario y el
+ * `Message-ID`, que es lo que hace falta para cruzar con el registro del servidor de correo, y nada
+ * más. Tampoco las credenciales, ni siquiera si un servidor hostil las repitiera en su respuesta.
+ */
+export interface SmtpMailerOptions {
+  readonly host: string;
+  readonly port: number;
+  /** `starttls` es lo normal en 587; `implicita` es 465; `ninguna` sólo para un relé de la casa. */
+  readonly tls: ModoTls;
+  /** Cabecera `From` completa —`Koinonía <koinonia@udea.edu.co>`— o la dirección a secas. */
+  readonly from: string;
+  readonly auth?: { readonly user: string; readonly pass: string } | undefined;
+  /** El socket entra como puerto: es lo que permite probar el diálogo entero sin abrir un puerto. */
+  readonly connect: Conectar;
+  readonly clock: ClockPort;
+  readonly random: RandomPort;
+  /** A dónde va el registro. Por defecto `stderr`; las pruebas lo capturan para inspeccionarlo. */
+  readonly diario?: (linea: string) => void;
+}
+
+const CRLF = '\r\n';
+
+/** Sin espacios, sin `<>` y con una sola arroba. Una dirección con `CRLF` inyectaría cabeceras. */
+const DIRECCION = /^[^\s<>@,;:"]+@[^\s<>@,;:"]+$/u;
+
+/** `Koinonía <koinonia@udea.edu.co>` → `koinonia@udea.edu.co`. */
+function direccionDe(from: string): string {
+  return /<([^>]+)>/u.exec(from)?.[1]?.trim() ?? from.trim();
+}
+
+function fechaRfc5322(instante: number): string {
+  return new Date(instante).toUTCString().replace(/GMT$/u, '+0000');
+}
+
+/** Un `CR` o un `LF` en un valor de cabecera parte el mensaje y deja inyectar lo que se quiera. */
+function enUnaLinea(valor: string): string {
+  return valor.replace(/[\r\n]+/gu, ' ').trim();
+}
+
+const SOLO_ASCII_IMPRIMIBLE = /^[ -~]*$/u;
+
+/**
+ * Palabras codificadas RFC 2047, en base64.
+ *
+ * Se trocea por **octetos**, no por caracteres, y se retrocede hasta el principio de la secuencia
+ * UTF-8: partir una `í` por la mitad produce dos palabras codificadas que ningún cliente vuelve a
+ * unir. 45 octetos son 60 caracteres en base64 y 72 con el envoltorio, por debajo de los 75 que el
+ * RFC permite por palabra.
+ */
+function palabrasCodificadas(texto: string): string {
+  const bytes = Buffer.from(texto, 'utf8');
+  const trozos: string[] = [];
+  let inicio = 0;
+  while (inicio < bytes.length) {
+    let fin = Math.min(inicio + 45, bytes.length);
+    while (fin > inicio + 1 && fin < bytes.length && ((bytes[fin] ?? 0) & 0xc0) === 0x80) fin -= 1;
+    trozos.push(`=?utf-8?B?${bytes.subarray(inicio, fin).toString('base64')}?=`);
+    inicio = fin;
+  }
+  return trozos.join(`${CRLF} `);
+}
+
+/** Deja el valor en ASCII de siete bits: tal cual si ya lo es, y en RFC 2047 si no. */
+export function cabeceraCodificada(valor: string): string {
+  const limpio = enUnaLinea(valor);
+  return SOLO_ASCII_IMPRIMIBLE.test(limpio) ? limpio : palabrasCodificadas(limpio);
+}
+
+const ESPECIALES_RFC5322 = /[()<>@,;:\\".[\]]/u;
+
+/** `From` con el nombre visible codificado si hace falta y entrecomillado si lleva especiales. */
+export function remitenteCodificado(from: string): string {
+  const partido = /^(.*)<([^>]+)>\s*$/u.exec(enUnaLinea(from));
+  if (partido === null) return cabeceraCodificada(from);
+
+  const direccion = (partido[2] ?? '').trim();
+  const nombre = (partido[1] ?? '').trim().replace(/^"(.*)"$/u, '$1');
+  if (nombre === '') return `<${direccion}>`;
+  if (!SOLO_ASCII_IMPRIMIBLE.test(nombre)) return `${palabrasCodificadas(nombre)} <${direccion}>`;
+  const visible = ESPECIALES_RFC5322.test(nombre)
+    ? `"${nombre.replace(/([\\"])/gu, '\\$1')}"`
+    : nombre;
+  return `${visible} <${direccion}>`;
+}
+
+/**
+ * Mensaje RFC 5322 completo, **en ASCII de siete bits de punta a punta**.
+ *
+ * El asunto va en palabras codificadas y el cuerpo en base64 en lugar de `8bit` con `charset=utf-8`.
+ * No es purismo: `enviarPorSmtp` escribe al socket con `Buffer.from(texto, 'binary')`, es decir,
+ * trata cada carácter de la cadena como **un octeto**. Con un cuerpo en `8bit` la `í` de «Koinonía»
+ * —U+00ED— saldría por el cable como el octeto `0xED` en vez de la pareja UTF-8 `0xC3 0xAD`, y un
+ * carácter fuera de Latin-1 saldría directamente truncado. En base64 no hay nada que truncar, y
+ * además el mensaje no depende de que el servidor anuncie `8BITMIME`.
+ */
+export function mensajeDeEntrada(input: {
+  readonly from: string;
+  readonly to: string;
+  readonly subject: string;
+  readonly text: string;
+  readonly messageId: string;
+  readonly instante: number;
+}): string {
+  const cuerpo = Buffer.from(input.text, 'utf8')
+    .toString('base64')
+    .replace(/(.{76})/gu, `$1${CRLF}`);
+
+  const cabeceras = [
+    `From: ${remitenteCodificado(input.from)}`,
+    `To: ${enUnaLinea(input.to)}`,
+    `Subject: ${cabeceraCodificada(input.subject)}`,
+    `Date: ${fechaRfc5322(input.instante)}`,
+    `Message-ID: ${input.messageId}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: base64',
+    // RFC 3834: sin esto, una respuesta automática de vacaciones vuelve al buzón del remitente por
+    // cada persona que pide entrar.
+    'Auto-Submitted: auto-generated',
+  ];
+  return `${cabeceras.join(CRLF)}${CRLF}${CRLF}${cuerpo}`;
+}
+
+/**
+ * Quita del texto cualquier rastro de la credencial.
+ *
+ * El mensaje de `SmtpError` incluye la respuesta literal del servidor, y un servidor hostil —o
+ * simplemente locuaz— puede devolver lo que le mandamos. La credencial de `AUTH PLAIN` va en base64,
+ * así que se tapan las tres formas: usuario, contraseña y el base64 que las lleva.
+ */
+export function sinCredenciales(
+  texto: string,
+  auth: { readonly user: string; readonly pass: string } | undefined,
+): string {
+  if (auth === undefined) return texto;
+  const secretos = [
+    Buffer.from(`\0${auth.user}\0${auth.pass}`, 'utf8').toString('base64'),
+    auth.pass,
+    auth.user,
+  ];
+  let salida = texto;
+  for (const secreto of secretos) {
+    if (secreto === '') continue;
+    salida = salida.split(secreto).join('[credencial omitida]');
+  }
+  return salida;
+}
+
+/**
+ * `MailerPort` real contra un servidor SMTP.
+ *
+ * Una conexión por correo. Mantener una sesión abierta ahorraría el saludo y el TLS, y a cambio
+ * habría que gestionar el socket que se muere en silencio mientras nadie pide entrar —que es el
+ * estado normal de este servicio—. Un enlace de entrada cada varios minutos no justifica esa
+ * complejidad.
+ */
+export function smtpMailer(options: SmtpMailerOptions): MailerPort {
+  const remitente = direccionDe(options.from);
+  const dominio = remitente.slice(remitente.lastIndexOf('@') + 1);
+  const escribirDiario =
+    options.diario ??
+    ((linea: string): void => {
+      process.stderr.write(`${linea}\n`);
+    });
+  const registrar = (linea: string): void => {
+    escribirDiario(sinCredenciales(sinDireccionesIp(linea), options.auth));
+  };
+
+  return {
+    send: async (mail: OutgoingMail): Promise<void> => {
+      const destino = mail.to.trim();
+      if (!DIRECCION.test(destino)) {
+        // Ni se conecta. Una dirección con `CRLF` dentro no es un destinatario: es un intento de
+        // escribir cabeceras ajenas en nuestro mensaje.
+        registrar(`correo SMTP: descartado, «${enUnaLinea(mail.to)}» no es una dirección`);
+        return;
+      }
+
+      const messageId = `<${options.random.opaqueId()}@${dominio}>`;
+      const data = mensajeDeEntrada({
+        from: options.from,
+        to: destino,
+        subject: mail.subject,
+        text: mail.text,
+        messageId,
+        instante: options.clock.now(),
+      });
+
+      try {
+        const entregas = await enviarPorSmtp(
+          {
+            host: options.host,
+            port: options.port,
+            tls: options.tls,
+            // Presentarse con el dominio del remitente es lo que más se parece a la verdad con las
+            // variables que hay. Un `localhost` se lo comen pocos servidores serios.
+            helo: dominio,
+            ...(options.auth === undefined ? {} : { auth: options.auth }),
+            connect: options.connect,
+            envelopeFrom: remitente,
+          },
+          [{ to: destino, data }],
+        );
+
+        const entrega = entregas[0];
+        if (entrega?.aceptado === true) {
+          registrar(`correo SMTP: entregado a ${destino} ${messageId}`);
+          return;
+        }
+        registrar(
+          `correo SMTP: el servidor RECHAZÓ a ${destino} — ` +
+            (entrega?.rechazo?.detail ?? 'no dijo por qué') +
+            ' · esa persona NO va a recibir su enlace',
+        );
+      } catch (error) {
+        // Se traga a propósito. Ver la cabecera del módulo: propagar convertiría el `550` de una
+        // dirección inexistente en un `500` distinguible del `202` de una que sí existe.
+        registrar(
+          `correo SMTP: FALLÓ el envío a ${destino} — ` +
+            (error instanceof Error ? error.message : 'fallo sin mensaje') +
+            ' · esa persona NO va a recibir su enlace',
+        );
+      }
+    },
+  };
 }
 
 /** Dominio institucional. Es lo único que el MVP verifica (PRODUCT §9). */

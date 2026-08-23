@@ -50,7 +50,8 @@ migraciones se aplican solas al arrancar el servicio: no hay un paso aparte que 
 
 No hay contraseñas. Se pide un enlace al correo institucional en `/entrar`, con cualquier dirección
 que termine en `@udea.edu.co`. **En desarrollo el enlace aparece en la propia pantalla** y también en
-la consola, así que no hace falta un servidor de correo.
+la consola, así que no hace falta un servidor de correo. **En un despliegue sí hace falta**, y sin él
+nadie puede entrar: ver [Envío de correo](#envío-de-correo).
 
 Para que una cuenta pueda **abrir y cerrar votaciones** —que es un encargo, no un derecho general—
 hay que decirlo al arrancar:
@@ -72,6 +73,39 @@ KOINONIA_FACILITADORES=lucia@udea.edu.co pnpm run dev
 | `KOINONIA_WEB_URL`          | Base pública, para armar el enlace del correo                                     | `http://localhost:3000`                                   |
 | `KOINONIA_API_URL`          | A dónde apunta el proxy de la interfaz                                            | `http://127.0.0.1:3001`                                   |
 | `KOINONIA_VAULT_MASTER_KEY` | Clave maestra del material privado, base64 de 32 B. **Obligatoria en producción** | sin bóveda (el material privado no se puede abrir)        |
+
+#### Envío de correo
+
+**Sin esto no entra nadie.** No hay contraseñas: la única puerta es un enlace de un solo uso que
+llega al buzón institucional. Sin un servidor SMTP configurado, la API responde `202` a cada
+solicitud, no sale ni un correo, y el enlace se queda **impreso en el registro** —donde cualquiera
+que lo lea puede tomar esa sesión durante los quince minutos que vive—. Es lo que hace falta en
+desarrollo y es una avería en producción.
+
+Basta `KOINONIA_SMTP_HOST` para pasar a mandar de verdad. El arranque escribe en la primera línea
+por qué adaptador optó, y con qué servidor, puerto, cifrado y remitente; si es el de consola en
+producción, o si el SMTP va sin cifrar, esa línea sale por `stderr`.
+
+| Variable             | Para qué                                                                                                                | Por defecto                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `KOINONIA_SMTP_HOST` | Servidor de salida. **Presente ⇒ se manda de verdad; ausente ⇒ adaptador de consola**                                   | vacío ⇒ **no sale ningún correo**                   |
+| `KOINONIA_SMTP_PORT` | Puerto TCP                                                                                                              | `587`, o `465` con TLS implícito, o `25` sin cifrar |
+| `KOINONIA_SMTP_USER` | Usuario de `AUTH PLAIN`. Va junta con `_PASS` o no va                                                                   | vacío ⇒ sin autenticar                              |
+| `KOINONIA_SMTP_PASS` | Contraseña de `AUTH PLAIN`                                                                                              | vacío ⇒ sin autenticar                              |
+| `KOINONIA_SMTP_FROM` | Remitente: `Koinonía <koinonia@udea.edu.co>` o la dirección a secas. **Obligatoria si hay `_HOST`**                     | sin defecto: el arranque falla y lo dice            |
+| `KOINONIA_SMTP_TLS`  | STARTTLS `sí`/`no`. Además admite `implicita` para los servidores que sólo escuchan en 465 con TLS desde el primer byte | `sí` (STARTTLS)                                     |
+
+El `MAIL FROM` del sobre y el nombre del `EHLO` salen de `KOINONIA_SMTP_FROM`: la dirección para el
+primero y su dominio para el segundo. Con `KOINONIA_SMTP_TLS=sí` (el defecto) un servidor que **no**
+anuncie `STARTTLS` hace que el envío se **aborte**, no que se degrade a texto plano: degradar en
+silencio es exactamente lo que quiere quien esté escuchando la red, porque el enlace de entrada
+viajaría legible.
+
+Un fallo de envío —destinatario rechazado, autenticación caída, servidor apagado— **no cambia la
+respuesta HTTP**: queda registrado en `stderr` y la API sigue contestando lo mismo que contestaría si
+hubiera salido. Es deliberado: la pantalla de entrada no revela quién tiene cuenta, y un `500` para
+las direcciones inexistentes frente a un `202` para las buenas sería justo el oráculo que esa
+propiedad existe para negar. Con SMTP configurado, **el registro no contiene el token ni el enlace**.
 
 #### Anclaje externo (§8.4)
 
