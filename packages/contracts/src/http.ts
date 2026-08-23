@@ -1507,12 +1507,190 @@ export const normas = z.object({
   vias: z.array(viaDeReforma),
   /** Reformas en curso. Vacío es el caso normal y tiene su propio texto. */
   reformasEnCurso: z.array(
-    z.object({ titulo: z.string(), estado: z.string(), cierraEn: instantMs.optional() }),
+    z.object({
+      /** Con qué se la nombra al votarla, transcribir su resultado, firmarla o ratificarla. */
+      id: opaqueId,
+      titulo: z.string(),
+      estado: z.string(),
+      cierraEn: instantMs.optional(),
+    }),
   ),
   /** Ventanas en las que no se puede reformar nada, ya traducidas a fechas y motivo. */
   vedas: z.array(z.object({ desde: instantMs, hasta: instantMs, motivo: z.string() })),
 });
 export type Normas = z.infer<typeof normas>;
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Escribir las reglas: fundarlas y reformarlas
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Etiqueta estable de una regla: `lista_taxativa`, `fila_13`…
+ *
+ * Es legible y no sorteada a propósito: una regla tiene que poder nombrarse igual en el historial,
+ * en la pantalla y en la discusión de la asamblea. El patrón es el del dominio y no se relaja: la
+ * etiqueta acaba siendo clave dentro de la preimagen de una huella.
+ */
+export const etiquetaDeRegla = z
+  .string()
+  .regex(
+    /^[a-z][a-z0-9_]{0,31}$/u,
+    'la etiqueta de una regla empieza por letra minúscula y sigue con minúsculas, números o _',
+  );
+
+/**
+ * Una regla tal como se escribe: etiqueta, título de **una sola línea** y texto.
+ *
+ * El título no admite saltos de línea, y no es un capricho de formato: título y texto se juntan con
+ * una línea en blanco para formar la preimagen de la huella de la regla, y si el título pudiera
+ * llevar saltos de línea dos parejas distintas producirían la misma huella. Una huella que vale
+ * para dos textos no identifica ninguno.
+ */
+export const reglaRedactada = z
+  .object({
+    id: etiquetaDeRegla,
+    titulo: z
+      .string()
+      .min(4)
+      .max(160)
+      .refine((value) => !/[\n\r]/u.test(value), 'el título de una regla ocupa una sola línea'),
+    texto: z.string().min(20, 'Una regla tiene que decir qué obliga.').max(8000),
+  })
+  .strict();
+export type ReglaRedactada = z.infer<typeof reglaRedactada>;
+
+/**
+ * Una proporción exacta, dicha como la diría una persona: «2 de cada 3».
+ *
+ * Dos enteros y **nunca** un decimal. `0.667 × 300` da `200.1`; `2/3` sobre 300 da doscientos
+ * exactos, y la diferencia entre 199 y 200 votos es la diferencia entre una reforma aprobada y una
+ * rechazada.
+ */
+export const proporcion = z
+  .object({
+    cuantos: z.number().int().positive(),
+    deCada: z.number().int().positive(),
+  })
+  .strict()
+  .refine((v) => v.cuantos <= v.deCada, 'una proporción no puede pasar del total');
+export type Proporcion = z.infer<typeof proporcion>;
+
+/** Lo que costará cambiar una regla, si la reforma propone cambiarlo. */
+export const requisitosDeReforma = z
+  .object({
+    aFavorDelPadron: proporcion,
+    votoDirectoMinimo: proporcion,
+    diasDeConversacion: z.number().int().min(1).max(365),
+    diasDeEspera: z.number().int().min(1).max(365),
+    firmasDeGarantias: z.number().int().min(1).max(50),
+    personasEnGarantias: z.number().int().min(1).max(50),
+    votaciones: z.number().int().min(1).max(4),
+    mesesEntreVotaciones: z.number().int().min(0).max(24),
+    firmasParaAbrir: proporcion,
+  })
+  .strict();
+export type RequisitosDeReforma = z.infer<typeof requisitosDeReforma>;
+
+/**
+ * Fundar las reglas por primera vez, o volver a fundarlas después de que caduquen.
+ *
+ * Los números de la votación fundacional entran como dato porque **el arranque ocurre fuera**: la
+ * asamblea que aprueba la versión 1 no puede votarla dentro de una plataforma que todavía no tiene
+ * reglas (§6, «el problema del arranque»). Quedan escritos, con autor y fecha, para que cualquiera
+ * los contraste con el acta.
+ */
+export const fundarNormas = z
+  .object({
+    requestId,
+    /** La decisión de la asamblea que la ratificó. Se publica para poder contrastarla. */
+    decisionFundacional: opaqueId,
+    censo: z.number().int().positive(),
+    /** Papeletas computables. La regla fundacional es 2 de cada 3 **de las papeletas**. */
+    papeletas: z.number().int().nonnegative(),
+    aFavor: z.number().int().nonnegative(),
+    /** Personas que votaron con su propia mano. Un voto prestado no cuenta acá. */
+    votoDirecto: z.number().int().nonnegative(),
+    rigeDesde: instantMs,
+    reglas: z.array(reglaRedactada).min(1),
+  })
+  .strict();
+export type FundarNormas = z.infer<typeof fundarNormas>;
+
+/** Una votación ya convocada que la reforma no puede pisar (§6.c). */
+export const decisionConvocada = z
+  .object({
+    votacionId: opaqueId,
+    abreEn: instantMs,
+    /** Qué reglas necesita esa votación. Si la reforma toca alguna, hay veda de 30 días. */
+    dependeDe: z.array(etiquetaDeRegla),
+  })
+  .strict();
+export type DecisionConvocada = z.infer<typeof decisionConvocada>;
+
+/**
+ * Abrir una reforma. El texto propuesto va **entero**, no en parches.
+ *
+ * Va entero porque lo que se vota es un documento, no una lista de instrucciones de edición: con
+ * parches, dos personas que aplican el mismo parche a dos textos distintos obtienen dos
+ * documentos distintos, y el que se ratifica es el que aplicó el servidor.
+ */
+export const proponerReforma = z
+  .object({
+    requestId,
+    via: z.enum(['ordinaria', 'atrincherada']),
+    /** La versión que quien propone tiene a la vista. Si ya no es la vigente, la orden se cae. */
+    sobreLaVersion: z.number().int().positive(),
+    reglas: z.array(reglaRedactada).min(1),
+    /** Sólo si la reforma cambia lo que cuesta reformar; entonces la vía es la atrincherada. */
+    requisitos: z
+      .object({ ordinaria: requisitosDeReforma, atrincherada: requisitosDeReforma })
+      .strict()
+      .optional(),
+    /** Meses que durará la versión nueva antes de caducar. Si se omite, los de la vigente. */
+    mesesDeVigencia: z.number().int().min(1).max(24).optional(),
+    /** Cuántas firmas juntó la propuesta. */
+    firmas: z.number().int().nonnegative(),
+    /** Cuándo termina el semestre: las dos últimas semanas son veda para toda reforma. */
+    finDeSemestre: instantMs,
+    votacionesConvocadas: z.array(decisionConvocada),
+    conversacionAbreEn: instantMs,
+    conversacionCierraEn: instantMs,
+  })
+  .strict();
+export type ProponerReforma = z.infer<typeof proponerReforma>;
+
+/** El resultado de una votación de reforma, ya cerrada. Este agregado no cuenta votos. */
+export const registrarVotacionDeReforma = z
+  .object({
+    requestId,
+    /** La votación de la que sale el resultado. Se publica para poder recalcularlo. */
+    votacionId: opaqueId,
+    aFavor: z.number().int().nonnegative(),
+    votoDirecto: z.number().int().nonnegative(),
+    abrioEn: instantMs,
+    cerroEn: instantMs,
+  })
+  .strict();
+export type RegistrarVotacionDeReforma = z.infer<typeof registrarVotacionDeReforma>;
+
+/**
+ * Una de las aprobaciones de quienes cuidan las garantías.
+ *
+ * No lleva a quién se atribuye: se atribuye **siempre** a quien la escribe, y el servidor lo toma
+ * de la sesión. Si el campo existiera, existiría la posibilidad de aprobar en nombre de otra
+ * persona.
+ */
+export const aprobarReforma = z.object({ requestId }).strict();
+export type AprobarReforma = z.infer<typeof aprobarReforma>;
+
+export const ratificarReforma = z
+  .object({
+    requestId,
+    /** Cuándo empieza a regir. Nunca antes de los días de espera ni antes de este mismo acto. */
+    rigeDesde: instantMs,
+  })
+  .strict();
+export type RatificarReforma = z.infer<typeof ratificarReforma>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Delegaciones: prestarle tu voto a alguien

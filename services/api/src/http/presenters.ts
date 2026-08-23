@@ -1094,24 +1094,45 @@ function requisitosEnPalabras(requisitos: ReformRequirements): readonly string[]
   ];
 }
 
+const DESCRIPCION_DE_LAS_NORMAS =
+  'Cómo se decide acá, qué decide cada grupo y qué no se decide nunca. Estas reglas no son ' +
+  'opciones de un panel que alguien pueda cambiar por su cuenta: cambiar una exige el ' +
+  'procedimiento que está más abajo, y quien administra la plataforma no puede tocarlas.';
+
 /**
  * Las reglas, tal como están hoy.
  *
- * `hayNormas` sale en `false` y eso **no** es un hueco sin diseñar: es el estado real. El núcleo
- * intangible y los requisitos de cada vía sí son datos del dominio y se publican; lo que todavía no
- * existe es la copia versionada dentro de la plataforma, con su fecha y su decisión fundacional. Se
- * dice, con todas las letras, en vez de enseñar una versión 1 que nadie aprobó.
+ * Mientras nadie las funde, `hayNormas` sale en `false` y eso **no** es un hueco sin diseñar: es el
+ * estado real, y el dominio lo tiene modelado como tal. El núcleo intangible y lo que cuesta
+ * reformar sí son datos del dominio y se publican desde el primer día; lo que no existe hasta que
+ * alguien la funde es la copia versionada dentro de la plataforma, con su fecha y su decisión
+ * fundacional. Se dice, con todas las letras, en vez de enseñar una versión 1 que nadie aprobó.
+ *
+ * Fundada, todo lo de arriba se sustituye por lo que dice el historial: la versión vigente, todas
+ * las anteriores con su texto —recuperado por su huella y comprobado—, las reformas en curso y las
+ * ventanas en las que no se puede reformar nada.
  */
 export function normasDto(normas: NormasDelDespliegue): Normas {
   return {
     hayNormas: normas.fijadas,
     titulo: 'Las reglas del juego',
     descripcion:
-      'Cómo se decide acá, qué decide cada grupo y qué no se decide nunca. Estas reglas no son ' +
-      'opciones de un panel que alguien pueda cambiar por su cuenta: cambiar una exige el ' +
-      'procedimiento que está más abajo, y quien administra la plataforma no puede tocarlas.',
-    versionVigente: 0,
-    versiones: [],
+      normas.aviso === undefined
+        ? DESCRIPCION_DE_LAS_NORMAS
+        : `${normas.aviso} ${DESCRIPCION_DE_LAS_NORMAS}`,
+    versionVigente: normas.versionVigente ?? 0,
+    versiones: (normas.versiones ?? []).map((version) => ({
+      version: version.version,
+      rigeDesde: version.rigeDesde,
+      caduca: version.caduca,
+      vigente: version.vigente,
+      reglas: version.reglas.map((regla) => ({
+        id: regla.id,
+        titulo: regla.titulo,
+        texto: regla.texto,
+        irreformable: regla.irreformable,
+      })),
+    })),
     nucleo: {
       titulo: 'Lo que no se puede cambiar por ninguna vía',
       explicacion:
@@ -1141,8 +1162,17 @@ export function normasDto(normas: NormasDelDespliegue): Normas {
         requisitos: [...requisitosEnPalabras(normas.atrincherada)],
       },
     ],
-    reformasEnCurso: [],
-    vedas: [],
+    reformasEnCurso: (normas.reformasEnCurso ?? []).map((reforma) => ({
+      id: reforma.id,
+      titulo: reforma.titulo,
+      estado: reforma.estado,
+      cierraEn: reforma.cierraEn,
+    })),
+    vedas: (normas.vedas ?? []).map((veda) => ({
+      desde: veda.desde,
+      hasta: veda.hasta,
+      motivo: veda.motivo,
+    })),
   };
 }
 

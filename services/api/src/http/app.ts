@@ -37,6 +37,11 @@ import {
   crearPropuesta as crearPropuestaSchema,
   delegar as delegarSchema,
   emitirPapeleta as emitirPapeletaSchema,
+  aprobarReforma as aprobarReformaSchema,
+  fundarNormas as fundarNormasSchema,
+  proponerReforma as proponerReformaSchema,
+  ratificarReforma as ratificarReformaSchema,
+  registrarVotacionDeReforma as registrarVotacionDeReformaSchema,
   type Historial,
   type Normas,
   type PanelDeDelegaciones,
@@ -156,7 +161,12 @@ import {
   revocarDelegacionDeVoto,
   ratificarDecision,
   verHistorial,
-  verNormas,
+  aprobarReforma,
+  fundarNormas,
+  leerNormas,
+  proponerReforma,
+  ratificarReforma,
+  registrarVotacionDeReforma,
   planificarHito,
   ofrecerTarea,
   pedirAyudaTarea,
@@ -1022,9 +1032,57 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     );
   });
 
+  // ── Las reglas del juego ───────────────────────────────────────────────────────────────────
+  //
+  // Leer no exige cuenta (`constitution:read` es abierto: son las normas del colectivo). Escribir
+  // exige lo que diga la matriz, y lo comprueba la orden del dominio, no esta ruta. `tech-admin`
+  // no aparece en ninguna de las cinco reglas de escritura, así que no puede fundar, ni proponer,
+  // ni transcribir una votación, ni firmar, ni ratificar. No hay ruta que se lo conceda porque no
+  // es la ruta la que lo concede.
+
   app.get('/normas', async (request): Promise<Normas> => {
     parse(z.object({}).strict(), request.query);
-    return await Promise.resolve(normasDto(verNormas()));
+    return normasDto(await leerNormas(deps, actorDe(request)));
+  });
+
+  app.post('/normas/fundacion', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const cuerpo = parse(fundarNormasSchema, request.body);
+    return await reply
+      .status(201)
+      .send(normasDto(await fundarNormas(deps, actorDe(request), cuerpo)));
+  });
+
+  app.post('/normas/reformas', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const cuerpo = parse(proponerReformaSchema, request.body);
+    return await reply
+      .status(201)
+      .send(normasDto(await proponerReforma(deps, actorDe(request), cuerpo)));
+  });
+
+  app.post('/normas/reformas/:id/votaciones', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(registrarVotacionDeReformaSchema, request.body);
+    const normas = await registrarVotacionDeReforma(deps, actorDe(request), id, cuerpo);
+    return await reply.status(201).send(normasDto(normas));
+  });
+
+  app.post('/normas/reformas/:id/aprobaciones', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(aprobarReformaSchema, request.body);
+    const normas = await aprobarReforma(deps, actorDe(request), id, cuerpo);
+    return await reply.status(201).send(normasDto(normas));
+  });
+
+  app.post('/normas/reformas/:id/ratificacion', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(ratificarReformaSchema, request.body);
+    const normas = await ratificarReforma(deps, actorDe(request), id, cuerpo);
+    return await reply.status(201).send(normasDto(normas));
   });
 
   app.get('/historial', async (request): Promise<Historial> => {

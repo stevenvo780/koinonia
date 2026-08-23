@@ -160,8 +160,48 @@ import {
   type PrivateMaterialContext,
   type TaskEvidenceSizeClass,
   type TaskResponseReason,
+  addDays,
+  approveReform,
+  blackoutsFor,
+  changedClauseIds,
+  reformVotesPass,
+  type Clause,
+  type ClauseId,
+  clauseId as toClauseId,
+  type ConstitutionCommandMeta,
+  type Fraction,
+  type ReformId,
+  type ConstitutionState,
+  type ConstitutionText,
+  constitutionId as toConstitutionId,
+  constitutionNotice,
+  type ConvenedDecision,
+  currentText,
+  foundConstitution,
+  fraction,
+  openReform,
+  openReforms,
+  ratifyReform,
+  recordReformVote,
+  type ReformCalendar,
+  type ReformKind,
+  type ReformRecord,
+  reformId as toReformId,
+  statusAt,
 } from '@koinonia/domain';
 
+import {
+  assertWellFormedClauseText,
+  type ClauseText,
+  clauseTextHash,
+  CONSTITUTION_AGGREGATE_ID,
+  loadConstitutionLog,
+  loadConstitutionState,
+  normalizeClauseText,
+  persistConstitutionLogWithin,
+  readClauseTexts,
+  saveClauseTextsWithin,
+} from '../constitution/index.js';
 import { withTransaction, type PgClient, type PgPool, type PgPoolClient } from '../db/client.js';
 import {
   loadDecisionLog,
@@ -3558,6 +3598,44 @@ export async function revocarDelegacionDeVoto(
  * intangible y los requisitos exactos de cada vía de reforma— se publica desde el dominio, no desde
  * una copia a mano que se quedaría atrás.
  */
+/** Una regla con su texto, ya resuelto contra el archivo y con la huella comprobada. */
+export interface ReglaLeida {
+  readonly id: string;
+  readonly titulo: string;
+  readonly texto: string;
+  /** `true` si es uno de los seis puntos que no se reforman por ninguna vía (§6.b). */
+  readonly irreformable: boolean;
+}
+
+export interface VersionLeida {
+  readonly version: number;
+  readonly rigeDesde: number;
+  readonly caduca: number;
+  readonly vigente: boolean;
+  readonly reglas: readonly ReglaLeida[];
+}
+
+export interface ReformaLeida {
+  readonly id: string;
+  readonly titulo: string;
+  readonly estado: string;
+  readonly cierraEn: number;
+}
+
+export interface VedaLeida {
+  readonly desde: number;
+  readonly hasta: number;
+  readonly motivo: string;
+}
+
+/**
+ * Las reglas de este despliegue.
+ *
+ * Los cinco últimos campos son **opcionales y eso significa algo**: mientras nadie funde, no hay
+ * versión vigente, ni historial de versiones, ni reformas, ni vedas, y la respuesta honesta es que
+ * esas cosas no existen —no que estén vacías por casualidad—. `verNormas()` devuelve ese estado;
+ * `leerNormas()` lo sustituye por el del historial en cuanto hay un hecho fundacional.
+ */
 export interface NormasDelDespliegue {
   readonly fijadas: boolean;
   readonly nucleo: readonly {
@@ -3568,6 +3646,12 @@ export interface NormasDelDespliegue {
   readonly ordinaria: ReformRequirements;
   readonly atrincherada: ReformRequirements;
   readonly mesesDeVigenciaFundacional: number;
+  /** El aviso del dominio en castellano llano: qué rige, desde cuándo y hasta cuándo. */
+  readonly aviso?: string;
+  readonly versionVigente?: number;
+  readonly versiones?: readonly VersionLeida[];
+  readonly reformasEnCurso?: readonly ReformaLeida[];
+  readonly vedas?: readonly VedaLeida[];
 }
 
 /**
@@ -3618,8 +3702,9 @@ const NUCLEO_EN_PALABRAS: Readonly<Record<string, { titulo: string; texto: strin
 
 export function verNormas(): NormasDelDespliegue {
   return {
-    // Se leería del historial en cuanto exista el hecho fundacional. Hoy no existe, y decir que sí
-    // sería la única mentira que esta pantalla no puede permitirse.
+    // El estado ANTES de que exista el hecho fundacional. Sigue siendo la respuesta correcta
+    // mientras nadie funde: decir que sí hay reglas fijadas sería la única mentira que esta
+    // pantalla no puede permitirse. `leerNormas` lo sustituye en cuanto el historial tiene algo.
     fijadas: false,
     nucleo: CORE_CLAUSE_IDS.map((id) => {
       const palabras = NUCLEO_EN_PALABRAS[id];
@@ -3636,6 +3721,654 @@ export function verNormas(): NormasDelDespliegue {
     atrincherada: ENTRENCHED_REFORM_V1,
     mesesDeVigenciaFundacional: FOUNDATIONAL_VALIDITY_MONTHS,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Las reglas, escritas: fundar y tramitar una reforma
+//
+// ═══ EL ARRANQUE: por qué NO se funda sola ═══
+//
+// Tres caminos posibles y dos son falsos.
+//
+//  (a) **Una migración que escriba el hecho fundacional.** Imposible y además indeseable.
+//      Imposible: `applyConstitution` rechaza `actor: 'system'` con `SYSTEM_CANNOT_GOVERN` —«ningún
+//      acto de gobierno es un automatismo: todos tienen responsable con nombre propio»—, y una
+//      migración no tiene una persona detrás. Habría que mentir sobre el actor para que compilara.
+//      Indeseable por dos razones más: una migración aplicada queda registrada por su huella y no
+//      se puede corregir editándola, así que el acto fundacional de la comunidad sería un fichero
+//      del repositorio inmodificable escrito por quien administra —exactamente lo que el §7 le
+//      prohíbe—; y tendría que inventarse el censo, las papeletas y los votos a favor de una
+//      asamblea que no se celebró.
+//  (b) **Fundarla al vuelo la primera vez que alguien mire la pantalla.** Es (a) sin migración: el
+//      mismo acto de gobierno inventado, con el agravante de que empieza a correr **la caducidad de
+//      doce meses** del §6. A los doce meses de instalar el servidor, Koinonía se declararía «sin
+//      reglas» en público por culpa de un script de instalación. Un reloj que nadie pidió.
+//  (c) **El sistema funciona sin constitución hasta que alguien la funde.** Es lo que se
+//      implementa. La máquina de estados del dominio ya tiene ese estado —`inexistente`— y ya dice
+//      qué se puede hacer en él: leer y exportar. La pantalla lo dice con todas las letras en vez
+//      de enseñar una versión 1 que nadie aprobó.
+//
+// Fundar es entonces **una orden con responsable**: `POST /normas/fundacion`, autorizada por
+// `constitution:found` (facilitación o Garantías, nunca `tech-admin`), con la decisión de la
+// asamblea, el censo y los votos como datos públicos que cualquiera puede contrastar contra el
+// acta. Es lo que el §6 pide —«ratificación en asamblea abierta con la regla declarada de
+// antemano»— y lo único que un servidor puede hacer honestamente: registrar un acto que ocurrió
+// fuera, con quién lo registró.
+//
+// **Lo que esto NO comprueba, dicho sin suavizar:** que la asamblea existiera. El
+// `decisionFundacional`, el censo y los conteos entran como dato. No pueden no entrar como dato: la
+// votación que aprueba la versión 1 no cabe dentro de una plataforma cuyas reglas todavía no
+// existen, y ése es literalmente «el problema del arranque» del §6. Lo que sí queda es el registro
+// público, con autor y fecha, en un historial anclado fuera del servidor.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Una regla tal como la escribe quien la redacta. */
+export interface ReglaRedactadaEntrada {
+  readonly id: string;
+  readonly titulo: string;
+  readonly texto: string;
+}
+
+/** Una proporción exacta dicha en enteros: «2 de cada 3». Nunca un decimal (ADR-0027). */
+export interface ProporcionEntrada {
+  readonly cuantos: number;
+  readonly deCada: number;
+}
+
+export interface RequisitosEntrada {
+  readonly aFavorDelPadron: ProporcionEntrada;
+  readonly votoDirectoMinimo: ProporcionEntrada;
+  readonly diasDeConversacion: number;
+  readonly diasDeEspera: number;
+  readonly firmasDeGarantias: number;
+  readonly personasEnGarantias: number;
+  readonly votaciones: number;
+  readonly mesesEntreVotaciones: number;
+  readonly firmasParaAbrir: ProporcionEntrada;
+}
+
+function aRequisitos(entrada: RequisitosEntrada): ReformRequirements {
+  const proporcion = (valor: ProporcionEntrada): Fraction =>
+    fraction(BigInt(valor.cuantos), BigInt(valor.deCada));
+  return {
+    approvalOfCensus: proporcion(entrada.aFavorDelPadron),
+    minDirectParticipation: proporcion(entrada.votoDirectoMinimo),
+    deliberationDays: entrada.diasDeConversacion,
+    waitingDays: entrada.diasDeEspera,
+    guaranteeThreshold: entrada.firmasDeGarantias,
+    guaranteeCircleSize: entrada.personasEnGarantias,
+    votesRequired: entrada.votaciones,
+    separationMonths: entrada.mesesEntreVotaciones,
+    sponsorSignatures: proporcion(entrada.firmasParaAbrir),
+  };
+}
+
+/**
+ * Reglas redactadas → texto versionado + los textos que hay que archivar.
+ *
+ * El dominio sólo se lleva el par `(etiqueta, huella)`; la prosa se queda aquí y va a
+ * `governance.clause_text`, direccionada por esa misma huella. Las cláusulas salen **ordenadas por
+ * etiqueta** porque `assertWellFormedText` lo exige: sin orden fijo, dos servidores honestos
+ * hashean el mismo documento de dos formas.
+ */
+async function componerTexto(
+  reglas: readonly ReglaRedactadaEntrada[],
+  requisitos: {
+    readonly ordinary: ReformRequirements;
+    readonly entrenched: ReformRequirements;
+    readonly validityMonths: number;
+  },
+): Promise<{ readonly texto: ConstitutionText; readonly textos: readonly ClauseText[] }> {
+  const vistas = new Set<string>();
+  const clauses: Clause[] = [];
+  const textos: ClauseText[] = [];
+  for (const [indice, regla] of reglas.entries()) {
+    if (vistas.has(regla.id)) {
+      throw new ServicioError(
+        'REGLA_REPETIDA',
+        422,
+        `la regla «${regla.id}» viene dos veces: un documento con dos versiones de la misma regla ` +
+          'no dice cuál rige',
+      );
+    }
+    vistas.add(regla.id);
+    const texto = normalizeClauseText({ title: regla.titulo, body: regla.texto });
+    assertWellFormedClauseText(texto, `reglas[${String(indice)}]`);
+    textos.push(texto);
+    clauses.push({ clauseId: toClauseId(regla.id), textHash: await clauseTextHash(texto) });
+  }
+  clauses.sort((a, b) => (a.clauseId < b.clauseId ? -1 : a.clauseId > b.clauseId ? 1 : 0));
+  return {
+    texto: {
+      clauses,
+      ordinary: requisitos.ordinary,
+      entrenched: requisitos.entrenched,
+      validityMonths: requisitos.validityMonths,
+    },
+    textos,
+  };
+}
+
+/**
+ * El núcleo, tomado del texto que se propone.
+ *
+ * Quien funda **no elige** qué es el núcleo: los seis identificadores salen de `CORE_CLAUSE_IDS`,
+ * que es la lista que el pliegue recomputa en cada hecho. Lo único que aporta el documento es el
+ * texto de cada uno. Un documento al que le falte uno de los seis no se funda: vaciar el núcleo no
+ * incluyéndolo es la forma más barata de derogarlo.
+ */
+function nucleoDe(texto: ConstitutionText): readonly Clause[] {
+  const porEtiqueta = new Map<ClauseId, Clause>(texto.clauses.map((c) => [c.clauseId, c]));
+  return CORE_CLAUSE_IDS.map((id) => {
+    const clause = porEtiqueta.get(id);
+    if (clause === undefined) {
+      throw new ServicioError(
+        'NUCLEO_INCOMPLETO',
+        422,
+        `al documento le falta «${id}», que es uno de los seis puntos que no se reforman por ` +
+          'ninguna vía. Un documento sin ellos no es la constitución de esta comunidad',
+      );
+    }
+    return clause;
+  });
+}
+
+function normasMeta(deps: ServicioDeps, actor: Actor): ConstitutionCommandMeta {
+  return { eventId: nuevoEventId(deps), at: ahora(deps), actor };
+}
+
+/**
+ * Quien actúa, con identidad. Se exige **antes** de tocar el ledger.
+ *
+ * Las órdenes del dominio también lo comprueban (`requireIdentity`); esto no las sustituye, se
+ * adelanta a ellas para no tomar el candado global de escritura por cuenta de alguien que no puede
+ * escribir nada.
+ */
+function quienActua(actor: Actor): MemberId {
+  const id = actor.memberId;
+  if (id === undefined) {
+    throw new ServicioError(
+      'UNAUTHORIZED_NOT_AUTHENTICATED',
+      401,
+      'este acto exige una cuenta verificada',
+    );
+  }
+  return id;
+}
+
+function estadoDeNormas(state: ConstitutionState | undefined): ConstitutionState {
+  if (state === undefined || !state.exists) {
+    throw new ServicioError(
+      'CONSTITUTION_NOT_FOUNDED',
+      409,
+      'todavía no hay reglas aprobadas: no se reforma un documento que nadie fundó',
+    );
+  }
+  return state;
+}
+
+export interface FundarNormasEntrada {
+  readonly requestId: string;
+  readonly decisionFundacional: string;
+  readonly censo: number;
+  readonly papeletas: number;
+  readonly aFavor: number;
+  readonly votoDirecto: number;
+  readonly rigeDesde: number;
+  readonly reglas: readonly ReglaRedactadaEntrada[];
+}
+
+/**
+ * Funda las reglas, o las **refunda** después de que caduquen.
+ *
+ * ═══ Por qué los umbrales de reforma NO vienen en la petición ═══
+ *
+ * Lo que se funda es el texto: las etiquetas y la prosa de cada regla. Cuánto cuesta reformarlas
+ * —las filas 13 y 14— lo pone el dominio desde `ORDINARY_REFORM_V1` y `ENTRENCHED_REFORM_V1`, que
+ * son los números que `GOVERNANCE.md` publica y que la asamblea leyó antes de votar. Si vinieran en
+ * el cuerpo de la petición, quien registra la fundación podría instalar una cláusula de enmienda
+ * distinta de la que se ratificó, y el §6 empieza exigiendo lo contrario: «publicidad previa total,
+ * el texto y el procedimiento se publican antes de que empiece la discusión y no cambian durante el
+ * proceso». Cambiarlos después es lo que existe la vía atrincherada para hacer, y ésa sí pasa por
+ * una votación.
+ *
+ * La vigencia es la fundacional del §6: **doce meses**. Es la contrapartida declarada de que la
+ * regla fundacional sea más baja que la de reforma.
+ */
+export async function fundarNormas(
+  deps: ServicioDeps,
+  actor: Actor,
+  input: FundarNormasEntrada,
+): Promise<NormasDelDespliegue> {
+  // La puerta de verdad es `foundConstitution`, que autoriza por dentro antes de construir el
+  // evento. Ésta es el felpudo: evita tomar el candado global del ledger por cuenta de alguien que
+  // no puede escribir. Misma acción, misma matriz: no pueden divergir.
+  authorize(actor, 'constitution:found', { kind: 'constitution' });
+  quienActua(actor);
+
+  const { texto, textos } = await componerTexto(input.reglas, {
+    ordinary: ORDINARY_REFORM_V1,
+    entrenched: ENTRENCHED_REFORM_V1,
+    validityMonths: FOUNDATIONAL_VALIDITY_MONTHS,
+  });
+  const nucleo = nucleoDe(texto);
+
+  await withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+    const log = await loadConstitutionLog(client);
+    const siguiente = await foundConstitution(log, normasMeta(deps, actor), {
+      constitutionId: toConstitutionId(CONSTITUTION_AGGREGATE_ID),
+      text: texto,
+      core: nucleo,
+      foundingDecisionId: decisionId(input.decisionFundacional),
+      censusSize: input.censo,
+      votesInFavor: input.aFavor,
+      castBallots: input.papeletas,
+      directParticipation: input.votoDirecto,
+      effectiveAt: instant(input.rigeDesde),
+    });
+    // El texto se archiva DESPUÉS de que la orden haya autorizado y plegado, y en el mismo commit:
+    // una versión cuya prosa quedó fuera porque la segunda escritura falló sería una constitución
+    // ilegible con la huella intacta.
+    await saveClauseTextsWithin(client, textos);
+    await persistConstitutionLogWithin(client, siguiente, { requestId: input.requestId });
+  });
+
+  return leerNormas(deps, actor);
+}
+
+export interface VotacionConvocadaEntrada {
+  readonly votacionId: string;
+  readonly abreEn: number;
+  readonly dependeDe: readonly string[];
+}
+
+export interface ProponerReformaEntrada {
+  readonly requestId: string;
+  readonly via: ReformKind;
+  readonly sobreLaVersion: number;
+  readonly reglas: readonly ReglaRedactadaEntrada[];
+  readonly requisitos?:
+    { readonly ordinaria: RequisitosEntrada; readonly atrincherada: RequisitosEntrada } | undefined;
+  readonly mesesDeVigencia?: number | undefined;
+  readonly firmas: number;
+  readonly finDeSemestre: number;
+  readonly votacionesConvocadas: readonly VotacionConvocadaEntrada[];
+  readonly conversacionAbreEn: number;
+  readonly conversacionCierraEn: number;
+}
+
+/**
+ * El calendario contra el que se juzga la veda del §6.c, ordenado y sin repetir.
+ *
+ * ⚠ **Entra como dato y el servidor no puede comprobarlo.** Ni el fin del semestre —no hay
+ * calendario académico en la plataforma— ni qué reglas necesita cada votación ya convocada: esa
+ * relación no está modelada en ninguna parte, y ADR-0051 la declara como hueco del documento
+ * (§6.c no define ninguna de las dos cosas). Lo que sí ocurre es que el calendario declarado queda
+ * **por valor y en público** dentro del hecho que abre la reforma: una reforma que declare que no
+ * hay ninguna votación convocada dice eso en el historial, con autor y fecha, y comprobar el
+ * procedimiento es precisamente lo que el §6.6 le encarga a Garantías antes de firmar.
+ */
+function calendarioDe(input: ProponerReformaEntrada): ReformCalendar {
+  const vistas = new Set<string>();
+  const convened: ConvenedDecision[] = [];
+  for (const votacion of input.votacionesConvocadas) {
+    if (vistas.has(votacion.votacionId)) {
+      throw new ServicioError(
+        'VOTACION_CONVOCADA_REPETIDA',
+        422,
+        'una votación convocada aparece dos veces en el calendario',
+      );
+    }
+    vistas.add(votacion.votacionId);
+    convened.push({
+      decisionId: decisionId(votacion.votacionId),
+      opensAt: instant(votacion.abreEn),
+      affectsClauseIds: votacion.dependeDe.map(toClauseId),
+    });
+  }
+  convened.sort((a, b) => (a.decisionId < b.decisionId ? -1 : a.decisionId > b.decisionId ? 1 : 0));
+  return { semesterEndsAt: instant(input.finDeSemestre), convened };
+}
+
+/**
+ * Abre una reforma y congela en el hecho todo lo que va a juzgarla.
+ *
+ * Tres datos **no** los aporta quien propone y por eso no están en la petición:
+ *
+ *  - el **censo**, que sale del padrón vivo. Si viniera en el cuerpo, la reforma elegiría el
+ *    denominador de «dos tercios del censo», que es la trampa que el padrón congelado cierra;
+ *  - **quiénes son Garantías**, que salen de los roles del padrón. Si vinieran en el cuerpo, quien
+ *    propone elegiría a las cinco personas que después firman;
+ *  - los **umbrales vigentes**, que los copia la orden del dominio del texto en vigor.
+ *
+ * Lo que sí aporta quien propone, y no puede ser de otro modo, es el número de firmas: la
+ * plataforma no recoge las 30 firmas del 10 % del censo, así que ese conteo es una afirmación
+ * pública suya. Queda escrita.
+ */
+export async function proponerReforma(
+  deps: ServicioDeps,
+  actor: Actor,
+  input: ProponerReformaEntrada,
+): Promise<NormasDelDespliegue> {
+  authorize(actor, 'constitution:propose-reform', { kind: 'constitution' });
+  quienActua(actor);
+
+  await withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+    const { log, state } = await loadConstitutionState(client);
+    const vigente = currentText(estadoDeNormas(state));
+    if (vigente === undefined) {
+      throw new ServicioError('CONSTITUTION_NOT_FOUNDED', 409, 'no hay texto vigente que reformar');
+    }
+    const { texto, textos } = await componerTexto(input.reglas, {
+      ordinary:
+        input.requisitos === undefined ? vigente.ordinary : aRequisitos(input.requisitos.ordinaria),
+      entrenched:
+        input.requisitos === undefined
+          ? vigente.entrenched
+          : aRequisitos(input.requisitos.atrincherada),
+      validityMonths: input.mesesDeVigencia ?? vigente.validityMonths,
+    });
+
+    const padron = await allMembers(client, deps.ports.clock.now());
+    const garantes = padron
+      .filter((persona) => persona.roles.includes('guarantees'))
+      .map((persona) => persona.memberId);
+
+    const siguiente = await openReform(log, normasMeta(deps, actor), {
+      reformId: toReformId(deps.ports.random.opaqueId()),
+      kind: input.via,
+      targetVersion: input.sobreLaVersion,
+      proposedText: texto,
+      censusSize: padron.length,
+      guarantors: garantes,
+      calendar: calendarioDe(input),
+      sponsorCount: input.firmas,
+      deliberationOpensAt: instant(input.conversacionAbreEn),
+      deliberationClosesAt: instant(input.conversacionCierraEn),
+    });
+    await saveClauseTextsWithin(client, textos);
+    await persistConstitutionLogWithin(client, siguiente, { requestId: input.requestId });
+  });
+
+  return leerNormas(deps, actor);
+}
+
+export interface RegistrarVotacionEntrada {
+  readonly requestId: string;
+  readonly votacionId: string;
+  readonly aFavor: number;
+  readonly votoDirecto: number;
+  readonly abrioEn: number;
+  readonly cerroEn: number;
+}
+
+/**
+ * Transcribe el resultado de una votación de reforma, ya cerrada.
+ *
+ * La ronda no viene en la petición: es `las que van + 1`, y lo comprueba el pliegue. Si viniera,
+ * repetir la ronda 1 hasta que saliera bien sería una petición más.
+ *
+ * **El conteo entra como dato.** Este agregado no cuenta votos —lo hace el motor de decisiones— y
+ * lo que se guarda es el `votacionId` que permite recomputarlo con un verificador independiente.
+ */
+export async function registrarVotacionDeReforma(
+  deps: ServicioDeps,
+  actor: Actor,
+  reformaIdRaw: string,
+  input: RegistrarVotacionEntrada,
+): Promise<NormasDelDespliegue> {
+  authorize(actor, 'constitution:record-vote', { kind: 'constitution' });
+  quienActua(actor);
+  const reforma = toReformId(reformaIdRaw);
+
+  await withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+    const { log, state } = await loadConstitutionState(client);
+    const rondas = reformaDe(estadoDeNormas(state), reforma).votes.length;
+    const siguiente = await recordReformVote(log, normasMeta(deps, actor), {
+      reformId: reforma,
+      vote: {
+        round: rondas + 1,
+        decisionId: decisionId(input.votacionId),
+        votesInFavor: input.aFavor,
+        directParticipation: input.votoDirecto,
+        opensAt: instant(input.abrioEn),
+        closesAt: instant(input.cerroEn),
+      },
+    });
+    await persistConstitutionLogWithin(client, siguiente, { requestId: input.requestId });
+  });
+
+  return leerNormas(deps, actor);
+}
+
+function reformaDe(state: ConstitutionState, reforma: ReformId): ReformRecord {
+  const encontrada = state.reforms.find((r) => r.reformId === reforma);
+  if (encontrada === undefined) {
+    throw new ServicioError('UNKNOWN_REFORM', 404, 'esa reforma no está en el historial');
+  }
+  return encontrada;
+}
+
+/**
+ * Una de las aprobaciones de Garantías (§6.6).
+ *
+ * ⚠ **No es una firma criptográfica y la interfaz no puede llamarla así.** Es un hecho del
+ * historial cuyo autor tiene que coincidir con la persona a la que se atribuye, y el pliegue lo
+ * revalida al releer. Eso ata la aprobación a una identidad **dentro** del sistema, no a una llave
+ * que sólo esa persona tenga: quien administra el servidor puede fabricarla. Lo que hay es
+ * detección —queda anclada fuera, con fecha y autor, y quien la sufra puede repudiarla en
+ * público—, no prevención. Está declarado en `constitution/commands.ts` y en ADR-0051.
+ */
+export async function aprobarReforma(
+  deps: ServicioDeps,
+  actor: Actor,
+  reformaIdRaw: string,
+  input: { readonly requestId: string },
+): Promise<NormasDelDespliegue> {
+  // `subject` es quien actúa y lo pone el servidor desde la sesión: nadie aprueba en nombre de otra
+  // persona, ni mandando el campo en el cuerpo, porque el campo no existe.
+  authorize(actor, 'constitution:approve', { kind: 'constitution', subject: quienActua(actor) });
+  const reforma = toReformId(reformaIdRaw);
+
+  await withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+    const log = await loadConstitutionLog(client);
+    const siguiente = await approveReform(log, normasMeta(deps, actor), { reformId: reforma });
+    await persistConstitutionLogWithin(client, siguiente, { requestId: input.requestId });
+  });
+
+  return leerNormas(deps, actor);
+}
+
+/** Pone la reforma en vigor: nace la versión nueva y **se conservan todas** las anteriores. */
+export async function ratificarReforma(
+  deps: ServicioDeps,
+  actor: Actor,
+  reformaIdRaw: string,
+  input: { readonly requestId: string; readonly rigeDesde: number },
+): Promise<NormasDelDespliegue> {
+  authorize(actor, 'constitution:ratify', { kind: 'constitution' });
+  quienActua(actor);
+  const reforma = toReformId(reformaIdRaw);
+
+  await withTransaction(deps.pool, async (client) => {
+    await lockLedgerWithin(client);
+    const log = await loadConstitutionLog(client);
+    const siguiente = await ratifyReform(log, normasMeta(deps, actor), {
+      reformId: reforma,
+      effectiveAt: instant(input.rigeDesde),
+    });
+    await persistConstitutionLogWithin(client, siguiente, { requestId: input.requestId });
+  });
+
+  return leerNormas(deps, actor);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Leer las reglas
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+function comoSeLlamaLaReforma(reforma: ReformRecord): string {
+  return reforma.kind === 'atrincherada'
+    ? `Cambio de lo que cuesta cambiar las reglas, sobre la versión ${String(reforma.targetVersion)}`
+    : `Cambio de las reglas, sobre la versión ${String(reforma.targetVersion)}`;
+}
+
+const ESTADO_DE_REFORMA: Readonly<Record<ReformRecord['status'], string>> = {
+  deliberando: 'En conversación',
+  votada: 'Votada',
+  ratificada: 'En vigor',
+  rechazada: 'Cerrada sin cambiar nada',
+};
+
+function plural(cuantas: number, singular: string, plural_: string): string {
+  return `${String(cuantas)} ${cuantas === 1 ? singular : plural_}`;
+}
+
+/**
+ * En qué va una reforma, dicho entero.
+ *
+ * El §6.6 no pide sólo que las firmas hagan falta: pide que **«sin las firmas la regla queda
+ * aprobada pero no vigente, y eso es público»**. Un estado que dijera «votada» y nada más deja
+ * escondido justo el caso que el documento manda publicar —la reforma que ganó y que alguien no
+ * está firmando—, que es donde un bloqueo silencioso tiene más valor para quien bloquea.
+ */
+function estadoDeLaReforma(reforma: ReformRecord): string {
+  if (reforma.status !== 'votada') return ESTADO_DE_REFORMA[reforma.status];
+  const requisitos = reforma.frozen.requirements;
+  if (reforma.votes.length < requisitos.votesRequired) {
+    return (
+      `Votada ${String(reforma.votes.length)} de ${String(requisitos.votesRequired)} veces: falta ` +
+      `otra votación, separada por al menos ${plural(requisitos.separationMonths, 'mes', 'meses')}`
+    );
+  }
+  if (!reformVotesPass(reforma)) return 'Votada sin alcanzar el respaldo que hace falta';
+  const faltan = requisitos.guaranteeThreshold - reforma.approvals.length;
+  if (faltan > 0) {
+    return (
+      `Aprobada y todavía no vigente: ${plural(faltan, 'falta', 'faltan')} de las ` +
+      `${String(requisitos.guaranteeThreshold)} firmas que hacen falta, de las ` +
+      `${String(requisitos.guaranteeCircleSize)} personas que cuidan las garantías`
+    );
+  }
+  return 'Aprobada y firmada: sólo falta que entre en vigor';
+}
+
+/**
+ * Cuándo vuelve a haber algo que hacer con esta reforma.
+ *
+ * Mientras se conversa, cuando cierra la conversación. Ya votada, **la fecha más temprana en que
+ * puede entrar en vigor**: los días de espera del §6.4 son impugnables ante Garantías, y un plazo
+ * que se puede impugnar y no se publica no se impugna.
+ */
+function cuandoTocaAlgo(reforma: ReformRecord): number {
+  if (reforma.status !== 'votada') return reforma.deliberationClosesAt;
+  const ultima = reforma.votes.at(-1);
+  return ultima === undefined
+    ? reforma.deliberationClosesAt
+    : addDays(ultima.closesAt, reforma.frozen.requirements.waitingDays);
+}
+
+/**
+ * Las reglas tal como están escritas en el historial, con su texto y su huella comprobada.
+ *
+ * Cada versión se sirve resolviendo las huellas de **sus** cláusulas contra el archivo de textos, y
+ * `readClauseTexts` recomputa SHA-256 antes de devolver nada. Por eso esta lectura puede fallar: si
+ * alguien cambió la letra de una norma sin pasar por una reforma, la pantalla lo dice en vez de
+ * enseñar el texto nuevo bajo la huella vieja. Un fallo ruidoso es la única respuesta honesta.
+ */
+export async function leerNormas(deps: ServicioDeps, actor: Actor): Promise<NormasDelDespliegue> {
+  authorize(actor, 'constitution:read', { kind: 'constitution' });
+  const at = ahora(deps);
+
+  return conCliente(deps.pool, async (client) => {
+    const { state } = await loadConstitutionState(client);
+    if (state === undefined || !state.exists) return verNormas();
+
+    const vigente = currentText(state);
+    if (vigente === undefined) return verNormas();
+
+    const huellas = state.versions.flatMap((version) =>
+      version.text.clauses.map((clause) => clause.textHash),
+    );
+    const textos = await readClauseTexts(client, huellas);
+    const esDelNucleo = new Set<string>(CORE_CLAUSE_IDS);
+
+    const reglasDe = (texto: ConstitutionText): readonly ReglaLeida[] =>
+      texto.clauses.map((clause) => {
+        const escrito = textos.get(clause.textHash);
+        if (escrito === undefined) {
+          // `readClauseTexts` ya lanza si falta alguna; esto cubre el caso imposible sin inventar
+          // un texto vacío, que sería enseñar una regla en blanco como si eso fuera una regla.
+          throw new ServicioError(
+            'CLAUSE_TEXT_MISSING',
+            500,
+            `falta el texto de la regla «${clause.clauseId}»`,
+          );
+        }
+        return {
+          id: clause.clauseId,
+          titulo: escrito.title,
+          texto: escrito.body,
+          irreformable: esDelNucleo.has(clause.clauseId),
+        };
+      });
+
+    const reglasVigentes = reglasDe(vigente);
+    const abiertas = openReforms(state);
+    const vedas = abiertas.flatMap((reforma) => {
+      const objetivo = state.versions.find((v) => v.version === reforma.targetVersion);
+      const tocadas =
+        objetivo === undefined ? [] : changedClauseIds(objetivo.text, reforma.proposedText);
+      return blackoutsFor(reforma.frozen.calendar, tocadas).map((veda) => ({
+        desde: veda.from,
+        hasta: veda.to,
+        motivo: veda.reason,
+      }));
+    });
+
+    return {
+      fijadas: true,
+      // El núcleo se enseña con el texto que la asamblea aprobó, no con la copia en castellano de
+      // esta capa: en cuanto hay documento fundado, la copia deja de ser la fuente. Y va en el
+      // orden del §6.b —(i) a (vi)—, no en el alfabético de las etiquetas: es una enumeración del
+      // documento y leerla desordenada es leer otra cosa.
+      nucleo: CORE_CLAUSE_IDS.map((id) => {
+        const regla = reglasVigentes.find((r) => r.id === id);
+        if (regla === undefined) {
+          // Imposible: el pliegue rechaza todo texto vigente al que le falte un punto del núcleo.
+          throw new ServicioError(
+            'NUCLEO_INCOMPLETO',
+            500,
+            `el texto vigente no contiene «${id}», que es uno de los seis puntos del núcleo`,
+          );
+        }
+        return { id: regla.id, titulo: regla.titulo, texto: regla.texto };
+      }),
+      ordinaria: vigente.ordinary,
+      atrincherada: vigente.entrenched,
+      mesesDeVigenciaFundacional: FOUNDATIONAL_VALIDITY_MONTHS,
+      aviso: constitutionNotice(state, at),
+      versionVigente: statusAt(state, at) === 'vigente' ? state.currentVersion : 0,
+      versiones: state.versions.map((version) => ({
+        version: version.version,
+        rigeDesde: version.effectiveAt,
+        caduca: version.expiresAt,
+        vigente: version.version === state.currentVersion && statusAt(state, at) === 'vigente',
+        reglas: reglasDe(version.text),
+      })),
+      reformasEnCurso: abiertas.map((reforma) => ({
+        id: reforma.reformId,
+        titulo: comoSeLlamaLaReforma(reforma),
+        estado: estadoDeLaReforma(reforma),
+        cierraEn: cuandoTocaAlgo(reforma),
+      })),
+      vedas,
+    };
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
