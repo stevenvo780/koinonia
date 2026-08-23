@@ -1,66 +1,128 @@
 /*
  * Estilos de Koinonía. Móvil primero, WCAG 2.2 AA.
  *
- * No hace falta que sea bonito; hace falta que sea claro, que se lea de pie en un bus con una mano y
- * que funcione con un lector de pantalla. Tres decisiones que no son estéticas:
+ * ═══ El principio ═══
  *
- *  1. **Contraste comprobado.** El texto principal es #16191d sobre #ffffff (17.6:1) y el texto
- *     secundario #4a5057 sobre #ffffff (8.1:1). El azul de enlace es #0b4fa8 sobre blanco (8.2:1) y
- *     el rojo de error #a41818 sobre blanco (7.7:1). Ninguno baja de 4.5:1, ni siquiera los que
- *     «casi no se leen».
- *  2. **Objetivos táctiles de 44 px**, no de 24. El mínimo de la norma es 24×24; 44 es lo que hace
- *     falta para acertar con el pulgar yendo de pie.
- *  3. **Nada depende sólo del color.** Verde y rojo llevan siempre un símbolo y una palabra.
+ * Acá decía «no hace falta que sea bonito; hace falta que sea claro». Es un falso dilema, y salió
+ * caro: produjo un documento sin estilos bien maquetado. Lo que manda es esto:
+ *
+ *   **Tiene que ser claro, y la claridad se construye con forma.** Jerarquía, temperatura,
+ *   profundidad y ritmo no son adorno encima de la legibilidad: son el medio por el que se lee.
+ *   Una pantalla sin lenguaje visual no es neutra —dice «esto lo hizo alguien que no estaba
+ *   mirando»—, y a quien duda en escribir por primera vez eso le confirma que no la esperaban.
+ *
+ * Restricción, no pobreza: cero tipografías web, cero imágenes rasterizadas, cero dependencias.
+ * Todo lo que sigue —papel, tinta, sombras, reglas, tramas— se dibuja con CSS y pesa cero bytes de
+ * red. Daniela paga sus datos; el carácter es gratis.
+ *
+ * ═══ Dirección de arte ═══
+ *
+ * 1. **Papel cálido, no blanco de monitor.** La página es #faf8f4. El #ffffff queda ascendido a
+ *    *plano elevado*: tarjetas, campos y diálogos son literalmente más claros que la página, así
+ *    que hay profundidad antes de dibujar una sola sombra. Un tercer plano hundido (#f1ece3) para
+ *    cabeceras de tabla, pozos y código. Tres capas, no un blanco único.
+ * 2. **Tinta cálida** (#171310) en vez de un casi-negro azulado. Sobre papel cálido el conjunto
+ *    tiene temperatura; el acento frío es el contrapunto que evita el sepia.
+ * 3. **Un acento propio: petróleo #0d4c58.** No es el azul de enlace de nadie. Vive en los
+ *    enlaces, en la regla de la cabecera, en la marca del «estás acá», en la marca al margen de
+ *    cada sección y en el botón principal. Se reconoce.
+ *
+ * ═══ Contraste comprobado (medido, no estimado) ═══
+ *
+ * El piso anterior era 7.13:1 en los pares neutros, pero los tres pares semánticos estaban por
+ * debajo: 6.67 (bien), 6.66 (mal), 6.59 (atención). Acá **todos** los pares de texto llegan a
+ * 7.2:1 o más, así que el peor caso global sube de 6.59:1 a 7.21:1:
+ *
+ *   tinta/papel 17.41   tinta/alto 18.47   tinta/hondo 15.70
+ *   suave/papel  9.31   suave/alto  9.87   suave/hondo  8.39
+ *   acento/papel 9.03   acento/alto 9.58   acento/hondo 8.14   acento/tenue 8.10
+ *   blanco/acento 9.58  blanco/acento-hondo 12.35
+ *   bien/bien-fondo 7.24   mal/mal-fondo 7.21   atención/aviso-fondo 7.39
+ *   línea-control/blanco 5.78  (WCAG 1.4.11 pide 3:1; antes daba 3.43)
+ *
+ * Y las tres reglas que no se negocian: objetivos táctiles de 44 px (no de 24), nada distinguido
+ * sólo por color —verde, rojo y ámbar llevan siempre símbolo y palabra—, y foco siempre visible.
  */
 
 :root {
-  --tinta: #16191d;
-  --tinta-suave: #4a5057;
-  --fondo: #ffffff;
-  --fondo-suave: #f4f5f7;
-  /*
-   * Dos bordes, no uno. El de antes daba 1.58:1 sobre blanco, que sirve para separar tarjetas
-   * —eso es decoración y la norma no le exige nada— pero **no** para dibujar el límite de un campo
-   * de texto: WCAG 1.4.11 pide 3:1 para el contorno de un control, y ese criterio no lo audita
-   * ninguna herramienta automática, así que pasa años sin que nadie lo note.
-   *
-   *   --borde          #c9ced4 sobre #ffffff → 1.58:1  (separadores, tablas, tarjetas)
-   *   --borde-control  #858b94 sobre #ffffff → 3.43:1  (input, textarea, select: contorno)
-   */
-  --borde: #c9ced4;
-  --borde-control: #858b94;
-  --enlace: #0b4fa8;
-  --bien: #14612f;
-  --bien-fondo: #e7f4ec;
-  --mal: #a41818;
-  --mal-fondo: #fdeaea;
-  /*
-   * Ámbar. Antes sólo había fondo: cualquier texto de atención salía en tinta neutra o pedía
-   * prestado el rojo. Ahora el tono está completo, y con dos valores porque uno solo no alcanza:
-   *
-   *   --atencion        #7a4e05 → 7.19:1 sobre blanco y 6.58:1 sobre el propio fondo ámbar
-   *   --atencion-borde  #a06a08 → 4.60:1 sobre blanco y 4.22:1 sobre el fondo (contorno, pide 3:1)
-   *
-   * El de antes (#a06a08) servía de borde pero como texto sobre #fdf4e3 daba 4.22:1, por debajo
-   * del 4.5:1. Es el fallo típico del ámbar: se comprueba contra blanco y se pinta sobre crema.
-   */
-  --aviso-fondo: #fdf4e3;
-  --atencion: #7a4e05;
-  --atencion-borde: #a06a08;
-  --foco: #0b4fa8;
-  --radio: 8px;
+  /* ── Papel: tres planos, no un blanco ────────────────────────────────────────────────── */
+  --papel: #faf8f4;
+  --papel-alto: #ffffff;
+  --papel-hondo: #f1ece3;
+
+  /* ── Tinta ───────────────────────────────────────────────────────────────────────────── */
+  --tinta: #171310;
+  --tinta-suave: #4a4238;
 
   /*
-   * Una sola medida para las tres franjas. Antes la cabecera empezaba en x=0 y el contenido en
-   * x=288: dos rejillas distintas separadas 272 px, que es lo que hace que una página parezca una
-   * plantilla a medio armar. Ahora cabecera, contenido y pie comparten `.interior`, así que el
-   * borde izquierdo del nombre y el del `h1` caen en la misma vertical en cualquier ancho.
+   * Dos líneas, no una. La decorativa separa planos y la norma no le exige nada; la de control
+   * dibuja el límite de un campo de texto, y WCAG 1.4.11 le pide 3:1. Ese criterio no lo audita
+   * ninguna herramienta automática, así que pasa años sin que nadie lo note.
+   */
+  --linea: #e2dacd; /* separadores, tablas, tarjetas: decorativo */
+  --linea-fuerte: #c6b9a6; /* separadores con peso, tramas */
+  --linea-control: #6e6459; /* input, textarea, select: 5.78:1 sobre blanco */
+
+  /* ── Acento ──────────────────────────────────────────────────────────────────────────── */
+  --acento: #0d4c58;
+  --acento-hondo: #093a44;
+  --acento-tenue: #e3eef0;
+
+  /* ── Semánticos. Recalentados para pertenecer al papel, y todos ≥7.2:1 ───────────────── */
+  --bien: #0f5a2b;
+  --bien-fondo: #e6f2e7;
+  --mal: #9a1616;
+  --mal-fondo: #fbeae7;
+  --atencion: #6f4604;
+  --atencion-borde: #96650a;
+  --aviso-fondo: #fbf2df;
+
+  --foco: var(--acento);
+
+  /*
+   * ── Ritmo vertical ───────────────────────────────────────────────────────────────────
+   * Una escala, no valores sueltos. Base 4 px; cada paso es una decisión, no un ajuste fino.
+   */
+  --e1: 0.25rem;
+  --e2: 0.5rem;
+  --e3: 0.75rem;
+  --e4: 1rem;
+  --e5: 1.5rem;
+  --e6: 2rem;
+  --e7: 3rem;
+  --e8: 4rem;
+
+  /* ── Radios: tres, según el tamaño de la pieza ───────────────────────────────────────── */
+  --radio-1: 6px; /* campos, fichas, código */
+  --radio-2: 10px; /* tarjetas, avisos, botones */
+  --radio-3: 14px; /* diálogo */
+  --radio: var(--radio-2); /* alias histórico */
+
+  /*
+   * ── Profundidad ──────────────────────────────────────────────────────────────────────
+   * Sombras teñidas de tinta, no de negro puro: el gris neutro sobre papel cálido se ve sucio.
+   * Dos niveles y basta; el tercero es sólo para el diálogo, que flota de verdad.
+   */
+  --sombra-1: 0 1px 2px rgb(23 19 16 / 5%), 0 1px 3px rgb(23 19 16 / 4%);
+  --sombra-2: 0 1px 2px rgb(23 19 16 / 6%), 0 6px 16px -4px rgb(23 19 16 / 10%);
+  --sombra-3: 0 8px 40px -8px rgb(23 19 16 / 28%), 0 2px 8px rgb(23 19 16 / 10%);
+
+  /*
+   * Una sola medida para las tres franjas: cabecera, contenido y pie comparten `.interior`, así
+   * que el borde izquierdo del nombre y el del `h1` caen en la misma vertical en cualquier ancho.
    *
-   * `64ch` y no `44rem`: el material de esta plataforma es prosa argumentativa larga, y la medida
+   * `64ch` y no `44rem`: el material de esta plataforma es prosa argumentativa larga y la medida
    * cómoda es de 45 a 75 caracteres. En rem la línea crecía hasta 85-90 en escritorio.
    */
   --medida: 64ch;
-  --canal: 1rem;
+  --canal: var(--e4);
+
+  /* ── Alias históricos. Cuestan diez líneas y evitan una sorpresa. ────────────────────── */
+  --fondo: var(--papel);
+  --fondo-suave: var(--papel-hondo);
+  --borde: var(--linea);
+  --borde-control: var(--linea-control);
+  --enlace: var(--acento);
 }
 
 * {
@@ -75,8 +137,17 @@ html {
 
 body {
   margin: 0;
-  background: var(--fondo);
   color: var(--tinta);
+
+  /*
+   * El lavado de luz. Un degradado vertical del plano hundido al papel en las primeras 18 rem:
+   * la página tiene una fuente de luz arriba, la cabecera se asienta sobre una franja más cálida
+   * y el resto es papel liso. Es una imagen y no pesa: son treinta caracteres de CSS.
+   */
+  background-color: var(--papel);
+  background-image: linear-gradient(180deg, var(--papel-hondo), var(--papel) 18rem);
+  background-repeat: no-repeat;
+
   font-family:
     system-ui,
     -apple-system,
@@ -84,12 +155,14 @@ body {
     Roboto,
     sans-serif;
   /*
-   * 17 px en el teléfono, 19 px en escritorio. La escala era la misma a 360 y a 1280, y a 1280 el
-   * texto quedaba pequeño para la distancia de lectura de un portátil. Todo en `rem` + `vw`, así
-   * que sigue respetando el tamaño que la persona eligió en su sistema.
+   * 17 px en el teléfono, 19 px en escritorio. Todo en `rem` + `vw`, así que sigue respetando el
+   * tamaño que la persona eligió en su sistema.
    */
   font-size: clamp(1.0625rem, 1rem + 0.28vw, 1.1875rem);
   line-height: 1.65;
+  /* Gratis, y en las familias variables del sistema (SF, Segoe UI Variable) sí se nota. */
+  font-optical-sizing: auto;
+  font-variant-numeric: lining-nums;
 
   /* El pie anclado abajo: sin esto quedaban ~280 px de blanco muerto en las pantallas cortas. */
   min-height: 100vh;
@@ -110,7 +183,7 @@ body {
 :focus-visible {
   outline: 3px solid var(--foco);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--radio-1);
 }
 
 /* Respeto por quien pidió menos movimiento. */
@@ -131,8 +204,12 @@ body {
   left: -9999px;
   top: 0;
   background: var(--tinta);
-  color: #fff;
-  padding: 0.75rem 1rem;
+  color: var(--papel-alto);
+  padding: var(--e3) var(--e4);
+  border-radius: 0 0 var(--radio-2) 0;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: var(--sombra-2);
   z-index: 100;
 }
 .saltar:focus {
@@ -140,12 +217,9 @@ body {
 }
 
 /*
- * Sólo para lectores de pantalla.
- *
- * Existe para una cosa concreta: completar un nombre accesible sin ensuciar la pantalla. Un
- * «Acá no cuadra» que no dice *qué* no cuadra obliga a elegir entre dos malas salidas —dejarlo
- * ambiguo, o meter una parrafada en `aria-label` que además pisa el texto visible—. Con esto el
- * complemento va en el marcado, se lee en voz alta y no ocupa un píxel.
+ * Sólo para lectores de pantalla. Existe para completar un nombre accesible sin ensuciar la
+ * pantalla: un «Acá no cuadra» que no dice *qué* no cuadra obliga a elegir entre dejarlo ambiguo o
+ * meter una parrafada en `aria-label` que además pisa el texto visible.
  *
  * `clip-path: inset(50%)` y no `display: none` ni `visibility: hidden`: esos dos también lo
  * esconden del lector de pantalla, que es justo lo contrario de lo que se busca. Sin `width: 0`
@@ -165,9 +239,31 @@ body {
 
 /* ── Cabecera y navegación ───────────────────────────────────────────────────────────────── */
 
+/*
+ * La regla de membrete. Un filete de 2 px que arranca petróleo en el margen izquierdo, pasa por la
+ * línea fuerte y se disuelve a la derecha: es lo que convierte un borde inferior de 1 px en una
+ * cabecera con remite. Va en `::after` **posicionado**, así que no cuesta ni un píxel de alto —y
+ * el alto de esta cabecera es lo que decide dónde nace el `h1`.
+ */
 header.cabecera {
-  border-bottom: 1px solid var(--borde);
-  padding-block: 0.625rem 0.75rem;
+  position: relative;
+  border-bottom: 1px solid var(--linea);
+  padding-block: var(--e2) var(--e3);
+}
+
+header.cabecera::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--acento) 0,
+    var(--acento) 4.5rem,
+    var(--linea-fuerte) 13rem,
+    transparent 100%
+  );
 }
 
 header.cabecera a.marca {
@@ -175,27 +271,42 @@ header.cabecera a.marca {
   align-items: center;
   min-height: 44px;
   font-weight: 700;
-  font-size: 1.125rem;
-  letter-spacing: 0.01em;
+  font-size: 1.1875rem;
+  letter-spacing: -0.006em;
   color: var(--tinta);
   text-decoration: none;
 }
 
+/* El pilar del membrete: 3 px de petróleo antes del nombre. Dentro de los 44 px, cuesta cero. */
+header.cabecera a.marca::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  margin-right: var(--e2);
+  border-radius: 1px;
+  background: var(--acento);
+}
+
 nav.principal .grupo + .grupo {
-  margin-top: 0.375rem;
+  margin-top: var(--e2);
 }
 
 /*
  * El rótulo del grupo. No es un `h2`: un encabezado en la cabecera se cuela en el índice de
  * encabezados de todas las páginas y aparece por delante del `h1`, que es justo lo que quien
  * navega con lector de pantalla usa para saber de qué trata la pantalla.
+ *
+ * `line-height: 1.2` explícito y no el 1.65 del cuerpo: son versalitas de 13 px, y heredar el
+ * interlineado de la prosa les regalaba 6 px de alto que se los come la cabecera entera.
  */
 nav.principal .titulo-grupo {
   margin: 0;
-  color: var(--tinta-suave);
-  font-size: 0.8125rem;
+  color: var(--acento);
+  font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  line-height: 1.2;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
@@ -215,16 +326,29 @@ nav.principal .lista {
 nav.principal .lista > li {
   display: flex;
   align-items: baseline;
-  gap: 0.375rem;
+  gap: var(--e1);
   min-width: 0;
 }
 
+/*
+ * En una navegación el subrayado no hace falta para cumplir 1.4.1 —no son enlaces dentro de un
+ * bloque de texto— y quitarlo es la mitad de la distancia entre «documento sin estilos» y
+ * «interfaz». Al pasar por encima aparece, para que se vea que responden.
+ */
 nav.principal a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
   line-height: 1.3;
-  color: var(--enlace);
+  color: var(--acento);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+nav.principal a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
 }
 
 /*
@@ -233,8 +357,8 @@ nav.principal a {
  */
 nav.principal .recorrido .paso {
   color: var(--tinta-suave);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums lining-nums;
   font-weight: 700;
 }
 
@@ -247,29 +371,33 @@ nav.principal a[aria-current='page'] {
   color: var(--tinta);
   font-weight: 700;
   text-decoration: none;
-  border-bottom: 3px solid var(--enlace);
+  box-shadow: inset 0 -3px 0 var(--acento);
+}
+
+nav.principal a[aria-current='page']:hover {
+  text-decoration: none;
 }
 
 /* El botón que pliega el grupo de consulta. Sólo existe donde el ancho es escaso. */
 nav.principal .abridor {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--e2);
   min-height: 44px;
   padding: 0;
   border: 0;
   background: none;
-  color: var(--enlace);
+  color: var(--acento);
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 nav.principal .abridor .signo {
-  font-size: 0.625rem;
+  font-size: 0.5rem;
 }
 
 nav.principal .consulta[data-abierto='no'] {
@@ -277,18 +405,16 @@ nav.principal .consulta[data-abierto='no'] {
 }
 
 /*
- * «Estás acá» con el grupo plegado.
- *
- * Es lo que reemplaza a abrir la lista sola al llegar: dice el destino actual con todas las
- * letras, cuesta una línea en vez de 406 px, y no depende del color —es texto, y el nombre va en
- * negrita además del signo—. En pantalla ancha sobra: ahí la lista está siempre a la vista y el
- * enlace ya lleva su `aria-current`, así que se retira en la consulta de 48 rem.
+ * «Estás acá» con el grupo plegado. Reemplaza a abrir la lista sola al llegar: dice el destino
+ * actual con todas las letras, cuesta una línea en vez de 406 px, y no depende del color —es
+ * texto, y el nombre va en negrita además del signo—. En pantalla ancha sobra: ahí la lista está
+ * siempre a la vista y el enlace ya lleva su `aria-current`.
  */
 nav.principal .fila-abridor {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: 0.5rem;
+  column-gap: var(--e2);
 }
 
 nav.principal .aca-consulta {
@@ -331,7 +457,7 @@ nav.principal .pista {
   color: var(--tinta-suave);
   font-size: 0.875rem;
   line-height: 1.4;
-  padding-bottom: 0.5rem;
+  padding-bottom: var(--e2);
 }
 
 @media (min-width: 48rem) {
@@ -369,40 +495,98 @@ nav.principal .pista {
 }
 
 main {
-  padding-block: 0.5rem 2rem;
+  padding-block: var(--e2) var(--e6);
 }
 
 footer.pie {
-  border-top: 1px solid var(--borde);
-  padding-block: 1rem;
+  position: relative;
+  border-top: 1px solid var(--linea);
+  padding-block: var(--e4);
   color: var(--tinta-suave);
   font-size: 0.9375rem;
-  margin-top: 2.5rem;
+  margin-top: var(--e7);
+}
+
+/* El membrete se repite abajo, en espejo: cierra la página en vez de dejarla desangrarse. */
+footer.pie::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: -1px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--acento) 0,
+    var(--acento) 4.5rem,
+    var(--linea-fuerte) 13rem,
+    transparent 100%
+  );
+}
+
+/* ── Escala tipográfica ──────────────────────────────────────────────────────────────────── */
+
+/*
+ * El salto de título a cuerpo era 1.53× en el teléfono, y con eso la jerarquía se sostenía casi
+ * sólo con negritas. Ahora la escala tiene saltos de verdad —razón ≈1.28 entre niveles, con el
+ * `h1` saltando dos peldaños— y crece con el ancho:
+ *
+ *            360 px      1280 px
+ *   h1        31 px       44 px      (1.82× y 2.32× el cuerpo; antes 1.53× y 2.0×)
+ *   h2        23 px       30 px
+ *   h3        18 px       21 px
+ *   cuerpo    17 px       19 px
+ *
+ * El tamaño no lo hace solo: el interletrado se cierra a medida que la letra crece (-0.021em en el
+ * `h1`, -0.012em en el `h2`, 0 en el cuerpo), que es lo que `system-ui` —SF, Segoe UI, Roboto: tres
+ * tipografías buenas que ya están instaladas— necesita para no verse suelta en tamaño grande.
+ */
+h1 {
+  font-size: clamp(1.9375rem, 1.55rem + 1.72vw, 2.75rem);
+  line-height: 1.12;
+  letter-spacing: -0.021em;
+  font-weight: 700;
+  text-wrap: balance;
+  margin: var(--e2) 0 var(--e4);
+}
+
+h2 {
+  font-size: clamp(1.4375rem, 1.18rem + 1.14vw, 1.875rem);
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  font-weight: 700;
+  text-wrap: balance;
+  margin: var(--e6) 0 var(--e3);
+}
+
+h3 {
+  font-size: clamp(1.125rem, 1.03rem + 0.42vw, 1.3125rem);
+  line-height: 1.3;
+  letter-spacing: -0.004em;
+  font-weight: 600;
+  margin: var(--e5) 0 var(--e1);
 }
 
 /*
- * Escala fluida. Antes h1/h2/h3 medían lo mismo a 360 que a 1280 px, así que en escritorio la
- * jerarquía se sostenía casi sólo con negritas. Los saltos crecen con el ancho —26→38 en el h1,
- * 20→25 en el h2— y el cuerpo sube de 17 a 19, de modo que la distancia entre niveles se ve sin
- * tener que engrosar nada.
+ * La marca al margen. Un filete de petróleo de 3 px junto a cada encabezado de sección, en el
+ * canal de 16 px que ya reserva `.interior`. Posicionado, así que no ocupa alto ni desplaza nada;
+ * y acotado a los `h2` de primer nivel para que no aparezca dentro de las tarjetas y los avisos,
+ * donde sería ruido.
  */
-h1 {
-  font-size: clamp(1.625rem, 1.36rem + 1.18vw, 2.375rem);
-  line-height: 1.2;
-  letter-spacing: -0.012em;
-  text-wrap: balance;
-  margin: 0.5rem 0 1rem;
+main > h2,
+main > section > h2 {
+  position: relative;
 }
-h2 {
-  font-size: clamp(1.25rem, 1.13rem + 0.55vw, 1.5625rem);
-  line-height: 1.25;
-  text-wrap: balance;
-  margin: 2rem 0 0.5rem;
-}
-h3 {
-  font-size: clamp(1.0625rem, 1.01rem + 0.26vw, 1.1875rem);
-  line-height: 1.35;
-  margin: 1.5rem 0 0.25rem;
+
+main > h2::before,
+main > section > h2::before {
+  content: '';
+  position: absolute;
+  left: -0.75rem;
+  top: 0.28em;
+  width: 3px;
+  height: 0.78em;
+  border-radius: 1px;
+  background: var(--acento);
 }
 
 /* Prosa larga: la medida ya la acota `.interior`, pero los bloques sueltos no deben pasarse. */
@@ -412,12 +596,48 @@ main dd {
   max-width: var(--medida);
 }
 
-a {
-  color: var(--enlace);
+/*
+ * **CLASE NUEVA — `.lede`.** El párrafo de entrada de una pantalla: un punto más grande, algo más
+ * suelto de interlineado y en tinta suave. Es el peldaño que falta entre el `h1` y la prosa.
+ *
+ * Dónde aplicarla (no la aplico yo: `app/*​/page.tsx` está fuera de mi lista):
+ *   · `app/page.tsx` → el `<p>` que empieza «Acá se escribe lo que está mal…».
+ *   · el primer `<p>` explicativo de `/problemas`, `/normas`, `/verificar` y `/circulos`.
+ */
+.lede {
+  font-size: clamp(1.1875rem, 1.11rem + 0.34vw, 1.375rem);
+  line-height: 1.5;
+  letter-spacing: -0.004em;
+  color: var(--tinta-suave);
+  margin-block: var(--e3) var(--e5);
 }
 
-p.suave {
+/*
+ * Enlaces que no son el azul subrayado del navegador. Petróleo, filete de 1 px separado de la
+ * letra: se lee como algo compuesto, no como el valor por omisión. El subrayado se queda —dentro
+ * de un bloque de texto es lo que cumple 1.4.1— pero engorda al pasar por encima, que es la señal
+ * de que responde.
+ */
+a {
+  color: var(--acento);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+  text-decoration-skip-ink: auto;
+}
+
+a:hover {
+  color: var(--acento-hondo);
+  text-decoration-thickness: 2px;
+}
+
+p.suave,
+.suave {
   color: var(--tinta-suave);
+}
+
+strong {
+  font-weight: 600;
 }
 
 /* ── Botones ─────────────────────────────────────────────────────────────────────────────── */
@@ -429,41 +649,74 @@ button.boton {
   justify-content: center;
   min-height: 44px;
   min-width: 44px;
-  padding: 0.625rem 1.125rem;
-  border-radius: var(--radio);
-  border: 2px solid var(--enlace);
-  background: var(--enlace);
-  color: #fff;
+  padding: var(--e3) var(--e5);
+  border-radius: var(--radio-2);
+  border: 2px solid var(--acento);
+  background: var(--acento);
+  color: var(--papel-alto);
   font: inherit;
   font-weight: 600;
+  letter-spacing: 0.002em;
   text-decoration: none;
   cursor: pointer;
+  box-shadow: var(--sombra-1);
+  transition:
+    background-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.boton:hover,
+button.boton:hover {
+  background: var(--acento-hondo);
+  border-color: var(--acento-hondo);
+  box-shadow: var(--sombra-2);
+  text-decoration: none;
 }
 
 .boton[disabled] {
   opacity: 1;
-  background: var(--fondo-suave);
-  border-color: var(--borde);
+  background: var(--papel-hondo);
+  border-color: var(--linea-fuerte);
   color: var(--tinta-suave);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
+/* El secundario es el plano elevado: papel blanco, borde de acento, sin relleno. */
 .boton.secundario {
-  background: var(--fondo);
-  color: var(--enlace);
+  background: var(--papel-alto);
+  color: var(--acento);
+}
+
+.boton.secundario:hover {
+  background: var(--acento-tenue);
+  border-color: var(--acento-hondo);
+  color: var(--acento-hondo);
 }
 
 /*
  * El botón grande **de la portada**, y de ningún otro sitio: es la única entrada a toda la
  * plataforma y por eso mide 64 px. Reutilizarlo en una pantalla interior le presta una jerarquía
- * que no le corresponde y deja a la portada sin nada que la distinga. Para «la acción principal
- * *de esta* pantalla» está `.boton.accion`.
+ * que no le corresponde y deja a la portada sin nada que la distinga.
+ *
+ * El degradado va de petróleo a petróleo hondo —los dos con el blanco por encima de 9.5:1— más un
+ * filo de luz interior de 1 px. Es la única pieza de la interfaz con volumen, y es a propósito:
+ * hay una puerta y se ve cuál es.
  */
 .boton.grande {
   width: 100%;
   min-height: 64px;
   font-size: 1.1875rem;
-  padding: 1rem;
+  padding: var(--e4);
+  border-radius: var(--radio-2);
+  background-image: linear-gradient(180deg, var(--acento), var(--acento-hondo));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 14%),
+    var(--sombra-2);
+}
+
+.boton.grande:hover {
+  background-image: linear-gradient(180deg, var(--acento-hondo), var(--acento-hondo));
 }
 
 /*
@@ -474,7 +727,7 @@ button.boton {
 .boton.accion {
   width: 100%;
   min-height: 52px;
-  padding: 0.75rem 1.25rem;
+  padding: var(--e3) var(--e5);
 }
 
 @media (min-width: 30rem) {
@@ -486,38 +739,53 @@ button.boton {
 /* ── Formularios ─────────────────────────────────────────────────────────────────────────── */
 
 .campo {
-  margin: 1.25rem 0;
+  margin: var(--e5) 0;
 }
 
 .campo label {
   display: block;
   font-weight: 600;
-  margin-bottom: 0.25rem;
+  letter-spacing: -0.003em;
+  margin-bottom: var(--e1);
 }
 
 .campo .ayuda {
   display: block;
   color: var(--tinta-suave);
   font-size: 0.9375rem;
-  margin-bottom: 0.375rem;
+  line-height: 1.45;
+  margin-bottom: var(--e2);
 }
 
+/*
+ * El campo es plano elevado: blanco sobre papel cálido. Se ve *dónde se escribe* antes de leer el
+ * rótulo, que es exactamente lo que necesita quien va a escribir por primera vez.
+ */
 .campo input,
 .campo textarea,
 .campo select {
   width: 100%;
   min-height: 44px;
-  padding: 0.625rem 0.75rem;
-  /* 3.43:1 sobre blanco. El contorno de un control es un límite, no un adorno (WCAG 1.4.11). */
-  border: 2px solid var(--borde-control);
-  border-radius: var(--radio);
+  padding: var(--e3);
+  /* 5.78:1 sobre blanco. El contorno de un control es un límite, no un adorno (WCAG 1.4.11). */
+  border: 2px solid var(--linea-control);
+  border-radius: var(--radio-1);
   font: inherit;
   color: var(--tinta);
-  background: var(--fondo);
+  background: var(--papel-alto);
+  box-shadow: inset 0 1px 2px rgb(23 19 16 / 5%);
+  transition: border-color 0.14s ease;
+}
+
+.campo input:hover,
+.campo textarea:hover,
+.campo select:hover {
+  border-color: var(--tinta-suave);
 }
 
 .campo textarea {
   min-height: 8rem;
+  line-height: 1.55;
   resize: vertical;
 }
 
@@ -529,36 +797,43 @@ button.boton {
 .error-campo {
   color: var(--mal);
   font-weight: 600;
-  margin-top: 0.25rem;
+  margin-top: var(--e1);
 }
 
 /* ── Detalles plegables ──────────────────────────────────────────────────────────────────── */
 
 /*
- * `<summary>` no tenía estilo en ninguna parte, y en el proyecto ya hay ocho. En la pantalla de
- * verificación dejó de ser un adorno: esconde cinco sextos del contenido, así que es el control
- * más pulsado de la página. Sin estilo medía ~27 px de alto —pasa el mínimo de 24×24 de la norma
- * (WCAG 2.5.8) pero no los 44 que promete la cabecera de este fichero— y no se distinguía de un
- * párrafo en negrita: nada decía que fuera pulsable.
+ * `<summary>` sin estilo medía ~27 px de alto —pasa el mínimo de 24×24 (WCAG 2.5.8) pero no los 44
+ * que promete la cabecera de este fichero— y no se distinguía de un párrafo en negrita: nada decía
+ * que fuera pulsable. En la pantalla de verificación esconde cinco sextos del contenido, así que es
+ * el control más pulsado de la página.
  *
  * El signo se dibuja con `::before` y con texto alternativo vacío (`/ ''`), porque `<summary>` ya
  * anuncia por sí solo si está abierto o cerrado; un carácter leído encima lo diría dos veces.
  */
 details {
-  margin-block: 1rem;
+  margin-block: var(--e4);
+  border-radius: var(--radio-1);
 }
 
 summary {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--e2);
   min-height: 44px;
-  padding-block: 0.375rem;
-  color: var(--enlace);
+  padding-block: var(--e2);
+  color: var(--acento);
   font-weight: 600;
   cursor: pointer;
   /* Sin esto, `display: flex` deja el triángulo nativo en unos navegadores y no en otros. */
   list-style: none;
+}
+
+summary:hover {
+  color: var(--acento-hondo);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
 }
 
 summary::-webkit-details-marker {
@@ -570,7 +845,7 @@ summary::before {
      todavía no entienden esa sintaxis se descarta entera, dejando el signo de la primera. */
   content: '\25B8';
   content: '\25B8' / '';
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -582,34 +857,94 @@ details[open] > summary::before {
 
 /* ── Avisos ──────────────────────────────────────────────────────────────────────────────── */
 
+/*
+ * Un aviso es un plano elevado con una barra de color a la izquierda, no una caja teñida entera.
+ *
+ * El cuerpo **nunca** se tiñe: un párrafo completo en rojo se lee peor que en tinta (7.9:1 contra
+ * 17.4:1) y empuja hacia «esto es un error del sistema» cuando muchas veces es un resultado. El
+ * tono vive en la barra y en el `<strong>` que abre —donde va el símbolo y la palabra—, que es lo
+ * que se ve primero y lo único que necesita el color.
+ */
 .aviso {
-  border: 2px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.875rem 1rem;
-  margin: 1rem 0;
-  background: var(--fondo-suave);
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--linea-fuerte);
+  border-radius: var(--radio-2);
+  padding: var(--e3) var(--e4);
+  margin: var(--e4) 0;
+  background: var(--papel-alto);
+  color: var(--tinta);
+  box-shadow: var(--sombra-1);
+}
+
+/*
+ * La marca del aviso —el símbolo y la palabra— lleva clase propia en vez de depender de `> strong`.
+ * El componente `Aviso` la pone como hijo directo, pero varias pantallas escriben el aviso a mano
+ * con el `<strong>` dentro de un `<p>`; con el selector de hijo directo ésas se quedaban sin tono.
+ */
+.marca-aviso {
+  color: inherit;
+  font-weight: 700;
 }
 
 .aviso.error {
-  border-color: var(--mal);
+  border-color: var(--mal-fondo);
+  border-left-color: var(--mal);
   background: var(--mal-fondo);
+}
+
+.aviso.error .marca-aviso {
   color: var(--mal);
 }
 
 .aviso.bien {
-  border-color: var(--bien);
+  border-color: var(--bien-fondo);
+  border-left-color: var(--bien);
   background: var(--bien-fondo);
+}
+
+.aviso.bien .marca-aviso {
   color: var(--bien);
 }
 
 .aviso.atencion {
+  border-color: var(--aviso-fondo);
+  border-left-color: var(--atencion-borde);
   background: var(--aviso-fondo);
-  border-color: var(--atencion-borde);
+}
+
+.aviso.atencion .marca-aviso {
   color: var(--atencion);
+}
+
+/*
+ * **CLASE NUEVA — `.tira-sesion`.** La línea de identidad bajo el `h1`: quién sos y qué podés
+ * hacer. Antes era un `<p class="suave">` suelto, indistinguible de la prosa que venía debajo.
+ * Ahora es una firma editorial cerrada por un filete. La aplica `BarraSesion` en `marco.tsx`.
+ */
+.tira-sesion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e2) var(--e3);
+  margin: 0 0 var(--e5);
+  padding-bottom: var(--e3);
+  border-bottom: 1px solid var(--linea);
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+}
+
+.tira-sesion strong {
+  color: var(--tinta);
+  font-weight: 700;
 }
 
 /* ── Tarjetas y listas ───────────────────────────────────────────────────────────────────── */
 
+/*
+ * La tarjeta tiene presencia: papel blanco sobre papel cálido, filete de 1 px y una sombra corta.
+ * Tres señales de que es una pieza y no un párrafo con borde. Al pasar por encima la sombra se
+ * abre y el filete se tiñe: responde sin moverse de sitio.
+ */
 ul.tarjetas {
   list-style: none;
   padding: 0;
@@ -617,49 +952,100 @@ ul.tarjetas {
 }
 
 ul.tarjetas > li {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.875rem 1rem;
-  margin-bottom: 0.75rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e4);
+  margin-bottom: var(--e3);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
+  transition:
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+ul.tarjetas > li:hover {
+  border-color: var(--linea-fuerte);
+  box-shadow: var(--sombra-2);
 }
 
 ul.tarjetas h3 {
   margin-top: 0;
 }
 
-.etiqueta {
-  display: inline-block;
-  border: 1px solid var(--borde);
-  border-radius: 999px;
-  padding: 0.125rem 0.625rem;
-  font-size: 0.875rem;
-  background: var(--fondo-suave);
-  color: var(--tinta);
+ul.tarjetas h3 a {
+  text-decoration-color: var(--linea-fuerte);
 }
 
+ul.tarjetas h3 a:hover {
+  text-decoration-color: currentcolor;
+}
+
+/* La ficha: acento tenue con letra de acento. 8.10:1. */
+.etiqueta {
+  display: inline-block;
+  border: 1px solid var(--acento-tenue);
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: var(--acento-tenue);
+  color: var(--acento);
+}
+
+/*
+ * El estado vacío. La trama diagonal del rail izquierdo se dibuja con un `repeating-linear-gradient`
+ * —cero bytes de red— y dice «acá todavía no hay nada» sin el borde discontinuo de toda la caja,
+ * que es lo que hacía que un estado vacío pareciera un error de maquetación. La trama va detrás
+ * del rail, nunca detrás del texto.
+ */
 .vacio {
-  border: 2px dashed var(--borde);
-  border-radius: var(--radio);
-  padding: 1.25rem;
-  background: var(--fondo-suave);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--radio-2);
+  padding: var(--e5);
+  padding-left: calc(var(--e5) + 6px);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
+}
+
+.vacio::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--linea-fuerte) 0 3px,
+    var(--papel-hondo) 3px 7px
+  );
 }
 
 .vacio ul {
-  padding-left: 1.25rem;
+  padding-left: var(--e5);
+}
+
+.vacio > :first-child {
+  margin-top: 0;
 }
 
 /* ── Versiones de una propuesta ──────────────────────────────────────────────────────────── */
 
 .version {
-  border: 1px solid var(--borde);
-  border-left: 6px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.875rem 1rem;
-  margin-bottom: 1rem;
+  border: 1px solid var(--linea);
+  border-left: 6px solid var(--linea-fuerte);
+  border-radius: var(--radio-2);
+  padding: var(--e4);
+  margin-bottom: var(--e4);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .version.vigente {
-  border-left-color: var(--enlace);
+  border-left-color: var(--acento);
 }
 
 .version .texto {
@@ -669,27 +1055,34 @@ ul.tarjetas h3 {
 /* ── Papeleta ────────────────────────────────────────────────────────────────────────────── */
 
 fieldset.opciones {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.5rem 1rem 1rem;
-  margin: 1rem 0;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e2) var(--e4) var(--e4);
+  margin: var(--e4) 0;
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 fieldset.opciones legend {
   font-weight: 700;
-  padding: 0 0.375rem;
+  letter-spacing: -0.004em;
+  padding: 0 var(--e2);
 }
 
 fieldset.plan-ejecucion {
-  border: 2px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.5rem 1rem 1rem;
-  margin: 1.5rem 0;
+  border: 1px solid var(--linea);
+  border-top: 3px solid var(--acento);
+  border-radius: var(--radio-2);
+  padding: var(--e2) var(--e4) var(--e4);
+  margin: var(--e5) 0;
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 fieldset.plan-ejecucion legend {
   font-weight: 700;
-  padding: 0 0.375rem;
+  letter-spacing: -0.004em;
+  padding: 0 var(--e2);
 }
 
 fieldset.plan-ejecucion[disabled] {
@@ -697,11 +1090,11 @@ fieldset.plan-ejecucion[disabled] {
 }
 
 .plan-visible {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.875rem 1rem;
-  margin: 1rem 0;
-  background: var(--fondo-suave);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e4);
+  margin: var(--e4) 0;
+  background: var(--papel-hondo);
 }
 
 .plan-visible h2,
@@ -712,20 +1105,22 @@ fieldset.plan-ejecucion[disabled] {
 
 .destacado {
   font-size: 1.1875rem;
+  line-height: 1.5;
 }
 
 .opcion {
   display: flex;
   align-items: flex-start;
-  gap: 0.625rem;
+  gap: var(--e3);
   min-height: 44px;
-  padding: 0.5rem 0;
+  padding: var(--e2) 0;
 }
 
 .opcion input[type='radio'] {
   width: 24px;
   height: 24px;
-  margin-top: 0.25rem;
+  margin-top: var(--e1);
+  accent-color: var(--acento);
   flex: 0 0 auto;
 }
 
@@ -753,30 +1148,30 @@ fieldset.plan-ejecucion[disabled] {
   font-weight: 400;
   color: var(--tinta-suave);
   font-size: 0.9375rem;
+  line-height: 1.45;
 }
 
 /* ── Traza y verificación ────────────────────────────────────────────────────────────────── */
 
 ol.traza {
-  padding-left: 1.25rem;
+  padding-left: var(--e5);
 }
 
 ol.traza li {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--e3);
 }
 
 /*
- * Una tabla de cinco o seis columnas no cabe en 360 px y no hay tipografía que lo arregle. Hasta
- * ahora `table.datos` sólo tenía `width: 100%` y `overflow-wrap: anywhere`, así que el navegador
- * cumplía la orden partiendo las palabras por la mitad: columnas de tres letras de ancho y un
- * comprobante cortado en seis renglones, que es ilegible y además no se puede copiar bien.
+ * Una tabla de cinco o seis columnas no cabe en 360 px y no hay tipografía que lo arregle. Sólo
+ * con `width: 100%` y `overflow-wrap: anywhere` el navegador cumplía la orden partiendo las
+ * palabras por la mitad: columnas de tres letras y un comprobante cortado en seis renglones.
  *
  * La tabla se envuelve y se desplaza de lado. Dos cosas que casi siempre faltan y que convierten
- * esto en una trampa si no están —el marcado tiene que ponerlas, ver la nota de abajo—:
+ * esto en una trampa si no están —el marcado tiene que ponerlas—:
  *
  *  - **`tabindex="0"`**: una región que se desplaza y no se puede enfocar es contenido inalcanzable
- *    para quien navega con teclado. No hay forma de moverla sin ratón ni gesto táctil.
- *  - **`role="region"` + `aria-label`**: al ser enfocable, aparece en el recorrido del tabulador; si
+ *    para quien navega con teclado.
+ *  - **`role="region"` + `aria-label`**: al ser enfocable aparece en el recorrido del tabulador; si
  *    llega sin nombre, el lector de pantalla anuncia «grupo» y nada más.
  *
  * `min-width` en la tabla es lo que fuerza el desplazamiento en vez del aplastamiento, y por eso
@@ -787,9 +1182,11 @@ ol.traza li {
   /* Que el gesto lateral no dispare el «atrás» del navegador al llegar al borde. */
   overscroll-behavior-x: contain;
   max-width: 100%;
-  margin: 0.75rem 0;
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  margin: var(--e3) 0;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .tabla-desplazable > table.datos {
@@ -807,7 +1204,7 @@ ol.traza li {
 .pista-tabla {
   color: var(--tinta-suave);
   font-size: 0.875rem;
-  margin: 0.25rem 0 0.75rem;
+  margin: var(--e1) 0 var(--e3);
 }
 
 @media (min-width: 40rem) {
@@ -819,43 +1216,63 @@ ol.traza li {
 table.datos {
   border-collapse: collapse;
   width: 100%;
-  margin: 0.75rem 0;
+  margin: var(--e3) 0;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 table.datos th,
 table.datos td {
-  border: 1px solid var(--borde);
+  border: 1px solid var(--linea);
   overflow-wrap: anywhere;
-  padding: 0.5rem 0.625rem;
+  padding: var(--e2) var(--e3);
   text-align: left;
 }
 
+/* La cabecera de la tabla es plano hundido: se lee como rótulo y no como primera fila de datos. */
 table.datos th {
-  background: var(--fondo-suave);
+  background: var(--papel-hondo);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
 }
 
 .comprobacion {
-  border: 2px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 1rem;
-  margin-bottom: 1rem;
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--linea-fuerte);
+  border-radius: var(--radio-2);
+  padding: var(--e4);
+  margin-bottom: var(--e3);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .comprobacion.bien {
-  border-color: var(--bien);
+  border-color: var(--bien-fondo);
+  border-left-color: var(--bien);
   background: var(--bien-fondo);
 }
 
 .comprobacion.mal {
-  border-color: var(--mal);
+  border-color: var(--mal-fondo);
+  border-left-color: var(--mal);
   background: var(--mal-fondo);
+}
+
+/* El punto que no se pudo comprobar no es el punto que falló. Faltaba el tono intermedio. */
+.comprobacion.atencion {
+  border-color: var(--aviso-fondo);
+  border-left-color: var(--atencion-borde);
+  background: var(--aviso-fondo);
 }
 
 /* El símbolo va con la palabra: nada depende sólo del color. */
 .marca-estado {
   font-weight: 700;
+  letter-spacing: -0.006em;
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--e1);
 }
 
 .comprobacion.bien .marca-estado {
@@ -866,12 +1283,6 @@ table.datos th {
   color: var(--mal);
 }
 
-/* El punto que no se pudo comprobar no es el punto que falló. Faltaba el tono intermedio. */
-.comprobacion.atencion {
-  border-color: var(--atencion-borde);
-  background: var(--aviso-fondo);
-}
-
 .comprobacion.atencion .marca-estado {
   color: var(--atencion);
 }
@@ -880,87 +1291,98 @@ table.datos th {
 
 /*
  * La frase que contesta «¿el historial fue alterado o no?». Es una pieza propia y no una mezcla de
- * `.aviso` con `.comprobacion`, que era lo único que había: dos familias con relleno distinto
- * (0.875 frente a 1 rem) puestas una al lado de la otra parecen el mismo componente mal hecho.
+ * `.aviso` con `.comprobacion`: dos familias con relleno distinto puestas una al lado de la otra
+ * parecen el mismo componente mal hecho.
  *
  * Tres diferencias con `.aviso`, y ninguna es decorativa:
  *
- *  1. **El cuerpo nunca se tiñe.** En `.aviso.error` el color del estado se hereda a todo el texto,
- *     y un párrafo entero en rojo #a41818 se lee peor que en tinta (6.7:1 contra 17.6:1) además de
- *     empujar hacia «esto es un error del sistema» cuando lo que dice es un resultado. Acá el tono
- *     vive en la marca —una línea— y la explicación va en tinta normal.
- *  2. **Una sola barra gruesa a la izquierda**, que es lo que se ve primero al bajar y lo que
- *     distingue el veredicto de los seis puntos que lo sostienen.
- *  3. **Cuatro estados, no tres.** El cuarto es `pendiente`: sin barra de color y sin promesa. Es
- *     el hueco que antes tapaba `.vacio`, cuyo borde discontinuo significa «esto está por hacerse»,
- *     no «todavía no comprobaste nada».
+ *  1. **El cuerpo nunca se tiñe.** El tono vive en la marca —una línea— y la explicación va en
+ *     tinta normal.
+ *  2. **Una barra de 8 px a la izquierda** —el doble que el aviso— y una sombra más abierta: es lo
+ *     que se ve primero al bajar y lo que lo distingue de los seis puntos que lo sostienen.
+ *  3. **Cuatro estados, no tres.** El cuarto es `pendiente`: sin color y sin promesa. Es el hueco
+ *     que antes tapaba `.vacio`, cuyo rail tramado significa «esto está por hacerse», no «todavía
+ *     no comprobaste nada».
  *
  * El estado se dice con palabra y signo geométrico en el marcado; el color sólo lo acompaña.
  */
 .veredicto {
-  border: 2px solid var(--borde);
-  border-left: 8px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 1rem;
-  margin: 1.25rem 0;
-  background: var(--fondo-suave);
+  border: 1px solid var(--linea);
+  border-left: 8px solid var(--linea-fuerte);
+  border-radius: var(--radio-2);
+  padding: var(--e4) var(--e5);
+  margin: var(--e5) 0;
+  background: var(--papel-alto);
   color: var(--tinta);
+  box-shadow: var(--sombra-2);
 }
 
 .veredicto .marca-estado {
-  font-size: clamp(1.125rem, 1.05rem + 0.35vw, 1.3125rem);
-  line-height: 1.3;
-  margin-bottom: 0.375rem;
+  font-size: clamp(1.1875rem, 1.09rem + 0.42vw, 1.4375rem);
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  margin-bottom: var(--e2);
 }
 
 .veredicto p {
-  margin: 0.25rem 0 0;
+  margin: var(--e1) 0 0;
 }
 
-/* Comprobado y coincide. #14612f sobre #e7f4ec → 6.67:1. */
+/* Comprobado y coincide. #0f5a2b sobre #e6f2e7 → 7.24:1. */
 .veredicto.bien {
-  border-color: var(--bien);
+  border-color: var(--bien-fondo);
+  border-left-color: var(--bien);
   background: var(--bien-fondo);
 }
 .veredicto.bien .marca-estado {
   color: var(--bien);
 }
 
-/* Comprobado y NO coincide. #a41818 sobre #fdeaea → 6.66:1. */
+/* Comprobado y NO coincide. #9a1616 sobre #fbeae7 → 7.21:1. */
 .veredicto.mal {
-  border-color: var(--mal);
+  border-color: var(--mal-fondo);
+  border-left-color: var(--mal);
   background: var(--mal-fondo);
 }
 .veredicto.mal .marca-estado {
   color: var(--mal);
 }
 
-/* No se pudo comprobar del todo: falta una pieza, hay algo que revisar. 6.58:1 sobre el ámbar. */
+/* No se pudo comprobar del todo: falta una pieza, hay algo que revisar. 7.39:1 sobre el ámbar. */
 .veredicto.atencion {
-  border-color: var(--atencion-borde);
+  border-color: var(--aviso-fondo);
+  border-left-color: var(--atencion-borde);
   background: var(--aviso-fondo);
 }
 .veredicto.atencion .marca-estado {
   color: var(--atencion);
 }
 
-/* Todavía no se comprobó nada. Borde continuo: es un veredicto en blanco, no un pendiente. */
+/* Todavía no se comprobó nada. Es un veredicto en blanco, no un pendiente. */
 .veredicto.pendiente {
-  border-color: var(--borde-control);
-  border-left-color: var(--borde-control);
+  border-left-color: var(--linea-control);
+  background: var(--papel-hondo);
+  box-shadow: none;
 }
 .veredicto.pendiente .marca-estado {
   color: var(--tinta-suave);
 }
 
+/*
+ * El comprobante. `ui-monospace` primero: SF Mono, Cascadia y Menlo ya están instaladas y son
+ * mejores que el `monospace` por omisión del navegador. Cero descargas.
+ */
 code.comprobante {
   display: block;
   overflow-wrap: anywhere;
-  background: var(--fondo-suave);
-  border: 1px solid var(--borde);
-  border-radius: 4px;
-  padding: 0.5rem;
+  background: var(--papel-hondo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-1);
+  padding: var(--e3);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--tinta);
 }
 
 .cargando {
@@ -970,24 +1392,27 @@ code.comprobante {
 /* ── Organización inicial del trabajo ───────────────────────────────────────────────────── */
 
 .accion-procedimiento {
-  margin: 1rem 0;
+  margin: var(--e4) 0;
 }
 
 .formulario-acotado {
-  margin: 1.25rem 0;
+  margin: var(--e5) 0;
 }
 
 .formulario-acotado > fieldset,
 .respuesta-tarea > fieldset {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.5rem 1rem 1rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e2) var(--e4) var(--e4);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .formulario-acotado > fieldset > legend,
 .respuesta-tarea > fieldset > legend {
   font-weight: 700;
-  padding: 0 0.375rem;
+  letter-spacing: -0.004em;
+  padding: 0 var(--e2);
 }
 
 ol.hitos,
@@ -998,13 +1423,15 @@ ul.tareas {
 }
 
 ol.hitos > li {
-  margin: 1rem 0;
+  margin: var(--e4) 0;
 }
 
 .tarjeta-trabajo {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.875rem 1rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e4);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .tarjeta-trabajo > h3,
@@ -1013,35 +1440,39 @@ ol.hitos > li {
 }
 
 ul.tareas > li {
-  border-top: 1px solid var(--borde);
-  margin-top: 1rem;
-  padding-top: 1rem;
+  border-top: 1px solid var(--linea);
+  margin-top: var(--e4);
+  padding-top: var(--e4);
 }
 
+/* Los datos de una tarea: plano hundido, rótulo en versalitas, cifra en tabulares. */
 .datos-trabajo {
   display: grid;
-  gap: 0.5rem;
-  margin: 0.75rem 0;
+  gap: var(--e2);
+  margin: var(--e3) 0;
 }
 
 .datos-trabajo > div {
-  background: var(--fondo-suave);
-  border-radius: 4px;
-  padding: 0.5rem 0.625rem;
+  background: var(--papel-hondo);
+  border-radius: var(--radio-1);
+  padding: var(--e2) var(--e3);
 }
 
 .datos-trabajo dt {
   color: var(--tinta-suave);
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .datos-trabajo dd {
   margin: 0;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .respuesta-tarea {
-  margin-top: 1rem;
+  margin-top: var(--e4);
 }
 
 @media (min-width: 38rem) {
@@ -1053,31 +1484,33 @@ ul.tareas > li {
 /* ── Capacidad y tareas propias ─────────────────────────────────────────────────────────── */
 
 .capacidad-resumen {
-  border-left: 6px solid var(--enlace);
-  border-radius: var(--radio);
-  background: var(--fondo-suave);
-  padding: 0.875rem 1rem;
+  border: 1px solid var(--linea);
+  border-left: 6px solid var(--acento);
+  border-radius: var(--radio-2);
+  background: var(--papel-alto);
+  padding: var(--e4);
+  box-shadow: var(--sombra-1);
 }
 
 .capacidad-resumen p {
-  margin: 0.25rem 0;
+  margin: var(--e1) 0;
 }
 
 .campos-tiempo {
   display: grid;
-  gap: 0 1rem;
+  gap: 0 var(--e4);
 }
 
 .tarea-propia .etiqueta {
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--e2);
 }
 
 .tarea-propia h3 {
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--e1);
 }
 
 .tarea-propia p {
-  margin: 0.5rem 0;
+  margin: var(--e2) 0;
 }
 
 .tarea,
@@ -1096,36 +1529,40 @@ ul.tareas > li {
 /* ── Seguimiento de tareas ADR-0045 ────────────────────────────────────────────────────── */
 
 .historia-tarea {
-  border-left: 4px solid var(--borde);
-  margin: 1rem 0;
-  padding-left: 0.875rem;
+  border-left: 3px solid var(--linea-fuerte);
+  margin: var(--e4) 0;
+  padding-left: var(--e4);
 }
 
 .historia-tarea h5,
 .historia-tarea h6 {
-  font-size: 1rem;
-  margin: 0.75rem 0 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  margin: var(--e3) 0 var(--e1);
 }
 
 .lista-evidencias,
 .lista-entregas,
 .lista-pausas {
-  padding-left: 1.25rem;
+  padding-left: var(--e5);
 }
 
 .lista-evidencias > li,
 .lista-entregas > li,
 .lista-pausas > li {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--e3);
 }
 
 .contenido-privado {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  background: var(--fondo-suave);
-  margin-top: 0.5rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-1);
+  background: var(--papel-hondo);
+  margin-top: var(--e2);
   overflow-wrap: anywhere;
-  padding: 0.75rem;
+  padding: var(--e3);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1137,42 +1574,56 @@ ul.tareas > li {
 .boton.texto {
   background: transparent;
   border: 0;
-  color: var(--enlace);
+  color: var(--acento);
   display: inline;
-  margin-left: 0.5rem;
+  margin-left: var(--e2);
   min-height: 44px;
-  padding: 0.25rem;
+  padding: var(--e1);
+  box-shadow: none;
+  font-weight: 600;
   text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.boton.texto:hover {
+  background: transparent;
+  color: var(--acento-hondo);
+  box-shadow: none;
+  text-decoration-thickness: 2px;
 }
 
 .acciones-tarea {
-  margin-top: 1rem;
+  margin-top: var(--e4);
 }
 
 .acciones-tarea > fieldset,
 .acciones-tarea > form > fieldset {
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 0.5rem 1rem 1rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-2);
+  padding: var(--e2) var(--e4) var(--e4);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-1);
 }
 
 .acciones-tarea legend {
   font-weight: 700;
-  padding: 0 0.375rem;
+  letter-spacing: -0.004em;
+  padding: 0 var(--e2);
 }
 
 .seleccion-evidencias {
   border: 0;
-  margin: 0.75rem 0;
+  margin: var(--e3) 0;
   padding: 0;
 }
 
 .seleccion-evidencias label {
   align-items: flex-start;
   display: flex;
-  gap: 0.5rem;
+  gap: var(--e2);
   min-height: 44px;
-  padding: 0.375rem 0;
+  padding: var(--e2) 0;
 }
 
 .seleccion-evidencias input {
@@ -1180,12 +1631,13 @@ ul.tareas > li {
   height: 24px;
   margin-top: 0.125rem;
   width: 24px;
+  accent-color: var(--acento);
 }
 
 @media (min-width: 42rem) {
   .acciones-tarea.dos-columnas {
     display: grid;
-    gap: 1rem;
+    gap: var(--e4);
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1195,28 +1647,36 @@ ul.tareas > li {
 /*
  * Reemplaza a `window.prompt`, que no se puede etiquetar ni estilar y que en la PWA de iOS se
  * cierra sin devolver valor. Ancho acotado y relleno generoso: se responde de pie, con una mano.
+ * Es la única pieza que flota de verdad, y por eso es la única con `--sombra-3`.
  */
 .dialogo {
-  border: 2px solid var(--borde);
-  border-radius: var(--radio);
-  padding: 1.25rem;
+  border: 0;
+  border-top: 3px solid var(--acento);
+  border-radius: var(--radio-3);
+  padding: var(--e5);
   max-width: 32rem;
   width: calc(100% - 2rem);
   color: var(--tinta);
-  background: var(--fondo);
+  background: var(--papel-alto);
+  box-shadow: var(--sombra-3);
 }
 
 .dialogo::backdrop {
-  background: rgb(22 25 29 / 55%);
+  background: rgb(23 19 16 / 55%);
 }
 
 .dialogo h2 {
   margin-top: 0;
 }
 
+/* El diálogo no es una sección de la página: su `h2` no lleva la marca al margen. */
+.dialogo h2::before {
+  content: none;
+}
+
 .acciones-dialogo {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  gap: var(--e2);
+  margin-top: var(--e4);
 }

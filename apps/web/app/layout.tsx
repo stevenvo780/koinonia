@@ -20,7 +20,15 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   // Sin `maximumScale`: impedir el zoom es la forma más común de romper WCAG sin darse cuenta.
-  themeColor: '#0b4fa8',
+  //
+  // El color de la barra del sistema es el acento de la marca —petróleo #0d4c58, el mismo del
+  // membrete y de los enlaces—, así que en el teléfono la aplicación empieza antes del primer
+  // píxel de la página.
+  themeColor: '#0d4c58',
+  // Declarar el esquema no es cosmética: sin esto, el modo oscuro automático de algunos
+  // navegadores repinta el papel cálido y los campos por su cuenta, y los contrastes medidos en
+  // `globals.css` dejan de ser los que están escritos. Acá hay un solo esquema y es claro.
+  colorScheme: 'light',
 };
 
 export default function RootLayout({ children }: { readonly children: ReactNode }): ReactNode {

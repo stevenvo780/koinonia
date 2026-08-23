@@ -46,7 +46,7 @@ export function Aviso({
       role={tipo === 'error' ? 'alert' : 'status'}
       {...(id === undefined ? {} : { id })}
     >
-      <strong>
+      <strong className="marca-aviso">
         <span aria-hidden="true">{simbolo} </span>
         {titulo ?? palabra}:{' '}
       </strong>
@@ -182,13 +182,13 @@ export function BarraSesion(): ReactNode {
   if (cargando) return null;
   if (sesion === undefined) {
     return (
-      <p className="suave">
+      <p className="tira-sesion">
         Estás mirando sin cuenta. <Link href="/entrar">Entrar con el correo institucional</Link>.
       </p>
     );
   }
   return (
-    <p className="suave">
+    <p className="tira-sesion">
       Entraste como <strong>{sesion.alias}</strong>.{' '}
       {sesion.roles.includes('facilitator') && (
         <span className="etiqueta">Cuidás el procedimiento</span>

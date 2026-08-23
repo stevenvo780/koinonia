@@ -42,3 +42,6 @@ next-env.d.ts
 # Informe de mutación (Stryker). Se sube como artefacto de CI, no se versiona: son megabytes de
 # HTML generado que cambian entero en cada corrida.
 /reports/
+
+# Arnés de mutantes equivalentes (tarea 23): trabajo local, no forma parte del árbol.
+.harness/
