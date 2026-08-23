@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
+import { Cabecera } from '../components/marco';
+
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -30,82 +32,25 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
           Saltar al contenido
         </a>
 
-        <header className="cabecera">
-          <Link className="marca" href="/">
-            Koinonía
-          </Link>
-          <nav className="principal" aria-label="Principal">
-            <ul>
-              <li>
-                <Link href="/">Inicio</Link>
-              </li>
-              <li>
-                <Link href="/problemas">Problemas</Link>
-              </li>
-              {/*
-                Va entre Problemas y Decisiones porque ése es el recorrido real: un problema se
-                conversa y después se decide. Faltaba, y sin el enlace la pantalla existía sólo para
-                quien supiera escribir la dirección a mano, que es no existir.
+        <Cabecera />
 
-                El texto del enlace es el mismo que el `h1` de destino, igual que los demás: quien
-                navega con lector de pantalla salta por la lista de enlaces y tiene que reconocer a
-                dónde llegó.
-              */}
-              <li>
-                <Link href="/deliberaciones">Deliberaciones</Link>
-              </li>
-              <li>
-                <Link href="/decisiones">Decisiones</Link>
-              </li>
-              {/*
-                «Prestar tu voto» va pegado a Decisiones porque es lo mismo visto desde el otro
-                lado: o votás, o le pedís a alguien que lleve tu parte. Separarlo del recorrido de
-                decidir lo convertiría en una función de experta, que es lo contrario de lo que
-                hace falta para que la use quien no puede estar pendiente.
-              */}
-              <li>
-                <Link href="/delegaciones">Prestar tu voto</Link>
-              </li>
-              <li>
-                <Link href="/consenso">En qué coincidimos</Link>
-              </li>
-              <li>
-                <Link href="/iniciativas">Iniciativas</Link>
-              </li>
-              <li>
-                <Link href="/mis-tareas">Mis tareas</Link>
-              </li>
-              {/*
-                Los tres últimos son el bloque de «cómo funciona esto y cómo se comprueba»: quién
-                decide qué, con qué reglas, y todo lo que quedó escrito. El texto de cada enlace es
-                el mismo que el `h1` de destino, como los demás: quien navega saltando por la lista
-                de enlaces tiene que reconocer a dónde llegó.
-              */}
-              <li>
-                <Link href="/circulos">Quién decide qué</Link>
-              </li>
-              <li>
-                <Link href="/normas">Las reglas del juego</Link>
-              </li>
-              <li>
-                <Link href="/historial">Todo lo que quedó escrito</Link>
-              </li>
-              <li>
-                <Link href="/verificar">Verificar</Link>
-              </li>
-            </ul>
-          </nav>
-        </header>
-
-        <main id="contenido">{children}</main>
+        <main id="contenido" className="interior">
+          {children}
+        </main>
 
         <footer className="pie">
-          <p>
-            Koinonía{' '}
-            <strong>no es un órgano de la Universidad de Antioquia ni la representa</strong>. Su
-            infraestructura, sus datos y su historia son de la comunidad estudiantil, y cualquier
-            miembro puede <Link href="/verificar">descargarlos y comprobarlos</Link>.
-          </p>
+          <div className="interior">
+            <p>
+              Koinonía{' '}
+              <strong>no es un órgano de la Universidad de Antioquia ni la representa</strong>. Su
+              infraestructura, sus datos y su historia son de la comunidad estudiantil, y cualquier
+              miembro puede{' '}
+              <Link href="/verificar" prefetch={false}>
+                descargarlos y comprobarlos
+              </Link>
+              .
+            </p>
+          </div>
         </footer>
       </body>
     </html>

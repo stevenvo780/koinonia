@@ -12,12 +12,24 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import type { ResultadoDecision } from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../../../components/marco';
 import { traer } from '../../../../lib/api';
+
+const fmt = new Intl.NumberFormat('es-CO');
+
+function idDeTabla(indice: number, titulo: string): string {
+  const base = titulo
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `tabla-${String(indice)}-${base === '' ? 'sin-titulo' : base}`;
+}
 
 export default function Resultado(): ReactNode {
   const params = useParams<{ id: string }>();
@@ -25,11 +37,29 @@ export default function Resultado(): ReactNode {
   const [resultado, setResultado] = useState<ResultadoDecision | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
 
-  useEffect(() => {
+  const recargar = useCallback(() => {
+    setError(undefined);
     traer<ResultadoDecision>(`/decisiones/${id}/resultado`).then(setResultado).catch(setError);
   }, [id]);
 
-  if (error !== undefined) return <ErrorVisible error={error} />;
+  useEffect(recargar, [recargar]);
+
+  if (error !== undefined) {
+    return (
+      <>
+        <h1>No pudimos mostrar el resultado</h1>
+        <ErrorVisible error={error} />
+        <p>
+          <button className="boton" type="button" onClick={recargar}>
+            Volver a intentar
+          </button>{' '}
+          <Link className="boton secundario" href="/decisiones">
+            Ver todas las decisiones
+          </Link>
+        </p>
+      </>
+    );
+  }
   if (resultado === undefined) return <Cargando que="el resultado" />;
 
   const aprobada = resultado.desenlace === 'approved';
@@ -63,15 +93,15 @@ export default function Resultado(): ReactNode {
           <tbody>
             <tr>
               <th scope="row">Podían decidir</th>
-              <td>{resultado.participacion.podianDecidir}</td>
+              <td>{fmt.format(resultado.participacion.podianDecidir)}</td>
             </tr>
             <tr>
               <th scope="row">Se manifestaron</th>
-              <td>{resultado.participacion.representadas}</td>
+              <td>{fmt.format(resultado.participacion.representadas)}</td>
             </tr>
             <tr>
               <th scope="row">Respuestas contadas</th>
-              <td>{resultado.participacion.emitidas}</td>
+              <td>{fmt.format(resultado.participacion.emitidas)}</td>
             </tr>
           </tbody>
         </table>
@@ -111,31 +141,43 @@ export default function Resultado(): ReactNode {
         </AvisoHistorico>
       )}
 
-      {resultado.tablas.map((tabla) => (
-        <section key={tabla.titulo} aria-labelledby={`tabla-${tabla.titulo}`}>
-          <h2 id={`tabla-${tabla.titulo}`}>{tabla.titulo}</h2>
-          <table className="datos">
-            <thead>
-              <tr>
-                {tabla.columnas.map((columna) => (
-                  <th scope="col" key={columna}>
-                    {columna}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {tabla.filas.map((fila, i) => (
-                <tr key={`${tabla.titulo}-${String(i)}`}>
-                  {fila.map((celda, j) => (
-                    <td key={`${String(i)}-${String(j)}`}>{celda}</td>
+      {resultado.tablas.map((tabla, i) => {
+        const idTabla = idDeTabla(i, tabla.titulo);
+        return (
+          <section key={idTabla} aria-labelledby={idTabla}>
+            <h2 id={idTabla}>{tabla.titulo}</h2>
+            {/*
+             * El nombre de la región es el título de la tabla y **nada más**. Decía
+             * «Tabla: {título}», y un lector de pantalla ya anuncia el papel del elemento: se oía
+             * «Tabla: Cómo se contó, región», que gasta la primera palabra —la que se usa para
+             * decidir si esto interesa— en repetir lo que la siguiente ya dijo. Se apunta al mismo
+             * `h2` que nombra la sección para que el nombre no pueda quedar desfasado del título.
+             */}
+            <div className="tabla-desplazable" role="region" aria-labelledby={idTabla} tabIndex={0}>
+              <table className="datos">
+                <thead>
+                  <tr>
+                    {tabla.columnas.map((columna) => (
+                      <th scope="col" key={columna}>
+                        {columna}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tabla.filas.map((fila, i) => (
+                    <tr key={`${idTabla}-${String(i)}`}>
+                      {fila.map((celda, j) => (
+                        <td key={`${String(i)}-${String(j)}`}>{celda}</td>
+                      ))}
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      })}
 
       <section aria-labelledby="comprobar-titulo">
         <h2 id="comprobar-titulo">Comprobarlo por tu cuenta</h2>

@@ -60,7 +60,18 @@ export default function Circulos(): ReactNode {
           {circulos.map((circulo) => (
             <li key={circulo.id}>
               <h2>
-                <Link href={`/circulos/${circulo.id}`}>{circulo.nombre}</Link>
+                {/*
+                 * `prefetch={false}` porque esta lista crece con los grupos y la precarga no: por
+                 * defecto, Next se descarga en segundo plano el detalle de **cada** tarjeta que
+                 * entre en la pantalla, y de esas se abre una. Quien lee esto desde el bus paga por
+                 * megabyte las que no abrió, y al salir de la página las que iban a medias se
+                 * cancelan y quedan escritas en la consola como peticiones abortadas. El enlace
+                 * sigue navegando igual; lo único que cambia es que el detalle se pide cuando se
+                 * pulsa.
+                 */}
+                <Link href={`/circulos/${circulo.id}`} prefetch={false}>
+                  {circulo.nombre}
+                </Link>
               </h2>
               <p>
                 <strong>Decide sin consultar a nadie:</strong> {circulo.decideSinConsultar}

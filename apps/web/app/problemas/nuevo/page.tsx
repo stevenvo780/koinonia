@@ -17,7 +17,7 @@ import type { ProblemaDetalle } from '@koinonia/contracts';
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/marco';
 import { useAccionUnica } from '../../../lib/acciones';
-import { enviar, traer } from '../../../lib/api';
+import { cerrarFrase, enviar, traer } from '../../../lib/api';
 
 interface Circulo {
   readonly id: string;
@@ -57,6 +57,8 @@ export default function NuevoProblema(): ReactNode {
     if (resultado.estado === 'hecho') router.push(`/problemas/${resultado.valor.id}`);
     else if (resultado.estado === 'fallo') setError(resultado.error);
   }
+
+  const elegido = circulos?.find((circulo) => circulo.id === circuloId);
 
   return (
     <>
@@ -146,10 +148,19 @@ export default function NuevoProblema(): ReactNode {
               Si te equivocás no pasa nada: se reenvía al grupo que corresponde y te decimos por
               qué.
             </span>
+            {/*
+             * En la opción va **sólo el nombre del grupo**. Antes iba «nombre — qué decide», y un
+             * desplegable no parte el texto en dos renglones: en un teléfono de 360 px la opción
+             * elegida se leía «Asamblea del Instituto — Todo lo q», recortada justo en lo único que
+             * hace falta para elegir bien. Lo que cada grupo decide se dice debajo, entero y con
+             * renglones, y va enganchado al desplegable con `aria-describedby` para que quien usa
+             * un lector de pantalla lo oiga al llegar al campo; `aria-live` lo vuelve a decir cada
+             * vez que la elección cambia, que es cuando importa.
+             */}
             <select
               id="circulo"
               name="circulo"
-              aria-describedby="ayuda-circulo"
+              aria-describedby="ayuda-circulo detalle-circulo"
               value={circuloId}
               onChange={(e) => {
                 setCirculoId(e.target.value);
@@ -157,10 +168,17 @@ export default function NuevoProblema(): ReactNode {
             >
               {circulos.map((circulo) => (
                 <option key={circulo.id} value={circulo.id}>
-                  {circulo.nombre} — {circulo.decideSinConsultar}
+                  {circulo.nombre}
                 </option>
               ))}
             </select>
+            <span className="ayuda" id="detalle-circulo" aria-live="polite">
+              {elegido === undefined
+                ? 'Elegí un grupo para ver qué decide.'
+                : cerrarFrase(
+                    `${elegido.nombre} decide sin consultar a nadie: ${elegido.decideSinConsultar}`,
+                  )}
+            </span>
           </div>
 
           <button className="boton" type="submit" disabled={enCurso !== undefined}>

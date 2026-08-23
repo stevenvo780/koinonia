@@ -64,13 +64,32 @@ async function revisar(page: Page, donde: string): Promise<void> {
   expect(forbiddenTermsIn(visible), `jerga en ${donde}`).toEqual([]);
 }
 
-/** Va a la portada y llega a la pantalla **pulsando** el enlace de la navegación. */
+/**
+ * Va a la portada y llega a la pantalla **pulsando** el enlace de la navegación.
+ *
+ * Desde que la barra se partió en dos grupos, los seis destinos de consulta viajan plegados tras un
+ * botón mientras el ancho sea escaso —o sea: en los dos navegadores móviles de la matriz, que son
+ * 412 px y 390 px, y en cualquier ventana por debajo de 48 rem—. Ahí el enlace existe pero no se
+ * puede pulsar, y sin desplegar primero este fichero entero se cae en `chrome-movil` y en
+ * `safari-movil`: son de los `serial`, así que el primer fallo se lleva por delante los veinte
+ * escenarios siguientes.
+ *
+ * Se despliega **pulsando el botón**, que es lo que hace una persona con un teléfono en la mano. No
+ * es una concesión para que la prueba pase: el camino sigue siendo un clic de punta a punta —nunca
+ * un `goto`— y sigue exigiendo el `h1` del destino al final. Si el destino dejara de ser alcanzable
+ * a dedo, esto seguiría fallando, que es justo lo que tiene que hacer.
+ */
 async function llegarPulsando(page: Page, enlace: string, encabezado: string): Promise<void> {
   await page.goto('/');
-  await page
-    .getByRole('navigation', { name: 'Principal' })
-    .getByRole('link', { name: enlace })
-    .click();
+  const navegacion = page.getByRole('navigation', { name: 'Principal' });
+  await expect(navegacion).toBeVisible();
+
+  const abridor = navegacion.getByRole('button', { name: 'Consultar' });
+  if ((await abridor.isVisible()) && (await abridor.getAttribute('aria-expanded')) === 'false') {
+    await abridor.click();
+  }
+
+  await navegacion.getByRole('link', { name: enlace }).click();
   await expect(page.getByRole('heading', { level: 1, name: encabezado })).toBeVisible();
 }
 

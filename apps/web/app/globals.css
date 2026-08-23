@@ -18,15 +18,49 @@
   --tinta-suave: #4a5057;
   --fondo: #ffffff;
   --fondo-suave: #f4f5f7;
+  /*
+   * Dos bordes, no uno. El de antes daba 1.58:1 sobre blanco, que sirve para separar tarjetas
+   * —eso es decoración y la norma no le exige nada— pero **no** para dibujar el límite de un campo
+   * de texto: WCAG 1.4.11 pide 3:1 para el contorno de un control, y ese criterio no lo audita
+   * ninguna herramienta automática, así que pasa años sin que nadie lo note.
+   *
+   *   --borde          #c9ced4 sobre #ffffff → 1.58:1  (separadores, tablas, tarjetas)
+   *   --borde-control  #858b94 sobre #ffffff → 3.43:1  (input, textarea, select: contorno)
+   */
   --borde: #c9ced4;
+  --borde-control: #858b94;
   --enlace: #0b4fa8;
   --bien: #14612f;
   --bien-fondo: #e7f4ec;
   --mal: #a41818;
   --mal-fondo: #fdeaea;
+  /*
+   * Ámbar. Antes sólo había fondo: cualquier texto de atención salía en tinta neutra o pedía
+   * prestado el rojo. Ahora el tono está completo, y con dos valores porque uno solo no alcanza:
+   *
+   *   --atencion        #7a4e05 → 7.19:1 sobre blanco y 6.58:1 sobre el propio fondo ámbar
+   *   --atencion-borde  #a06a08 → 4.60:1 sobre blanco y 4.22:1 sobre el fondo (contorno, pide 3:1)
+   *
+   * El de antes (#a06a08) servía de borde pero como texto sobre #fdf4e3 daba 4.22:1, por debajo
+   * del 4.5:1. Es el fallo típico del ámbar: se comprueba contra blanco y se pinta sobre crema.
+   */
   --aviso-fondo: #fdf4e3;
+  --atencion: #7a4e05;
+  --atencion-borde: #a06a08;
   --foco: #0b4fa8;
   --radio: 8px;
+
+  /*
+   * Una sola medida para las tres franjas. Antes la cabecera empezaba en x=0 y el contenido en
+   * x=288: dos rejillas distintas separadas 272 px, que es lo que hace que una página parezca una
+   * plantilla a medio armar. Ahora cabecera, contenido y pie comparten `.interior`, así que el
+   * borde izquierdo del nombre y el del `h1` caen en la misma vertical en cualquier ancho.
+   *
+   * `64ch` y no `44rem`: el material de esta plataforma es prosa argumentativa larga, y la medida
+   * cómoda es de 45 a 75 caracteres. En rem la línea crecía hasta 85-90 en escritorio.
+   */
+  --medida: 64ch;
+  --canal: 1rem;
 }
 
 * {
@@ -49,8 +83,27 @@ body {
     'Segoe UI',
     Roboto,
     sans-serif;
-  font-size: 1.0625rem;
-  line-height: 1.6;
+  /*
+   * 17 px en el teléfono, 19 px en escritorio. La escala era la misma a 360 y a 1280, y a 1280 el
+   * texto quedaba pequeño para la distancia de lectura de un portátil. Todo en `rem` + `vw`, así
+   * que sigue respetando el tamaño que la persona eligió en su sistema.
+   */
+  font-size: clamp(1.0625rem, 1rem + 0.28vw, 1.1875rem);
+  line-height: 1.65;
+
+  /* El pie anclado abajo: sin esto quedaban ~280 px de blanco muerto en las pantallas cortas. */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* La franja compartida: la única regla que alinea cabecera, contenido y pie. */
+.interior {
+  width: 100%;
+  max-width: var(--medida);
+  margin-inline: auto;
+  padding-inline: var(--canal);
 }
 
 /* Foco SIEMPRE visible, y con grosor suficiente para verse en una pantalla al sol. */
@@ -86,62 +139,277 @@ body {
   left: 0;
 }
 
+/*
+ * Sólo para lectores de pantalla.
+ *
+ * Existe para una cosa concreta: completar un nombre accesible sin ensuciar la pantalla. Un
+ * «Acá no cuadra» que no dice *qué* no cuadra obliga a elegir entre dos malas salidas —dejarlo
+ * ambiguo, o meter una parrafada en `aria-label` que además pisa el texto visible—. Con esto el
+ * complemento va en el marcado, se lee en voz alta y no ocupa un píxel.
+ *
+ * `clip-path: inset(50%)` y no `display: none` ni `visibility: hidden`: esos dos también lo
+ * esconden del lector de pantalla, que es justo lo contrario de lo que se busca. Sin `width: 0`
+ * porque algunos lectores se saltan las cajas de ancho cero.
+ */
+.solo-lectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Cabecera y navegación ───────────────────────────────────────────────────────────────── */
+
 header.cabecera {
   border-bottom: 1px solid var(--borde);
-  padding: 0.75rem 1rem;
+  padding-block: 0.625rem 0.75rem;
 }
 
 header.cabecera a.marca {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   font-weight: 700;
-  font-size: 1.25rem;
+  font-size: 1.125rem;
+  letter-spacing: 0.01em;
   color: var(--tinta);
   text-decoration: none;
 }
 
-nav.principal ul {
+nav.principal .grupo + .grupo {
+  margin-top: 0.375rem;
+}
+
+/*
+ * El rótulo del grupo. No es un `h2`: un encabezado en la cabecera se cuela en el índice de
+ * encabezados de todas las páginas y aparece por delante del `h1`, que es justo lo que quien
+ * navega con lector de pantalla usa para saber de qué trata la pantalla.
+ */
+nav.principal .titulo-grupo {
+  margin: 0;
+  color: var(--tinta-suave);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+nav.principal .titulo-grupo.solo-ancho {
+  display: none;
+}
+
+nav.principal .lista {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 1rem;
-  margin: 0.5rem 0 0;
+  gap: 0 1.125rem;
+  margin: 0;
   padding: 0;
 }
 
+nav.principal .lista > li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
 nav.principal a {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   min-height: 44px;
-  line-height: 44px;
+  line-height: 1.3;
   color: var(--enlace);
 }
 
+/*
+ * El número del paso. Va fuera del enlace a propósito: si estuviera dentro, el nombre accesible
+ * pasaría a ser «1 Problemas» y dejaría de coincidir con el `h1` del destino.
+ */
+nav.principal .recorrido .paso {
+  color: var(--tinta-suave);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/*
+ * «Estás acá», y no sólo con color. Tres señales que sobreviven a la ceguera al color y a la
+ * escala de grises: el peso de la letra, la barra de abajo, y `aria-current` para quien no ve
+ * ninguna de las dos.
+ */
+nav.principal a[aria-current='page'] {
+  color: var(--tinta);
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 3px solid var(--enlace);
+}
+
+/* El botón que pliega el grupo de consulta. Sólo existe donde el ancho es escaso. */
+nav.principal .abridor {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--enlace);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+nav.principal .abridor .signo {
+  font-size: 0.625rem;
+}
+
+nav.principal .consulta[data-abierto='no'] {
+  display: none;
+}
+
+/*
+ * «Estás acá» con el grupo plegado.
+ *
+ * Es lo que reemplaza a abrir la lista sola al llegar: dice el destino actual con todas las
+ * letras, cuesta una línea en vez de 406 px, y no depende del color —es texto, y el nombre va en
+ * negrita además del signo—. En pantalla ancha sobra: ahí la lista está siempre a la vista y el
+ * enlace ya lleva su `aria-current`, así que se retira en la consulta de 48 rem.
+ */
+nav.principal .fila-abridor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.5rem;
+}
+
+nav.principal .aca-consulta {
+  /*
+   * Ocupa lo que sobra del renglón del botón y, si el nombre no cabe, parte en dos líneas *dentro*
+   * de ese renglón: dos líneas de 13 px miden 36 px y el botón ya reserva 44 px por el área táctil,
+   * así que el nombre más largo —«Todo lo que quedó escrito»— no cuesta ni un píxel de alto.
+   */
+  flex: 1 1 0;
+  margin: 0;
+  min-width: 0;
+  color: var(--tinta-suave);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+nav.principal .aca-consulta strong {
+  color: var(--tinta);
+}
+
+nav.principal .consulta > li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  width: 100%;
+}
+
+nav.principal .consulta a {
+  min-height: 40px;
+}
+
+/*
+ * La pista. «En qué coincidimos», «Todo lo que quedó escrito» y «Verificar» no se distinguían
+ * entre sí: los tres suenan a mirar lo que ya pasó. Va fuera del enlace para no tocar su nombre
+ * accesible, y en pantalla ancha se oculta a la vista pero no al lector de pantalla, porque ahí
+ * la lista es una fila periférica y no el momento en que se elige a dónde ir.
+ */
+nav.principal .pista {
+  display: block;
+  color: var(--tinta-suave);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  padding-bottom: 0.5rem;
+}
+
+@media (min-width: 48rem) {
+  nav.principal .abridor {
+    display: none;
+  }
+
+  nav.principal .titulo-grupo.solo-ancho {
+    display: block;
+  }
+
+  nav.principal .aca-consulta {
+    display: none;
+  }
+
+  nav.principal .consulta[data-abierto='no'] {
+    display: flex;
+  }
+
+  nav.principal .consulta > li {
+    flex-direction: row;
+    align-items: baseline;
+    width: auto;
+  }
+
+  nav.principal .pista {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 main {
-  padding: 1rem;
-  max-width: 44rem;
-  margin: 0 auto;
+  padding-block: 0.5rem 2rem;
 }
 
 footer.pie {
   border-top: 1px solid var(--borde);
-  padding: 1rem;
+  padding-block: 1rem;
   color: var(--tinta-suave);
   font-size: 0.9375rem;
-  max-width: 44rem;
-  margin: 2rem auto 0;
+  margin-top: 2.5rem;
 }
 
+/*
+ * Escala fluida. Antes h1/h2/h3 medían lo mismo a 360 que a 1280 px, así que en escritorio la
+ * jerarquía se sostenía casi sólo con negritas. Los saltos crecen con el ancho —26→38 en el h1,
+ * 20→25 en el h2— y el cuerpo sube de 17 a 19, de modo que la distancia entre niveles se ve sin
+ * tener que engrosar nada.
+ */
 h1 {
-  font-size: 1.625rem;
-  line-height: 1.25;
+  font-size: clamp(1.625rem, 1.36rem + 1.18vw, 2.375rem);
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
   margin: 0.5rem 0 1rem;
 }
 h2 {
-  font-size: 1.25rem;
-  line-height: 1.3;
-  margin: 1.75rem 0 0.5rem;
+  font-size: clamp(1.25rem, 1.13rem + 0.55vw, 1.5625rem);
+  line-height: 1.25;
+  text-wrap: balance;
+  margin: 2rem 0 0.5rem;
 }
 h3 {
-  font-size: 1.0625rem;
-  margin: 1.25rem 0 0.25rem;
+  font-size: clamp(1.0625rem, 1.01rem + 0.26vw, 1.1875rem);
+  line-height: 1.35;
+  margin: 1.5rem 0 0.25rem;
+}
+
+/* Prosa larga: la medida ya la acota `.interior`, pero los bloques sueltos no deben pasarse. */
+main p,
+main li,
+main dd {
+  max-width: var(--medida);
 }
 
 a {
@@ -185,12 +453,34 @@ button.boton {
   color: var(--enlace);
 }
 
-/* El botón grande de la portada: es la acción principal de toda la plataforma. */
+/*
+ * El botón grande **de la portada**, y de ningún otro sitio: es la única entrada a toda la
+ * plataforma y por eso mide 64 px. Reutilizarlo en una pantalla interior le presta una jerarquía
+ * que no le corresponde y deja a la portada sin nada que la distinga. Para «la acción principal
+ * *de esta* pantalla» está `.boton.accion`.
+ */
 .boton.grande {
   width: 100%;
   min-height: 64px;
   font-size: 1.1875rem;
   padding: 1rem;
+}
+
+/*
+ * La acción principal de una pantalla cualquiera: descargar el historial, verificar, confirmar.
+ * Ancho completo en el teléfono —el pulgar no tiene que apuntar— y del ancho de su texto en cuanto
+ * hay sitio, porque un botón de 64ch de ancho ya no parece un botón.
+ */
+.boton.accion {
+  width: 100%;
+  min-height: 52px;
+  padding: 0.75rem 1.25rem;
+}
+
+@media (min-width: 30rem) {
+  .boton.accion {
+    width: auto;
+  }
 }
 
 /* ── Formularios ─────────────────────────────────────────────────────────────────────────── */
@@ -218,7 +508,8 @@ button.boton {
   width: 100%;
   min-height: 44px;
   padding: 0.625rem 0.75rem;
-  border: 2px solid var(--borde);
+  /* 3.43:1 sobre blanco. El contorno de un control es un límite, no un adorno (WCAG 1.4.11). */
+  border: 2px solid var(--borde-control);
   border-radius: var(--radio);
   font: inherit;
   color: var(--tinta);
@@ -239,6 +530,54 @@ button.boton {
   color: var(--mal);
   font-weight: 600;
   margin-top: 0.25rem;
+}
+
+/* ── Detalles plegables ──────────────────────────────────────────────────────────────────── */
+
+/*
+ * `<summary>` no tenía estilo en ninguna parte, y en el proyecto ya hay ocho. En la pantalla de
+ * verificación dejó de ser un adorno: esconde cinco sextos del contenido, así que es el control
+ * más pulsado de la página. Sin estilo medía ~27 px de alto —pasa el mínimo de 24×24 de la norma
+ * (WCAG 2.5.8) pero no los 44 que promete la cabecera de este fichero— y no se distinguía de un
+ * párrafo en negrita: nada decía que fuera pulsable.
+ *
+ * El signo se dibuja con `::before` y con texto alternativo vacío (`/ ''`), porque `<summary>` ya
+ * anuncia por sí solo si está abierto o cerrado; un carácter leído encima lo diría dos veces.
+ */
+details {
+  margin-block: 1rem;
+}
+
+summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding-block: 0.375rem;
+  color: var(--enlace);
+  font-weight: 600;
+  cursor: pointer;
+  /* Sin esto, `display: flex` deja el triángulo nativo en unos navegadores y no en otros. */
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  /* Dos veces a propósito: la segunda añade el texto alternativo vacío y en los navegadores que
+     todavía no entienden esa sintaxis se descarta entera, dejando el signo de la primera. */
+  content: '\25B8';
+  content: '\25B8' / '';
+  font-size: 0.75rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+details[open] > summary::before {
+  content: '\25BE';
+  content: '\25BE' / '';
 }
 
 /* ── Avisos ──────────────────────────────────────────────────────────────────────────────── */
@@ -265,7 +604,8 @@ button.boton {
 
 .aviso.atencion {
   background: var(--aviso-fondo);
-  border-color: #a06a08;
+  border-color: var(--atencion-borde);
+  color: var(--atencion);
 }
 
 /* ── Tarjetas y listas ───────────────────────────────────────────────────────────────────── */
@@ -425,6 +765,57 @@ ol.traza li {
   margin-bottom: 0.75rem;
 }
 
+/*
+ * Una tabla de cinco o seis columnas no cabe en 360 px y no hay tipografía que lo arregle. Hasta
+ * ahora `table.datos` sólo tenía `width: 100%` y `overflow-wrap: anywhere`, así que el navegador
+ * cumplía la orden partiendo las palabras por la mitad: columnas de tres letras de ancho y un
+ * comprobante cortado en seis renglones, que es ilegible y además no se puede copiar bien.
+ *
+ * La tabla se envuelve y se desplaza de lado. Dos cosas que casi siempre faltan y que convierten
+ * esto en una trampa si no están —el marcado tiene que ponerlas, ver la nota de abajo—:
+ *
+ *  - **`tabindex="0"`**: una región que se desplaza y no se puede enfocar es contenido inalcanzable
+ *    para quien navega con teclado. No hay forma de moverla sin ratón ni gesto táctil.
+ *  - **`role="region"` + `aria-label`**: al ser enfocable, aparece en el recorrido del tabulador; si
+ *    llega sin nombre, el lector de pantalla anuncia «grupo» y nada más.
+ *
+ * `min-width` en la tabla es lo que fuerza el desplazamiento en vez del aplastamiento, y por eso
+ * dentro del contenedor se apaga `overflow-wrap: anywhere`: ya hay a dónde crecer.
+ */
+.tabla-desplazable {
+  overflow-x: auto;
+  /* Que el gesto lateral no dispare el «atrás» del navegador al llegar al borde. */
+  overscroll-behavior-x: contain;
+  max-width: 100%;
+  margin: 0.75rem 0;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.tabla-desplazable > table.datos {
+  margin: 0;
+  min-width: 34rem;
+  border: 0;
+}
+
+.tabla-desplazable > table.datos th,
+.tabla-desplazable > table.datos td {
+  overflow-wrap: normal;
+}
+
+/* La franja de aviso: se desplaza de lado. Con palabra y signo, nunca con una sombra sola. */
+.pista-tabla {
+  color: var(--tinta-suave);
+  font-size: 0.875rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+@media (min-width: 40rem) {
+  .pista-tabla {
+    display: none;
+  }
+}
+
 table.datos {
   border-collapse: collapse;
   width: 100%;
@@ -473,6 +864,93 @@ table.datos th {
 
 .comprobacion.mal .marca-estado {
   color: var(--mal);
+}
+
+/* El punto que no se pudo comprobar no es el punto que falló. Faltaba el tono intermedio. */
+.comprobacion.atencion {
+  border-color: var(--atencion-borde);
+  background: var(--aviso-fondo);
+}
+
+.comprobacion.atencion .marca-estado {
+  color: var(--atencion);
+}
+
+/* ── El veredicto ────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * La frase que contesta «¿el historial fue alterado o no?». Es una pieza propia y no una mezcla de
+ * `.aviso` con `.comprobacion`, que era lo único que había: dos familias con relleno distinto
+ * (0.875 frente a 1 rem) puestas una al lado de la otra parecen el mismo componente mal hecho.
+ *
+ * Tres diferencias con `.aviso`, y ninguna es decorativa:
+ *
+ *  1. **El cuerpo nunca se tiñe.** En `.aviso.error` el color del estado se hereda a todo el texto,
+ *     y un párrafo entero en rojo #a41818 se lee peor que en tinta (6.7:1 contra 17.6:1) además de
+ *     empujar hacia «esto es un error del sistema» cuando lo que dice es un resultado. Acá el tono
+ *     vive en la marca —una línea— y la explicación va en tinta normal.
+ *  2. **Una sola barra gruesa a la izquierda**, que es lo que se ve primero al bajar y lo que
+ *     distingue el veredicto de los seis puntos que lo sostienen.
+ *  3. **Cuatro estados, no tres.** El cuarto es `pendiente`: sin barra de color y sin promesa. Es
+ *     el hueco que antes tapaba `.vacio`, cuyo borde discontinuo significa «esto está por hacerse»,
+ *     no «todavía no comprobaste nada».
+ *
+ * El estado se dice con palabra y signo geométrico en el marcado; el color sólo lo acompaña.
+ */
+.veredicto {
+  border: 2px solid var(--borde);
+  border-left: 8px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 1rem;
+  margin: 1.25rem 0;
+  background: var(--fondo-suave);
+  color: var(--tinta);
+}
+
+.veredicto .marca-estado {
+  font-size: clamp(1.125rem, 1.05rem + 0.35vw, 1.3125rem);
+  line-height: 1.3;
+  margin-bottom: 0.375rem;
+}
+
+.veredicto p {
+  margin: 0.25rem 0 0;
+}
+
+/* Comprobado y coincide. #14612f sobre #e7f4ec → 6.67:1. */
+.veredicto.bien {
+  border-color: var(--bien);
+  background: var(--bien-fondo);
+}
+.veredicto.bien .marca-estado {
+  color: var(--bien);
+}
+
+/* Comprobado y NO coincide. #a41818 sobre #fdeaea → 6.66:1. */
+.veredicto.mal {
+  border-color: var(--mal);
+  background: var(--mal-fondo);
+}
+.veredicto.mal .marca-estado {
+  color: var(--mal);
+}
+
+/* No se pudo comprobar del todo: falta una pieza, hay algo que revisar. 6.58:1 sobre el ámbar. */
+.veredicto.atencion {
+  border-color: var(--atencion-borde);
+  background: var(--aviso-fondo);
+}
+.veredicto.atencion .marca-estado {
+  color: var(--atencion);
+}
+
+/* Todavía no se comprobó nada. Borde continuo: es un veredicto en blanco, no un pendiente. */
+.veredicto.pendiente {
+  border-color: var(--borde-control);
+  border-left-color: var(--borde-control);
+}
+.veredicto.pendiente .marca-estado {
+  color: var(--tinta-suave);
 }
 
 code.comprobante {
