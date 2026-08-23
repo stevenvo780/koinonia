@@ -1,9 +1,16 @@
 /**
- * Credenciales del rol de aplicación.
+ * Credenciales del rol de aplicación, y con qué privilegios está conectada de verdad la API.
  *
  * Vive fuera de las migraciones a propósito: una contraseña escrita en un `.sql` acaba en el
  * repositorio, en el historial de git y en todo `pg_dump` que alguien haga después. La migración
  * 0003 crea el rol sin contraseña; ponérsela es una operación, no un cambio de esquema.
+ *
+ * La segunda mitad del fichero existe por un hueco medido en producción: la 0003 partía los
+ * privilegios en dos —`koinonia_ddl` dueño, `koinonia_app` con sólo `SELECT, INSERT` sobre
+ * `governance.event`— y el despliegue servía las peticiones como `postgres`. La asimetría estaba en
+ * el esquema y no estaba en vigor. Un esquema que reparte privilegios sin que nadie compruebe con
+ * cuál se conecta el servicio es documentación, no una defensa; `inspectLedgerPrivileges` es la
+ * comprobación que faltaba, y el arranque la hace y la dice.
  */
 
 import type { PgClient } from './client.js';
@@ -42,6 +49,85 @@ export async function setAppRolePassword(
 export interface GrantAudit {
   readonly table: string;
   readonly privileges: readonly string[];
+}
+
+/** Quién es de verdad una conexión. Preguntado al catálogo, no deducido de la cadena de conexión. */
+export interface ConnectionIdentity {
+  /** El `current_user` efectivo. */
+  readonly user: string;
+  /**
+   * Si esta conexión **es** superusuario o **puede llegar a serlo**.
+   *
+   * No basta con `rolsuper` del propio rol: un rol miembro de `postgres` hace `SET ROLE postgres` en
+   * una línea, y con `INHERIT` ni siquiera hace falta eso. Se pregunta por pertenencia (`MEMBER`),
+   * que es lo que cubre los dos caminos.
+   */
+  readonly superuser: boolean;
+}
+
+export async function connectionIdentity(client: PgClient): Promise<ConnectionIdentity> {
+  const { rows } = await client.query<{ role: string; superuser: boolean }>(
+    `SELECT current_user::text AS role,
+            EXISTS (
+              SELECT 1 FROM pg_roles r
+               WHERE r.rolsuper AND pg_has_role(current_user, r.oid, 'MEMBER')
+            ) AS superuser`,
+  );
+  const row = rows[0];
+  if (row === undefined) throw new Error('la base no dijo con qué rol está conectada la sesión');
+  return { user: row.role, superuser: row.superuser };
+}
+
+/** Lo que `koinonia_app` no puede tener sobre `governance.event` sin que el ledger deje de serlo. */
+export const HISTORY_REWRITING_PRIVILEGES = ['UPDATE', 'DELETE', 'TRUNCATE'] as const;
+
+export interface LedgerPrivilegeVerdict {
+  readonly identity: ConnectionIdentity;
+  /** Privilegios efectivos de esta conexión sobre `governance.event`. */
+  readonly eventPrivileges: readonly string[];
+  /** `true` si esta conexión podría alterar la historia por la vía normal de SQL. */
+  readonly canRewriteHistory: boolean;
+  /** Por qué, cuando la respuesta es que sí. Pensado para imprimirse tal cual en el arranque. */
+  readonly reason: string | undefined;
+}
+
+/**
+ * Qué puede hacerle **esta** conexión al ledger.
+ *
+ * `auditAppGrants` responde «qué puede el rol `koinonia_app`», que es una pregunta sobre el esquema.
+ * Ésta responde «qué puede quien está conectado ahora mismo», que es la pregunta sobre el despliegue
+ * —la que estaba sin hacer cuando la API se conectaba como `postgres` y los `GRANT` de la 0003 no
+ * protegían nada—. La distinción importa porque para un superusuario `has_table_privilege` devuelve
+ * `true` en todo sin que exista ni un `GRANT`: el privilegio no está en el catálogo de permisos,
+ * está en el rol.
+ */
+export async function inspectLedgerPrivileges(client: PgClient): Promise<LedgerPrivilegeVerdict> {
+  const identity = await connectionIdentity(client);
+  const grants = await auditAppGrants(client, identity.user);
+  const eventPrivileges = grants.find((grant) => grant.table === 'event')?.privileges ?? [];
+
+  if (identity.superuser) {
+    return {
+      identity,
+      eventPrivileges,
+      canRewriteHistory: true,
+      reason:
+        `«${identity.user}» es SUPERUSUARIO: ningún GRANT le aplica y además puede ` +
+        'desactivar el trigger append-only de la 0002 en una línea',
+    };
+  }
+
+  const peligrosos = HISTORY_REWRITING_PRIVILEGES.filter((p) => eventPrivileges.includes(p));
+  if (peligrosos.length > 0) {
+    return {
+      identity,
+      eventPrivileges,
+      canRewriteHistory: true,
+      reason: `«${identity.user}» tiene ${peligrosos.join(', ')} sobre governance.event`,
+    };
+  }
+
+  return { identity, eventPrivileges, canRewriteHistory: false, reason: undefined };
 }
 
 /**

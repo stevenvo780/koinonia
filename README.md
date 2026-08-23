@@ -64,7 +64,7 @@ KOINONIA_FACILITADORES=lucia@udea.edu.co pnpm run dev
 
 | Variable                    | Para qué                                                                          | Por defecto                                               |
 | --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `DATABASE_URL`              | PostgreSQL                                                                        | `postgresql://postgres:koinonia@localhost:55432/koinonia` |
+| `DATABASE_URL`              | PostgreSQL, **con permisos de DDL**. Sólo para migrar: ver abajo                  | `postgresql://postgres:koinonia@localhost:55432/koinonia` |
 | `PORT`                      | Puerto del servicio                                                               | `3001`                                                    |
 | `PUERTO_WEB`                | Puerto de la interfaz                                                             | `3000`                                                    |
 | `KOINONIA_FACILITADORES`    | Correos con el encargo de facilitación                                            | vacío                                                     |
@@ -73,6 +73,49 @@ KOINONIA_FACILITADORES=lucia@udea.edu.co pnpm run dev
 | `KOINONIA_WEB_URL`          | Base pública, para armar el enlace del correo                                     | `http://localhost:3000`                                   |
 | `KOINONIA_API_URL`          | A dónde apunta el proxy de la interfaz                                            | `http://127.0.0.1:3001`                                   |
 | `KOINONIA_VAULT_MASTER_KEY` | Clave maestra del material privado, base64 de 32 B. **Obligatoria en producción** | sin bóveda (el material privado no se puede abrir)        |
+
+#### Dos conexiones a la base
+
+La API **no se conecta como superusuario**. Usa dos conexiones distintas y las anuncia al arrancar:
+
+- una **de migración**, con permisos de DDL, que aplica las migraciones y **se cierra en cuanto
+  terminan** —un pool con permiso de `ALTER TABLE` abierto mientras el servicio atiende es una
+  conexión esperando a que un bug la use—;
+- una **de aplicación**, como `koinonia_app`, que sirve todas las peticiones. Sobre
+  `governance.event` ese rol tiene exactamente `SELECT` e `INSERT`: ni `UPDATE`, ni `DELETE`, ni
+  `TRUNCATE`, ni la propiedad de la tabla, así que tampoco puede apagar el trigger append-only.
+
+Hasta la versión anterior había **un solo pool**: como la migración `0003` necesita crear roles, ese
+pool era `postgres`, y la separación de privilegios que la `0003` describe existía en el esquema y no
+estaba en vigor en ejecución. La comprobación no se hace mirando la cadena de conexión sino
+preguntándole al catálogo quién es y qué puede: si la conexión de aplicación resulta ser superusuario
+—o tener `UPDATE`/`DELETE`/`TRUNCATE` sobre `governance.event`—, **el arranque se niega**.
+
+| Variable                          | Para qué                                                                                                     | Por defecto                                     |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `KOINONIA_DATABASE_URL_APP`       | Conexión de la aplicación, como `koinonia_app`. **Obligatoria en producción**                                | vacío ⇒ ver abajo                               |
+| `KOINONIA_DATABASE_URL_MIGRACION` | Conexión con permisos de DDL, sólo para migrar                                                               | `DATABASE_URL`                                  |
+| `KOINONIA_DB_APP_PASSWORD`        | Si está, el arranque le fija esa contraseña a `koinonia_app` con la conexión de migración, antes de conectar | vacío ⇒ la contraseña ya tiene que estar puesta |
+
+**Si falta `KOINONIA_DATABASE_URL_APP`, en producción el arranque falla** y dice qué falta; fuera de
+producción avisa por `stderr` —con la línea que empieza por `⚠ Base de datos: SIN SEPARAR`— y sigue
+con la conexión de migración, para que `pnpm run dev` funcione contra una base recién creada. Se
+eligió fallar cerrado en producción porque este hueco fue exactamente un despliegue que nadie miró:
+una defensa cuya activación dependa de que alguien lea una línea del registro ya falló una vez así.
+
+La migración `0003` crea `koinonia_app` **sin contraseña** a propósito —una contraseña en un `.sql`
+acaba en el repositorio, en el historial y en todo `pg_dump`—, así que en una base nueva hay que
+ponérsela. Lo más corto es dejar que lo haga el arranque:
+
+```sh
+DATABASE_URL='postgresql://postgres:…@localhost:5432/koinonia'          # migra, y se cierra
+KOINONIA_DATABASE_URL_APP='postgresql://koinonia_app:LA_CLAVE@localhost:5432/koinonia'
+KOINONIA_DB_APP_PASSWORD='LA_CLAVE'                                      # opcional: la fija él
+```
+
+`KOINONIA_DB_APP_PASSWORD` y la contraseña de `KOINONIA_DATABASE_URL_APP` tienen que coincidir; si no,
+el arranque se cae ahí y lo dice, en vez de fijar una y entrar con la otra y dejar un «autenticación
+fallida» que apunta a cualquier sitio menos al de verdad. Ninguna de las dos aparece en el registro.
 
 #### Envío de correo
 

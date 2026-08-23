@@ -48,9 +48,14 @@ export {
 export {
   APP_ROLE,
   auditAppGrants,
+  connectionIdentity,
   DDL_ROLE,
+  HISTORY_REWRITING_PRIVILEGES,
+  inspectLedgerPrivileges,
   setAppRolePassword,
+  type ConnectionIdentity,
   type GrantAudit,
+  type LedgerPrivilegeVerdict,
 } from './db/roles.js';
 
 export {
