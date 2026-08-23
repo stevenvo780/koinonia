@@ -1,0 +1,127 @@
+/**
+ * Evaluación, resultado y aprendizajes — el cierre del ciclo (ADR-0053).
+ *
+ * `problema → evidencia → deliberación → propuesta → decisión → iniciativa → hitos → tareas →
+ * seguimiento → **evaluación → resultado → aprendizaje → memoria**`.
+ *
+ * Tres promesas que este paquete cumple por construcción y no por disciplina:
+ *
+ *  - los criterios que se contrastan son **exactamente** los que se congelaron al acordar, y no hay
+ *    ruta por la que unos distintos lleguen a contarse;
+ *  - el desenlace se **recomputa** desde los hechos cada vez que alguien lee, y si lo publicado no
+ *    corresponde, se dice;
+ *  - la salida no contiene a ninguna persona, y el incumplimiento escala sobre la tarea, el acuerdo
+ *    o la carga.
+ */
+
+export {
+  type AssessCriterionInput,
+  assessCriterionBy,
+  applyEvaluation,
+  authorizeEvaluation,
+  type CloseEvaluationInput,
+  closeEvaluationBy,
+  currentEvaluation,
+  escalateEvaluationBy,
+  type EscalateEvaluationInput,
+  escalationsInForce,
+  type EvaluationAction,
+  type EvaluationCommandMeta,
+  type EvaluationCriterionReport,
+  evaluationMetShare,
+  type EvaluationReport,
+  evaluationReport,
+  EvaluationUnauthorizedError,
+  learningsOf,
+  type OpenEvaluationInput,
+  openEvaluationBy,
+  PROPOSED_EVALUATION_ACCESS_RULES,
+  type ProposedAccessRule,
+  publishEvaluationResultBy,
+  type RecordLearningInput,
+  recordLearningBy,
+  recomputeEvaluationOutcome,
+  recomputeEvaluationOutcomeHash,
+  replayEvaluation,
+  verifyEvaluationLog,
+} from './commands.js';
+
+export {
+  discrepancyNotice,
+  EVALUATION_LIFECYCLE,
+  EVALUATION_TRANSITIONS,
+  evaluationPublicStatus,
+  type EvaluationLifecycle,
+  type EvaluationPublicStatus,
+  type EvaluationTransition,
+  isLegalEvaluationTransition,
+  isTerminalEvaluationStatus,
+  legalEvaluationEventsFrom,
+  nextEvaluationStatus,
+  peekEvaluationTransition,
+  TERMINAL_EVALUATION_STATUSES,
+} from './state-machine.js';
+
+export {
+  AGREEMENT_DISPOSITIONS,
+  type AgreementDisposition,
+  assertExactEvaluationPayload,
+  assertFrozenCriteria,
+  assertLearningShape,
+  assertNoIndividualActivityMetric,
+  assertVerdictEvidence,
+  CRITERION_VERDICTS,
+  type CriterionAssessed,
+  type CriterionAssessmentRecord,
+  type CriterionVerdict,
+  ESCALATION_PRESCRIPTION_MS,
+  ESCALATION_RUNGS,
+  ESCALATION_TARGET_KINDS,
+  type EscalationRecord,
+  type EscalationRung,
+  type EscalationTargetKind,
+  EVALUATION_EVENT_TYPES,
+  EVALUATION_OUTCOMES,
+  EVALUATION_PARTIAL_FLOOR,
+  EVALUATION_STATUSES,
+  type EvaluationClosed,
+  type EvaluationClosure,
+  type EvaluationDiscrepancy,
+  type EvaluationEscalated,
+  type EvaluationEvent,
+  type EvaluationEventType,
+  type EvaluationId,
+  evaluationId,
+  type EvaluationLog,
+  type EvaluationOpened,
+  type EvaluationOutcome,
+  type EvaluationOutcomePreimageInput,
+  evaluationOutcomePreimage,
+  type EvaluationPayload,
+  type EvaluationResultPublished,
+  type EvaluationState,
+  type EvaluationStatus,
+  findLearnings,
+  freezeSuccessCriteria,
+  type FrozenCriteria,
+  IndividualMetricError,
+  isCriterionVerdict,
+  isEvaluationOutcome,
+  LEARNING_KINDS,
+  type LearningId,
+  learningId,
+  type LearningIndexEntry,
+  type LearningKind,
+  type LearningQuery,
+  type LearningRecord,
+  type LearningRecorded,
+  type LearningTag,
+  learningTag,
+  MAX_LEARNING_STATEMENT_LENGTH,
+  MAX_LEARNING_TAGS,
+  MAX_LEARNINGS_PER_EVALUATION,
+  metShare,
+  MIN_LEARNING_STATEMENT_LENGTH,
+  outcomeFromVerdicts,
+  type PublishedResult,
+} from './types.js';

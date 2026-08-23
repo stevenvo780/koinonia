@@ -403,6 +403,9 @@ export * from './constitution/index.js';
 // ── Asistente de acción sistémica: las 27 preguntas y el puerto que no puede decidir ─────────────
 export * from './assistant/index.js';
 
+// ── Evaluación, resultado y aprendizajes: el cierre del ciclo (ADR-0053) ─────────────────────────
+export * from './evaluation/index.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,
