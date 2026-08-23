@@ -142,6 +142,9 @@ importers:
       '@koinonia/anchor':
         specifier: workspace:*
         version: link:../../packages/anchor
+      '@koinonia/consensus':
+        specifier: workspace:*
+        version: link:../../packages/consensus
       '@koinonia/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

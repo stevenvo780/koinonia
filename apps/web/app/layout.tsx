@@ -57,11 +57,38 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
               <li>
                 <Link href="/decisiones">Decisiones</Link>
               </li>
+              {/*
+                «Prestar tu voto» va pegado a Decisiones porque es lo mismo visto desde el otro
+                lado: o votás, o le pedís a alguien que lleve tu parte. Separarlo del recorrido de
+                decidir lo convertiría en una función de experta, que es lo contrario de lo que
+                hace falta para que la use quien no puede estar pendiente.
+              */}
+              <li>
+                <Link href="/delegaciones">Prestar tu voto</Link>
+              </li>
+              <li>
+                <Link href="/consenso">En qué coincidimos</Link>
+              </li>
               <li>
                 <Link href="/iniciativas">Iniciativas</Link>
               </li>
               <li>
                 <Link href="/mis-tareas">Mis tareas</Link>
+              </li>
+              {/*
+                Los tres últimos son el bloque de «cómo funciona esto y cómo se comprueba»: quién
+                decide qué, con qué reglas, y todo lo que quedó escrito. El texto de cada enlace es
+                el mismo que el `h1` de destino, como los demás: quien navega saltando por la lista
+                de enlaces tiene que reconocer a dónde llegó.
+              */}
+              <li>
+                <Link href="/circulos">Quién decide qué</Link>
+              </li>
+              <li>
+                <Link href="/normas">Las reglas del juego</Link>
+              </li>
+              <li>
+                <Link href="/historial">Todo lo que quedó escrito</Link>
               </li>
               <li>
                 <Link href="/verificar">Verificar</Link>

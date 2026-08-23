@@ -25,6 +25,7 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@koinonia/anchor": "workspace:*",
+    "@koinonia/consensus": "workspace:*",
     "@koinonia/contracts": "workspace:*",
     "@koinonia/crypto": "workspace:*",
     "@koinonia/domain": "workspace:*",

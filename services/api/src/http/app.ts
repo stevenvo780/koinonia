@@ -32,9 +32,15 @@ import {
   aportarEvidencia as aportarEvidenciaSchema,
   avanzarEtapa as avanzarEtapaSchema,
   canjeEnlace as canjeEnlaceSchema,
+  type Consenso,
   crearProblema as crearProblemaSchema,
   crearPropuesta as crearPropuestaSchema,
+  delegar as delegarSchema,
   emitirPapeleta as emitirPapeletaSchema,
+  type Historial,
+  type Normas,
+  type PanelDeDelegaciones,
+  revocarDelegacion as revocarDelegacionSchema,
   enmendarPropuesta as enmendarPropuestaSchema,
   entregarTarea as entregarTareaSchema,
   bloquearTarea as bloquearTareaSchema,
@@ -78,6 +84,7 @@ import {
 } from './capacity.js';
 import { CIRCULOS_LISTA, existeCirculo } from './circles.js';
 import {
+  allMembers,
   ENLACE_VIGENCIA_MS,
   ErasureAlreadyRequestedError,
   ErasureReauthenticationRequiredError,
@@ -97,12 +104,17 @@ import {
   PrivateMaterialUnavailableError,
 } from './private-material-store.js';
 import {
+  consensoDto,
   decisionDetalleDto,
   decisionResumenDto,
+  delegacionesDeDecisionDto,
   deliberacionDetalleDto,
   deliberacionResumenDto,
+  historialDto,
   iniciativaDto,
   misTareasDto,
+  normasDto,
+  panelDeDelegacionesDto,
   problemaDetalleDto,
   problemaResumenDto,
   propuestaDetalleDto,
@@ -120,14 +132,19 @@ import {
   aportarEvidencia,
   avanzarEtapaDeliberacion,
   bloquearTarea,
+  calcularConsenso,
   cerrarDecision,
   crearProblema,
   crearPropuesta,
+  delegacionesDe,
+  type DelegacionesDeUnaDecision,
+  delegarVoto,
   emitirPapeleta,
   enmendarPropuesta,
   entregarTarea,
   exportarTodo,
   listarDecisiones,
+  listarDelegaciones,
   listarDeliberaciones,
   listarIniciativas,
   listarProblemas,
@@ -136,7 +153,10 @@ import {
   iniciarTarea,
   resultadoDeDecision,
   retirarEvidencia,
+  revocarDelegacionDeVoto,
   ratificarDecision,
+  verHistorial,
+  verNormas,
   planificarHito,
   ofrecerTarea,
   pedirAyudaTarea,
@@ -905,6 +925,113 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       found.state.proposalVersionHash ?? '',
     );
     return resultadoDto(found.resultado, titulo, found.iniciativaId);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Delegaciones: prestarle tu voto a alguien
+  //
+  // Las dos escrituras las autoriza el DOMINIO —`grantDelegationBy` y `revokeDelegationBy` llaman
+  // a `authorize(..., 'decision:cast-ballot', { subject })` por dentro— con el sujeto puesto desde
+  // la sesión. Aquí no hay ni una comprobación de permiso, y ése es el punto: si mañana alguien
+  // añade otra ruta que conceda delegaciones, la orden se lo impide igual.
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** Los alias de un padrón congelado, para no enseñar identificadores en pantalla. */
+  async function aliasDe(ids: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (ids.length === 0) return new Map();
+    const client = await options.pool.connect();
+    try {
+      const miembros = await allMembers(client, options.ports.clock.now());
+      const buscados = new Set(ids);
+      return new Map(
+        miembros.filter((m) => buscados.has(m.memberId)).map((m) => [m.memberId, m.alias]),
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  async function delegacionesDto(
+    datos: DelegacionesDeUnaDecision,
+    request: FastifyRequest,
+  ): Promise<ReturnType<typeof delegacionesDeDecisionDto>> {
+    const [titulo] = await tituloDeDecision(
+      datos.state.config?.proposalId ?? '',
+      datos.state.proposalVersionHash ?? '',
+    );
+    const alias = await aliasDe(
+      (datos.config?.electorate.members ?? []).map((miembro) => miembro.memberId),
+    );
+    return delegacionesDeDecisionDto(
+      datos,
+      titulo,
+      alias,
+      idDe(request),
+      options.ports.clock.now(),
+    );
+  }
+
+  app.get('/delegaciones', async (request): Promise<PanelDeDelegaciones> => {
+    parse(z.object({}).strict(), request.query);
+    const votaciones = [];
+    for (const datos of await listarDelegaciones(deps, idDe(request))) {
+      votaciones.push(await delegacionesDto(datos, request));
+    }
+    return panelDeDelegacionesDto(votaciones);
+  });
+
+  app.post('/decisiones/:id/delegaciones', async (request, reply) => {
+    await cupoDeEscritura(request);
+    const { id } = parse(z.object({ id: z.string() }), request.params);
+    const cuerpo = parse(delegarSchema, request.body);
+    const decision = await delegarVoto(deps, actorDe(request), id, cuerpo);
+    const datos = delegacionesDe(deps, decision, idDe(request));
+    return await reply.status(201).send(await delegacionesDto(datos, request));
+  });
+
+  app.post('/decisiones/:id/delegaciones/:delegacionId/revocar', async (request) => {
+    await cupoDeEscritura(request);
+    const { id, delegacionId } = parse(
+      z.object({ id: z.string(), delegacionId: z.string() }),
+      request.params,
+    );
+    const cuerpo = parse(revocarDelegacionSchema, request.body);
+    const decision = await revocarDelegacionDeVoto(
+      deps,
+      actorDe(request),
+      id,
+      delegacionId,
+      cuerpo,
+    );
+    const datos = delegacionesDe(deps, decision, idDe(request));
+    return await delegacionesDto(datos, request);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Consenso, normas e historial
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  app.get('/consenso', async (request): Promise<Consenso> => {
+    parse(z.object({}).strict(), request.query);
+    return consensoDto(
+      await calcularConsenso(
+        deps,
+        async (propuestaId, huella) => (await tituloDeDecision(propuestaId, huella))[0],
+        idDe(request),
+      ),
+    );
+  });
+
+  app.get('/normas', async (request): Promise<Normas> => {
+    parse(z.object({}).strict(), request.query);
+    return await Promise.resolve(normasDto(verNormas()));
+  });
+
+  app.get('/historial', async (request): Promise<Historial> => {
+    // El tamaño de página es del servidor. Si viniera del cliente, `?cuantos=1000000` sería una
+    // forma gratuita de hacer trabajar a la base todo lo que uno quiera.
+    parse(z.object({}).strict(), request.query);
+    return historialDto(await verHistorial(deps, actorDe(request), { cuantos: 60 }));
   });
 
   app.get('/iniciativas', async (request) => {

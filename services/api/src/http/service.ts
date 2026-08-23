@@ -16,6 +16,14 @@
 
 import { toHex } from '@koinonia/crypto';
 import {
+  analizarConsenso,
+  type Celda,
+  type MatrizVotos,
+  PcaNoConvergente,
+  type ResultadoAnalisis,
+  SinVariacion,
+} from '@koinonia/consensus';
+import {
   type Aportar,
   APORTE_EN_PALABRAS,
   clavesDeAporte,
@@ -59,10 +67,24 @@ import {
   type DecisionLog,
   type DecisionResult,
   type DecisionState,
+  CORE_CLAUSE_IDS,
   DEFAULT_CHALLENGE_WINDOW_MS,
   DEFAULT_EARLY_CLOSE,
   DEFAULT_TIE_BREAK,
   DELEGATION_DISABLED,
+  DELEGATION_ENABLED,
+  type Delegation,
+  delegationAt,
+  delegationId as toDelegationId,
+  type DelegationResolution,
+  ENTRENCHED_REFORM_V1,
+  FOUNDATIONAL_VALIDITY_MONTHS,
+  grantDelegationBy,
+  MAX_DELEGATION_VALIDITY_MS,
+  ORDINARY_REFORM_V1,
+  type ReformRequirements,
+  revokeDelegationBy,
+  vigentDelegations,
   draftDecision,
   draftProposal,
   type Electorate,
@@ -607,6 +629,34 @@ export interface DecisionAbierta {
   readonly config: DecisionConfig;
 }
 
+/**
+ * El tope de concentración es una **fracción del censo**, y con poca gente esa fracción es cero.
+ *
+ * HALLAZGO (aparecido al construir la pantalla de delegaciones). `DELEGATION_ENABLED` fija el tope
+ * en una décima parte del censo, que es lo que dice ADR-0029 pensando en 300 personas. Con menos de
+ * diez, `⌊censo/10⌋` vale 0 y la configuración es contradictoria: el dominio la rechaza —y hace
+ * bien, porque una delegación habilitada e inejercitable es el fallo silencioso de INV-32—. Con
+ * menos de veinte vale 1, que es el peso propio de cada quien: la delegación se puede encender pero
+ * la primera concesión choca contra el tope.
+ *
+ * El dominio ya falla cerrado. Lo que faltaba es que fallara **en palabras**: su mensaje trae
+ * `⌊1·9/10⌋` y una referencia de especificación, y ese texto llega tal cual a la pantalla de quien
+ * facilita, que no tiene por qué leer una fórmula para entender que todavía son pocos. Así que la
+ * condición se comprueba antes, aquí, y se dice en castellano. La regla sigue siendo del dominio;
+ * esta capa sólo la traduce a tiempo.
+ */
+function asertarQueSePuedePrestarElVoto(censo: number): void {
+  const tope = (DELEGATION_ENABLED.cap.num * BigInt(censo)) / DELEGATION_ENABLED.cap.den;
+  if (tope >= 2n) return;
+  throw new ServicioError(
+    'DELEGACION_SIN_MARGEN',
+    409,
+    `todavía son muy pocas personas para prestar el voto: con ${String(censo)} en la lista, ` +
+      'nadie podría cargar el voto de nadie sin pasarse del tope que impide que la voz se ' +
+      'concentre. Abrí esta votación sin préstamo de voto.',
+  );
+}
+
 export async function abrirDecision(
   deps: ServicioDeps,
   actor: Actor,
@@ -616,6 +666,16 @@ export async function abrirDecision(
     readonly version?: number | undefined;
     readonly metodo: MetodoSoportado;
     readonly duracionHoras: number;
+    /**
+     * Si en esta votación se puede prestar el voto.
+     *
+     * Apagado por defecto, que es el default institucional: delegar es un acto explícito de
+     * configuración y una delegación colgada por error no debe alterar un escrutinio que se abrió
+     * sin ella. Antes esto era una constante y no había forma de encenderlo: todo el motor de
+     * democracia líquida —tope de concentración, detección de ciclos, devolución LIFO— estaba
+     * construido, probado y **apagado con un literal**, así que nadie podía usarlo nunca.
+     */
+    readonly delegacion?: boolean | undefined;
   },
 ): Promise<DecisionAbierta> {
   return withTransaction(deps.pool, async (client) => {
@@ -653,12 +713,16 @@ export async function abrirDecision(
       const sameRequestedOpening =
         config.proposalId === input.propuestaId &&
         config.method.kind === input.metodo &&
-        config.window.closesAt - config.window.opensAt === input.duracionHoras * HORA_MS;
+        config.window.closesAt - config.window.opensAt === input.duracionHoras * HORA_MS &&
+        // Sin esta línea, reintentar con la misma clave y `delegacion` cambiada devolvería la
+        // votación anterior como si fuera la pedida: quien creyó abrirla con delegación se
+        // encontraría con que prestar el voto no existe, y sin ningún error de por medio.
+        config.delegation.enabled === (input.delegacion === true);
       if (!sameRequestedOpening) {
         throw new ServicioError(
           'IDEMPOTENCY_KEY_REUSED',
           409,
-          'esa clave ya abrió otra propuesta, método o duración; usá una clave nueva',
+          'esa clave ya abrió otra propuesta, método, duración o forma de delegar; usá una clave nueva',
         );
       }
       const seed = await client.query<{ complete: boolean }>(
@@ -740,6 +804,9 @@ export async function abrirDecision(
     if (electorate.censusSize < 1) {
       throw new ServicioError('SIN_PADRON', 409, 'no hay nadie que pueda decidir todavía');
     }
+    if (input.delegacion === true) {
+      asertarQueSePuedePrestarElVoto(electorate.censusSize);
+    }
 
     const config = await buildDecisionConfig({
       decisionId: id,
@@ -759,7 +826,7 @@ export async function abrirDecision(
         challengeWindow: DEFAULT_CHALLENGE_WINDOW_MS,
       },
       privacy: 'public-roll-call',
-      delegation: DELEGATION_DISABLED,
+      delegation: input.delegacion === true ? DELEGATION_ENABLED : DELEGATION_DISABLED,
       seedCommitment,
       engineVersion: ENGINE_VERSION,
     });
@@ -3106,6 +3173,530 @@ export async function exportarTodo(deps: ServicioDeps): Promise<{
         huellaAnterior: toHex(e.prevHash),
         huella: toHex(e.eventHash),
       })),
+    };
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Consenso: en qué coincide la gente y en qué no
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * De dónde salen los grupos de opinión.
+ *
+ * `@koinonia/consensus` pide una matriz de personas × afirmaciones. Aquí la afirmación es **la
+ * propuesta que se sometió a votación** y la respuesta es la papeleta que cada quien emitió, que en
+ * este sistema es pública por diseño (`privacy: 'public-roll-call'`): quien descarga el historial ya
+ * puede ver quién votó qué. El análisis no publica nada que no estuviera publicado; lo que hace es
+ * decir en qué se parecen y en qué se separan esas respuestas.
+ *
+ * Se toman **sólo las votaciones cerradas**. Una votación abierta cambiaría el mapa a cada papeleta
+ * y, sobre todo, enseñaría el marcador a quien todavía no votó: el análisis es agenda para la
+ * conversación siguiente, nunca un sondeo en vivo que induzca el voto.
+ */
+const CONSENSO_PARTICIPANTES_MINIMOS = 6;
+
+/** Con menos de tres votaciones no hay eje sobre el que separar a nadie: hay coincidencias. */
+const CONSENSO_VOTACIONES_MINIMAS = 3;
+
+export interface MatrizDeConsenso {
+  readonly matriz: MatrizVotos;
+  readonly textos: readonly string[];
+  /** Participantes en el orden de las filas. Sirve para decirle a cada quien en qué grupo quedó. */
+  readonly participantes: readonly MemberId[];
+  readonly votaciones: number;
+}
+
+/** `+1` a favor, `-1` en contra, `0` se abstuvo o expresó reserva, `null` no se pronunció. */
+function celdaDePapeleta(payload: BallotPayload): Celda {
+  switch (payload.kind) {
+    case 'binary':
+      return payload.approve ? 1 : -1;
+    case 'abstain':
+      return 0;
+    case 'consent':
+      // Una reserva no es un desacuerdo: se registra y no bloquea. Colapsarla con la objeción
+      // fabricaría un bando que la persona no eligió.
+      return payload.stance === 'consent' ? 1 : payload.stance === 'object' ? -1 : 0;
+    default:
+      // Los métodos con puntuación u orden no están en el corte vertical. Antes que traducirlos
+      // a un signo inventado, no se cuentan: una celda vacía es «no lo sabemos», que es verdad.
+      return null;
+  }
+}
+
+/** Última papeleta de cada persona en la ronda vigente. Cambiar de opinión no suma dos filas. */
+function ultimaPapeletaPorVotante(state: DecisionState): ReadonlyMap<MemberId, BallotPayload> {
+  const ultima = new Map<MemberId, { readonly seq: number; readonly payload: BallotPayload }>();
+  for (const papeleta of state.ballots) {
+    if (papeleta.round !== state.round) continue;
+    const previa = ultima.get(papeleta.voter);
+    if (previa === undefined || papeleta.seq > previa.seq) {
+      ultima.set(papeleta.voter, { seq: papeleta.seq, payload: papeleta.payload });
+    }
+  }
+  return new Map([...ultima].map(([voter, { payload }]) => [voter, payload]));
+}
+
+export async function matrizDeConsenso(
+  deps: ServicioDeps,
+  tituloDe: (propuestaId: string, huella: string) => Promise<string>,
+): Promise<MatrizDeConsenso> {
+  const cerradas = (await listarDecisiones(deps)).filter(
+    (d) => d.state.status !== 'Open' && d.state.status !== 'Draft',
+  );
+
+  const columnas: { readonly texto: string; readonly votos: ReadonlyMap<MemberId, Celda> }[] = [];
+  const participantes = new Set<MemberId>();
+  for (const { state } of cerradas) {
+    const papeletas = ultimaPapeletaPorVotante(state);
+    if (papeletas.size === 0) continue;
+    const votos = new Map<MemberId, Celda>();
+    for (const [votante, payload] of papeletas) {
+      const celda = celdaDePapeleta(payload);
+      if (celda === null) continue;
+      votos.set(votante, celda);
+      participantes.add(votante);
+    }
+    if (votos.size === 0) continue;
+    columnas.push({
+      texto: await tituloDe(state.config?.proposalId ?? '', state.proposalVersionHash ?? ''),
+      votos,
+    });
+  }
+
+  // Orden estable e independiente de cómo los devuelva la base: el análisis promete ser reproducible
+  // y una permutación de filas que dependa del planificador de PostgreSQL lo rompería en silencio.
+  const filas = [...participantes].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return {
+    matriz: filas.map((persona) => columnas.map((columna) => columna.votos.get(persona) ?? null)),
+    textos: columnas.map((columna) => columna.texto),
+    participantes: filas,
+    votaciones: columnas.length,
+  };
+}
+
+/** Los tres desenlaces que la pantalla tiene que saber pintar, ya discriminados. */
+export type ConsensoCalculado =
+  | {
+      readonly tipo: 'analizado';
+      readonly resultado: ResultadoAnalisis;
+      readonly datos: MatrizDeConsenso;
+      /** El grupo en el que quedó quien mira, si votó en alguna de estas votaciones. */
+      readonly miGrupo: number | undefined;
+    }
+  | {
+      readonly tipo: 'todavia-no';
+      /** Por qué todavía no se puede calcular. Cada motivo tiene su frase propia en pantalla. */
+      readonly motivo: 'sin-votaciones' | 'poca-gente' | 'sin-diferencias' | 'no-se-estabilizo';
+      readonly datos: MatrizDeConsenso;
+    };
+
+export async function calcularConsenso(
+  deps: ServicioDeps,
+  tituloDe: (propuestaId: string, huella: string) => Promise<string>,
+  yo: MemberId | undefined,
+): Promise<ConsensoCalculado> {
+  const datos = await matrizDeConsenso(deps, tituloDe);
+  if (datos.votaciones < CONSENSO_VOTACIONES_MINIMAS) {
+    return { tipo: 'todavia-no', motivo: 'sin-votaciones', datos };
+  }
+  if (datos.participantes.length < CONSENSO_PARTICIPANTES_MINIMOS) {
+    return { tipo: 'todavia-no', motivo: 'poca-gente', datos };
+  }
+  try {
+    const resultado = analizarConsenso(datos.matriz, datos.textos);
+    const fila = yo === undefined ? -1 : datos.participantes.indexOf(yo);
+    const miGrupo =
+      resultado.tipo === 'GruposDetectados' && fila >= 0 ? resultado.asignaciones[fila] : undefined;
+    return { tipo: 'analizado', resultado, datos, miGrupo };
+  } catch (error) {
+    // Los dos desenlaces anómalos del paquete **no** son errores de servidor: son estados del dato,
+    // y cada uno merece su explicación. Devolver un 500 aquí convertiría «todos respondieron igual»
+    // en «se rompió algo», que es exactamente la lectura que no queremos que la gente haga.
+    if (error instanceof SinVariacion) {
+      return { tipo: 'todavia-no', motivo: 'sin-diferencias', datos };
+    }
+    if (error instanceof PcaNoConvergente) {
+      return { tipo: 'todavia-no', motivo: 'no-se-estabilizo', datos };
+    }
+    throw error;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Delegaciones: prestarle tu voto a alguien
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Cuánto dura una delegación concedida desde la interfaz.
+ *
+ * Hasta el cierre de la votación y ni un minuto más. El dominio admite hasta un semestre, pero
+ * aquí la delegación es **de esta votación**: dejarla viva después del cierre sería un mandato que
+ * la persona no pidió y que nadie recordaría haber dado. La renovación es explícita, jamás
+ * automática (C.1.a).
+ */
+function vigenciaDeDelegacion(config: DecisionConfig, desde: Instant): Instant {
+  const hasta = config.window.closesAt;
+  const tope = desde + Math.min(config.delegation.maxValidity, MAX_DELEGATION_VALIDITY_MS);
+  return instant(Math.min(hasta, tope));
+}
+
+export interface DelegacionesDeUnaDecision {
+  readonly id: string;
+  readonly state: DecisionState;
+  readonly config: DecisionConfig | undefined;
+  readonly resolucion: DelegationResolution | undefined;
+  readonly miDelegacion: Delegation | undefined;
+  readonly yaVote: boolean;
+  readonly puedoDecidir: boolean;
+}
+
+/**
+ * Lo que hace falta para pintar la pantalla de delegaciones de una votación abierta.
+ *
+ * La resolución se pide **en el instante de ahora** y no al abrir: revocar tiene efecto inmediato
+ * (C.2, INV-24) y una vista que resolviera con el grafo congelado enseñaría una revocación que ya
+ * ocurrió como si no hubiera ocurrido.
+ */
+export function delegacionesDe(
+  deps: ServicioDeps,
+  decision: DecisionConEstado,
+  yo: MemberId | undefined,
+): DelegacionesDeUnaDecision {
+  const config = decision.state.config;
+  const at = ahora(deps);
+  const puedoDecidir =
+    yo !== undefined && (config?.electorate.members.some((m) => m.memberId === yo) ?? false);
+  const yaVote =
+    yo !== undefined &&
+    decision.state.ballots.some((b) => b.voter === yo && b.round === decision.state.round);
+  // HALLAZGO (aparecido al pintar la pantalla). `isVigent` exige `grantedAt < at` **estricto**: en
+  // su propio milisegundo una delegación todavía no cuenta (C.2). Preguntar «¿presté mi voto?» en
+  // `ahora` devuelve «no» justo después de haberlo prestado, y con el reloj de las pruebas —que no
+  // avanza solo— eso no es una rareza teórica: es lo que pasa siempre. En producción se esconde
+  // detrás de un par de milisegundos, que es peor, porque entonces falla una vez de cada mil.
+  //
+  // La pregunta de la pantalla no es «¿está vigente en este instante exacto?» sino «¿qué queda en
+  // pie a partir de ahora?», y ésa se responde en `at + 1`, que es la misma convención que usa el
+  // dominio para sus comprobaciones ex ante (`firstActiveInstant`).
+  const desdeYa = instant(at + 1);
+  const vigentes = vigentDelegations(decision.state.delegations, desdeYa);
+  return {
+    id: decision.id,
+    state: decision.state,
+    config,
+    resolucion:
+      config?.delegation.enabled === true ? delegationAt(decision.state, desdeYa) : undefined,
+    miDelegacion: yo === undefined ? undefined : vigentes.find((d) => d.delegator === yo),
+    yaVote,
+    puedoDecidir,
+  };
+}
+
+/** Las votaciones abiertas, con el estado de delegación de quien mira. */
+export async function listarDelegaciones(
+  deps: ServicioDeps,
+  yo: MemberId | undefined,
+): Promise<readonly DelegacionesDeUnaDecision[]> {
+  const abiertas = (await listarDecisiones(deps)).filter((d) => d.state.status === 'Open');
+  return abiertas.map((decision) => delegacionesDe(deps, decision, yo));
+}
+
+/**
+ * Las negativas del préstamo de voto, dichas para quien las lee.
+ *
+ * HALLAZGO (aparecido al pulsar el botón en el navegador). Los mensajes del dominio son excelentes
+ * *para quien escribe el dominio*: llevan la notación del cálculo y la referencia de la
+ * especificación —«esa persona ya representaría a 2 miembros y el tope de concentración es 2 votos
+ * sobre un censo de 22 (C.5)»—. Esos mensajes salen tal cual por la API y aparecen en pantalla, así
+ * que ADR-0041 se incumple en el único sitio donde nadie mira: el texto de un error.
+ *
+ * El dominio no se toca —su mensaje es el correcto para un registro y para quien depura—: se traduce
+ * en la frontera, que es donde vive la traducción de todo lo demás. Cada frase dice además **qué
+ * hacer**, porque una negativa sin salida es un callejón con otro nombre.
+ */
+const PORQUE_NO_SE_PUEDE_PRESTAR: Readonly<Record<string, string>> = {
+  DELEGATION_DISABLED:
+    'esta votación se abrió sin préstamo de voto, así que acá cada quien responde por sí mismo',
+  SELF_DELEGATION: 'delegar en uno mismo no es delegar: si querés votar, votá',
+  DELEGATOR_NOT_IN_CENSUS:
+    'no estabas en la lista de quiénes podían decidir en esta votación, así que no hay voto que ' +
+    'prestar',
+  DELEGATE_NOT_IN_CENSUS:
+    'esa persona no estaba en la lista de quiénes podían decidir acá, así que tu voto no llegaría ' +
+    'a ninguna parte; elegí a alguien de la lista',
+  DELEGATION_WOULD_CREATE_CYCLE:
+    'esa persona ya te prestó su voto a vos, directamente o a través de alguien más. Si vos le ' +
+    'prestás el tuyo, no votaría ninguno de los dos. Elegí a otra persona o votá vos',
+  DELEGATION_CAP_REACHED:
+    'esa persona ya llegó al tope de votos que alguien puede juntar. El tope existe para que la ' +
+    'voz no se concentre en pocas manos. Elegí a otra persona, o votá vos',
+  DELEGATION_VALIDITY_EXCEEDED:
+    'no existe el préstamo para siempre: se acaba al cerrar la votación y hay que volver a darlo',
+  DELEGATION_EXPIRY_INVALID: 'esta votación ya cerró o está por cerrar: no queda plazo que prestar',
+  UNKNOWN_DELEGATION: 'ese préstamo no existe en esta votación; volvé a cargar la pantalla',
+  DELEGATION_ALREADY_REVOKED:
+    'ya habías recuperado tu voto. No hace falta que lo hagas otra vez: volvé a cargar la pantalla',
+  DELEGATION_REVOKED_BEFORE_GRANT:
+    'todavía no se terminó de registrar el préstamo. Esperá un segundo y volvé a intentarlo',
+};
+
+/**
+ * Corre una orden de delegación traduciendo su negativa a castellano.
+ *
+ * Sólo se traducen los códigos de la tabla: cualquier otro error sigue su camino intacto, porque
+ * tragarse un error desconocido y darle una frase amable es cómo se pierde un fallo de verdad.
+ */
+async function conMensajeDePrestamo<T>(correr: () => Promise<T>): Promise<T> {
+  try {
+    return await correr();
+  } catch (error: unknown) {
+    if (error instanceof DomainError) {
+      const enPalabras = PORQUE_NO_SE_PUEDE_PRESTAR[error.code];
+      if (enPalabras !== undefined) throw new ServicioError(error.code, 422, enPalabras);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Presta tu voto a otra persona en una votación.
+ *
+ * **No autoriza aquí.** `grantDelegationBy` llama a `authorize(..., 'decision:cast-ballot', {
+ * subject: delegator })` por dentro, con el sujeto puesto por el servidor desde la sesión: nadie
+ * puede delegar el voto de otra persona ni mandando el campo en el cuerpo.
+ */
+export async function delegarVoto(
+  deps: ServicioDeps,
+  actor: Actor,
+  decisionIdRaw: string,
+  input: { readonly requestId: string; readonly enQuienId: string },
+): Promise<DecisionConEstado> {
+  // La sesión se comprueba **antes** de tocar el historial. No es una autorización adelantada —el
+  // permiso lo sigue decidiendo `grantDelegationBy` por dentro— sino la diferencia entre contestarle
+  // a quien no entró «no encontramos eso», que no le sirve de nada, y «entrá con tu correo», que es
+  // lo que tiene que hacer. De paso, una escritura sin cuenta deja de costar una lectura del log.
+  const delegante = actor.memberId;
+  if (delegante === undefined) {
+    throw new ServicioError(
+      'UNAUTHORIZED_NOT_AUTHENTICATED',
+      401,
+      'prestar tu voto exige una cuenta verificada',
+    );
+  }
+  const { log, state } = await verDecision(deps, decisionIdRaw);
+  const config = state.config;
+  if (config === undefined) {
+    throw new ServicioError('NO_ENCONTRADO', 404, 'esa votación todavía no está abierta');
+  }
+  const at = ahora(deps);
+  const siguiente = await conMensajeDePrestamo(async () =>
+    grantDelegationBy(log, {
+      eventId: nuevoEventId(deps),
+      at,
+      by: actor,
+      delegation: {
+        delegationId: toDelegationId(deps.ports.random.opaqueId()),
+        delegator: delegante,
+        delegate: memberId(input.enQuienId),
+        scope: { kind: 'circle', circleId: config.circleId },
+        expiresAt: vigenciaDeDelegacion(config, at),
+      },
+    }),
+  );
+  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
+  return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
+}
+
+/** Recupera tu voto. Efecto inmediato: el escrutinio resuelve el grafo al cerrar, no al abrir. */
+export async function revocarDelegacionDeVoto(
+  deps: ServicioDeps,
+  actor: Actor,
+  decisionIdRaw: string,
+  delegacionIdRaw: string,
+  input: { readonly requestId: string },
+): Promise<DecisionConEstado> {
+  if (actor.memberId === undefined) {
+    throw new ServicioError(
+      'UNAUTHORIZED_NOT_AUTHENTICATED',
+      401,
+      'recuperar tu voto exige una cuenta verificada',
+    );
+  }
+  const { log } = await verDecision(deps, decisionIdRaw);
+  const siguiente = await conMensajeDePrestamo(async () =>
+    revokeDelegationBy(log, {
+      eventId: nuevoEventId(deps),
+      at: ahora(deps),
+      by: actor,
+      delegationId: toDelegationId(delegacionIdRaw),
+    }),
+  );
+  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
+  return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Normas: las reglas del juego
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * El estado real de la constitución digital de este despliegue.
+ *
+ * ═══ Por qué esto no lee nada ═══
+ *
+ * El agregado `constitution` está construido y probado en `@koinonia/domain`, pero **no tiene
+ * persistencia**: no hay codificador que escriba sus hechos en el historial ni orden que lo funde.
+ * Fundarlo aquí, al vuelo y en cada petición, para tener algo que enseñar sería fabricar un acto de
+ * gobierno que nadie realizó —`foundConstitution` exige la decisión fundacional, el censo y los
+ * votos a favor—, y una pantalla que enseña una versión 1 que nadie aprobó miente sobre lo único
+ * que esa pantalla existe para demostrar.
+ *
+ * Así que se dice lo que es verdad: **estas son las reglas y todavía no están fijadas como
+ * documento versionado dentro de Koinonía**. Lo que sí es dato del dominio y sale de él —el núcleo
+ * intangible y los requisitos exactos de cada vía de reforma— se publica desde el dominio, no desde
+ * una copia a mano que se quedaría atrás.
+ */
+export interface NormasDelDespliegue {
+  readonly fijadas: boolean;
+  readonly nucleo: readonly {
+    readonly id: string;
+    readonly titulo: string;
+    readonly texto: string;
+  }[];
+  readonly ordinaria: ReformRequirements;
+  readonly atrincherada: ReformRequirements;
+  readonly mesesDeVigenciaFundacional: number;
+}
+
+/**
+ * El núcleo intangible del §6.b, palabra por palabra.
+ *
+ * Los identificadores **no** se escriben a mano: se toman de `CORE_CLAUSE_IDS`, que es la lista
+ * que el dominio recomputa en cada hecho para rechazar un historial que la altere. Si mañana el
+ * núcleo cambiara de forma, esto deja de compilar en vez de enseñar una lista vieja.
+ */
+const NUCLEO_EN_PALABRAS: Readonly<Record<string, { titulo: string; texto: string }>> = {
+  derecho_de_voz_y_voto: {
+    titulo: 'Toda persona miembro puede hablar, objetar y votar',
+    texto:
+      'Nadie puede quitarle a un miembro el derecho a participar en la conversación, a mostrar un ' +
+      'daño concreto y a votar. Ni una mayoría, ni quien facilita, ni quien administra.',
+  },
+  publicidad_del_registro: {
+    titulo: 'Lo que pasa queda escrito y cualquiera puede comprobarlo por su cuenta',
+    texto:
+      'El registro es público y se puede comprobar sin confiar en este servidor ni en quien lo ' +
+      'opera. La comprobación no depende de nuestro permiso.',
+  },
+  poder_no_transferible: {
+    titulo: 'La voz no se vende ni se regala en propiedad',
+    texto:
+      'Prestarle tu voto a alguien es revocable en cualquier momento y caduca solo. Nadie puede ' +
+      'comprar poder político ni acumularlo de forma permanente.',
+  },
+  caducidad_de_los_acuerdos: {
+    titulo: 'Los acuerdos caducan, y estas reglas también',
+    texto:
+      'Ningún acuerdo rige para siempre. Hay que volver a aprobarlo. Nadie queda gobernado ' +
+      'indefinidamente por reglas que aprobó gente que ya se fue.',
+  },
+  derecho_a_exportar: {
+    titulo: 'Podés llevarte la historia completa',
+    texto:
+      'Cualquier miembro puede descargar todo lo que pasó, entero, y usarlo fuera de acá. No hay ' +
+      'forma de quedar atrapado en esta herramienta.',
+  },
+  lista_taxativa: {
+    titulo: 'Lo que nunca se decide acá es una lista cerrada',
+    texto:
+      'Hay asuntos que no se someten a votación por ninguna vía, y esa lista no se amplía con ' +
+      'excepciones: ampliarla no es reformar, es fundar otra cosa.',
+  },
+};
+
+export function verNormas(): NormasDelDespliegue {
+  return {
+    // Se leería del historial en cuanto exista el hecho fundacional. Hoy no existe, y decir que sí
+    // sería la única mentira que esta pantalla no puede permitirse.
+    fijadas: false,
+    nucleo: CORE_CLAUSE_IDS.map((id) => {
+      const palabras = NUCLEO_EN_PALABRAS[id];
+      if (palabras === undefined) {
+        throw new ServicioError(
+          'NUCLEO_SIN_TEXTO',
+          500,
+          `el núcleo declara «${id}» y esta capa no sabe decirlo en castellano`,
+        );
+      }
+      return { id, titulo: palabras.titulo, texto: palabras.texto };
+    }),
+    ordinaria: ORDINARY_REFORM_V1,
+    atrincherada: ENTRENCHED_REFORM_V1,
+    mesesDeVigenciaFundacional: FOUNDATIONAL_VALIDITY_MONTHS,
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Historial: todo lo que quedó escrito
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface HechoLeido {
+  readonly numero: number;
+  readonly cuando: number;
+  readonly tipo: string;
+  readonly tipoDeAgregado: string;
+  readonly agregado: string;
+}
+
+export interface HistorialLeido {
+  readonly total: number;
+  readonly desde: number | undefined;
+  readonly hasta: number | undefined;
+  readonly hechos: readonly HechoLeido[];
+  readonly hayMas: boolean;
+}
+
+/**
+ * Los últimos hechos del historial, del más reciente al más viejo.
+ *
+ * ═══ Aquí NO va quién ═══
+ *
+ * El actor de cada hecho existe en el historial y sale en la descarga completa, pero **no sale por
+ * aquí**. Mientras una conversación tiene la autoría sellada, una lista que dijera «alguien escribió
+ * un aporte a las 14:03» junto al nombre rompería el sello desde fuera, sin tocar la pantalla que lo
+ * protege: bastaría cruzar dos listas. Esta pantalla cuenta *qué pasó y cuándo*, que es exactamente
+ * lo que hace falta para ver que no falta ninguno y que nada se movió de sitio.
+ *
+ * Tampoco sale el contenido. Un historial legible no es un volcado: es un índice.
+ */
+export async function verHistorial(
+  deps: ServicioDeps,
+  actor: Actor,
+  opciones: { readonly cuantos: number },
+): Promise<HistorialLeido> {
+  authorize(actor, 'ledger:read', { kind: 'ledger' });
+  return conCliente(deps.pool, async (client) => {
+    const eventos = await readAll(client);
+    const ordenados = [...eventos].reverse();
+    const recortados = ordenados.slice(0, opciones.cuantos);
+    const primero = eventos[0];
+    const ultimo = eventos[eventos.length - 1];
+    return {
+      total: eventos.length,
+      desde: primero === undefined ? undefined : Date.parse(primero.event.occurredAt),
+      hasta: ultimo === undefined ? undefined : Date.parse(ultimo.event.occurredAt),
+      hechos: recortados.map((e) => ({
+        // `leafIndex` cuenta desde 0 y la gente cuenta desde 1. El número está para que se vea que
+        // no falta ninguno, así que tiene que ser el que la persona espera.
+        numero: Number(e.leafIndex) + 1,
+        cuando: Date.parse(e.event.occurredAt),
+        tipo: e.event.eventType,
+        tipoDeAgregado: e.event.aggregateType,
+        agregado: e.event.aggregateId,
+      })),
+      hayMas: eventos.length > recortados.length,
     };
   });
 }

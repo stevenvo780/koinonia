@@ -11,6 +11,7 @@
     { "path": "../../packages/crypto" },
     { "path": "../../packages/anchor" },
     { "path": "../../packages/verifier-cli" },
+    { "path": "../../packages/consensus" },
     { "path": "../../packages/domain" },
     { "path": "../../packages/contracts" }
   ]

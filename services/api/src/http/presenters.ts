@@ -14,8 +14,10 @@
 import type {
   Actor,
   ContributionRecord,
+  DecisionConfig,
   DecisionResult,
   DecisionState,
+  DelegationResolution,
   DeliberationState,
   ExecutionPlan,
   InitiativeState,
@@ -24,28 +26,39 @@ import type {
   ProblemState,
   ProposalState,
   ProposalVersion,
+  ReformRequirements,
   TaskPauseRecord,
 } from '@koinonia/domain';
 import {
   can,
+  capWeight,
   currentContributions,
+  instant,
   nextStage,
   orderContributionsForViewer,
+  projectedRepresented,
   readContributionAuthor,
   referencesOf,
   stageRule,
   UnauthorizedError,
+  vigentDelegations,
 } from '@koinonia/domain';
+import { type AfirmacionParaPantalla, aPantalla, TEXTOS } from '@koinonia/consensus';
 import type {
   AporteDeliberacion,
+  Consenso,
   DecisionDetalle,
   DecisionResumen,
+  DelegacionesDeDecision,
   DeliberacionDetalle,
   DeliberacionResumen,
   Desenlace,
   Evidencia,
+  Historial,
   IniciativaDetalle,
   MisTareas,
+  Normas,
+  PanelDeDelegaciones,
   PausaTarea,
   PlanEjecucion,
   PasoTraza,
@@ -53,9 +66,11 @@ import type {
   ProblemaResumen,
   PropuestaDetalle,
   PropuestaResumen,
+  RepartoDeLaVoz,
   ResultadoDecision,
   TablaTraza,
   Tarea,
+  TextoDeConsenso,
   VersionPropuesta,
 } from '@koinonia/contracts';
 import {
@@ -72,6 +87,10 @@ import {
 } from '@koinonia/contracts';
 
 import {
+  type ConsensoCalculado,
+  type DelegacionesDeUnaDecision,
+  type HistorialLeido,
+  type NormasDelDespliegue,
   ocultaLaAutoria,
   queHaceFaltaParaQuePase,
   queSePuedeEscribirAhora,
@@ -743,4 +762,488 @@ export function misTareasDto(
         }).length,
       })),
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Consenso
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * De dónde salen los grupos, dicho para quien desconfía.
+ *
+ * Es la frase más importante de esa pantalla. Un mapa de bandos sin esta línea se lee como un
+ * veredicto sobre las personas —«vos sos de los de allá»— y ADR-0038 advierte exactamente de esa
+ * lectura. Con la línea se lee como lo que es: un resumen de respuestas que ya son públicas.
+ */
+const DE_DONDE_SALE =
+  'Esto no es una encuesta ni una etiqueta sobre nadie: sale de las respuestas que cada quien ya ' +
+  'dio en las votaciones cerradas, que son públicas y cualquiera puede volver a contar. Se juntan ' +
+  'las personas que respondieron parecido y se mira en qué coinciden todas. Los grupos no tienen ' +
+  'nombre ni bando: son cómo se respondió, no quién es quién.';
+
+/** «82,4 %». El redondeo se decide una vez, en el servidor, y no en cada cliente. */
+function comoPorcentaje(p: number): string {
+  return `${(p * 100).toFixed(1)} %`;
+}
+
+function textoDeConsensoDto(afirmacion: AfirmacionParaPantalla): TextoDeConsenso {
+  return {
+    texto: afirmacion.texto,
+    respuestas: afirmacion.observaciones,
+    acuerdoPorGrupo: afirmacion.pPorGrupo.map((p, indice) => ({
+      // El grupo se numera desde 1 para las personas (ADR-0041). El índice del arreglo no se
+      // enseña nunca: un «Grupo 0» es una fuga del lenguaje de la máquina.
+      grupo: indice + 1,
+      acuerdo: comoPorcentaje(p),
+    })),
+  };
+}
+
+/** Por qué todavía no hay nada que calcular, y qué tendría que pasar. Nunca un callejón. */
+const CONSENSO_TODAVIA_NO: Readonly<
+  Record<
+    'sin-votaciones' | 'poca-gente' | 'sin-diferencias' | 'no-se-estabilizo',
+    {
+      readonly descripcion: string;
+      readonly queFalta: string;
+    }
+  >
+> = {
+  'sin-votaciones': {
+    descripcion:
+      'Para ver en qué coincide la gente hacen falta varias votaciones ya cerradas: con una sola, ' +
+      'lo único que se puede decir es quién votó qué, y eso ya está en el resultado de esa votación.',
+    queFalta:
+      'Hacen falta al menos tres votaciones cerradas. Las decisiones salen de problemas escritos y ' +
+      'discutidos antes.',
+  },
+  'poca-gente': {
+    descripcion:
+      'Todavía respondieron muy pocas personas. Con este puñado de respuestas, cualquier reparto ' +
+      'en grupos diría más del azar que de lo que la gente piensa.',
+    queFalta: 'Hace falta que participe más gente en las votaciones que ya están abiertas.',
+  },
+  'sin-diferencias': {
+    descripcion:
+      'Todo el mundo respondió igual a todo. No hay ninguna diferencia sobre la que agrupar a ' +
+      'nadie, y eso es un resultado: en estos asuntos no hubo desacuerdo.',
+    queFalta:
+      'Cuando aparezca un asunto en el que la gente no coincida, acá se va a ver en qué se separa.',
+  },
+  'no-se-estabilizo': {
+    descripcion:
+      'El cálculo no llegó a una respuesta estable con estas respuestas, y preferimos no enseñar ' +
+      'un resultado aproximado: dos personas que lo miraran verían mapas distintos.',
+    queFalta:
+      'Con más votaciones cerradas el cálculo se estabiliza. Mientras tanto, no hay grupos que ' +
+      'mostrar.',
+  },
+};
+
+/**
+ * El consenso, con los tres desenlaces discriminados.
+ *
+ * El título de «no hay grupos claros» sale de `TEXTOS.sinGruposTitulo`, del propio paquete, y no de
+ * una cadena escrita aquí: `PRODUCT.md` §4 lo promete literalmente y el paquete ya tiene una prueba
+ * que lo fija. Copiarlo sería aceptar que un día digan cosas distintas.
+ */
+export function consensoDto(calculado: ConsensoCalculado): Consenso {
+  const personas = calculado.datos.participantes.length;
+  const votaciones = calculado.datos.votaciones;
+
+  if (calculado.tipo === 'todavia-no') {
+    const motivo = CONSENSO_TODAVIA_NO[calculado.motivo];
+    return {
+      tipo: 'todavia-no',
+      // Mismo título que el desenlace de «no hay facciones», y a propósito: la pregunta de quien
+      // llega es «¿en qué grupos está la gente?» y la respuesta honesta es la misma. Lo que cambia
+      // —y por eso son dos casos y no uno— es el porqué, que va justo debajo.
+      titulo: TEXTOS.sinGruposTitulo,
+      descripcion: motivo.descripcion,
+      queFalta: motivo.queFalta,
+      personas,
+      votaciones,
+    };
+  }
+
+  const pantalla = aPantalla(calculado.resultado);
+  if (pantalla.tipo === 'FaccionesNoDetectadas') {
+    return {
+      tipo: 'sin-grupos',
+      titulo: pantalla.titulo,
+      descripcion: pantalla.descripcion,
+      deDondeSale: DE_DONDE_SALE,
+      personas,
+      votaciones,
+      acuerdoGeneral: {
+        titulo: pantalla.acuerdoGeneralTitulo,
+        descripcion: pantalla.acuerdoGeneralDescripcion,
+        textos: pantalla.acuerdoGeneral.map(textoDeConsensoDto),
+        aviso: pantalla.aviso,
+      },
+    };
+  }
+
+  return {
+    tipo: 'grupos',
+    titulo: pantalla.titulo,
+    descripcion: pantalla.descripcion,
+    deDondeSale: DE_DONDE_SALE,
+    personas,
+    votaciones,
+    grupos: pantalla.grupos.map((grupo) => ({ numero: grupo.id, personas: grupo.tamano })),
+    ...(calculado.miGrupo === undefined ? {} : { miGrupo: calculado.miGrupo }),
+    enQueCoinciden: {
+      titulo: pantalla.textos.afirmacionesPuenteTitulo,
+      descripcion: pantalla.textos.afirmacionesPuenteDescripcion,
+      textos: pantalla.afirmacionesPuente.map(textoDeConsensoDto),
+      aviso: pantalla.afirmacionesPuente.length === 0 ? pantalla.textos.sinAcuerdoDestacable : '',
+    },
+    enQueSeSeparan: {
+      titulo: pantalla.textos.afirmacionesDivisivasTitulo,
+      descripcion: pantalla.textos.afirmacionesDivisivasDescripcion,
+      textos: pantalla.afirmacionesDivisivas.map(textoDeConsensoDto),
+      aviso:
+        pantalla.afirmacionesDivisivas.length === 0
+          ? 'Ninguna votación separó a los grupos de forma destacable.'
+          : '',
+    },
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Delegaciones
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Qué es prestar el voto y qué lo deshace. Va arriba de la pantalla, siempre, y no en una ayuda.
+ *
+ * La tercera línea es la que evita el fallo que INV-23 describe: alguien presta su voto, después
+ * vota igualmente, y no entiende por qué su delegado no votó por él. Vota directo **gana**, y hay
+ * que decirlo antes de que pase, no explicarlo después.
+ */
+const COMO_FUNCIONA_DELEGAR: readonly string[] = [
+  'Prestarle tu voto a alguien sirve para no dejar tu parte en silencio cuando no vas a poder ' +
+    'mirar una votación. Esa persona vota, y tu voto va con el suyo.',
+  'Lo recuperás cuando quieras, de un toque, y tiene efecto en el momento: aunque quien lo tenía ya ' +
+    'haya votado, si lo recuperás antes del cierre tu parte deja de ir con la suya.',
+  'Si votás vos, tu voto manda y el préstamo no se usa. No hace falta que lo recuperes antes: ' +
+    'votar ya lo deshace.',
+  'Nadie puede juntar más votos que el tope. Lo que pasa del tope vuelve a quien lo prestó, ' +
+    'empezando por el préstamo más reciente.',
+  'El préstamo se acaba solo al cerrar la votación. No existe el préstamo para siempre.',
+];
+
+/** Cómo está repartida la voz, en una frase. Nunca el nombre del índice (ADR-0041). */
+function comoEstaLaVoz(cargan: number, maximo: number, tope: number): string {
+  if (cargan === 0) {
+    return 'Nadie le prestó el voto a nadie todavía: cada quien lleva el suyo.';
+  }
+  if (maximo * 2 >= tope * 2 - 1 && maximo >= tope) {
+    return (
+      `La voz está concentrada: alguien ya llegó al tope de ${String(tope)} votos. Lo que pase de ` +
+      'ahí vuelve a quien lo prestó.'
+    );
+  }
+  if (cargan === 1) {
+    return (
+      `Una sola persona carga votos prestados, y llegó a ${String(maximo)} de un tope de ` +
+      `${String(tope)}. Cuanta menos gente los cargue, menos repartida está la voz.`
+    );
+  }
+  return (
+    `Los votos prestados están repartidos entre ${String(cargan)} personas, y quien más lleva ` +
+    `junta ${String(maximo)} de un tope de ${String(tope)}.`
+  );
+}
+
+/**
+ * El reparto de la voz, contado **ex ante**.
+ *
+ * Se cuenta a quién representaría cada delegado si la votación cerrara ahora, con la misma función
+ * que el dominio usa para rechazar una concesión que pasa del tope. Contar sólo lo que ya llegó a
+ * una papeleta daría cero mientras nadie haya votado —que es la mitad de la vida de una votación—,
+ * y justamente ahí es cuando la persona necesita ver si su voz se está juntando en pocas manos.
+ */
+function repartoDto(
+  state: DecisionState,
+  config: DecisionConfig,
+  resolucion: DelegationResolution | undefined,
+  at: number,
+): RepartoDeLaVoz {
+  // `at + 1` y no `at`: una delegación no está vigente en su propio milisegundo (C.2), así que
+  // contar en `at` dejaría fuera justo la que se acaba de conceder. Es la convención de
+  // `firstActiveInstant`, la misma con la que el dominio comprueba el tope antes de aceptarla.
+  const desdeYa = instant(at + 1);
+  const vigentes = vigentDelegations(state.delegations, desdeYa);
+  const destinatarios = new Set(vigentes.map((d) => d.delegate));
+  let maximo = 0;
+  for (const destinatario of destinatarios) {
+    const representados = projectedRepresented(
+      state.delegations,
+      destinatario,
+      desdeYa,
+      config.delegation.maxDepth,
+    );
+    maximo = Math.max(maximo, representados.length + 1);
+  }
+  const tope = capWeight(config);
+  const cargan = destinatarios.size;
+  return {
+    prestaron: vigentes.length,
+    cargan,
+    maximo,
+    tope,
+    comoEsta: comoEstaLaVoz(cargan, maximo, tope),
+    devueltos: resolucion?.returnedByCap.length ?? 0,
+  };
+}
+
+/**
+ * Una votación con el estado de delegación de quien mira.
+ *
+ * `podesDelegarEn` llega ya filtrado por el servidor —integrantes del padrón congelado, sin quien
+ * mira— porque una lista que incluyera a la propia persona ofrecería una acción que el dominio
+ * rechaza con `SELF_DELEGATION`, y un desplegable que ofrece lo imposible es un error que la
+ * interfaz produce y la persona paga.
+ */
+export function delegacionesDeDecisionDto(
+  datos: DelegacionesDeUnaDecision,
+  titulo: string,
+  alias: ReadonlyMap<string, string>,
+  quien: MemberId | undefined,
+  at: number,
+): DelegacionesDeDecision {
+  const config = datos.config;
+  if (config === undefined) {
+    throw new Error('una votación abierta siempre tiene sus reglas congeladas');
+  }
+  const sePuedeDelegar = config.delegation.enabled && !datos.yaVote && datos.puedoDecidir;
+  const porQueNo = !config.delegation.enabled
+    ? 'Esta votación se abrió sin préstamo de voto: acá cada quien responde por sí mismo.'
+    : !datos.puedoDecidir
+      ? 'No estabas en la lista de quiénes podían decidir en esta votación, así que no hay voto ' +
+        'que prestar.'
+      : datos.yaVote
+        ? 'Ya votaste. Tu voto manda sobre cualquier préstamo, así que no hace falta prestarlo.'
+        : undefined;
+
+  return {
+    decisionId: datos.id,
+    titulo,
+    cierraEn: config.window.closesAt,
+    sePuedeDelegar,
+    ...(porQueNo === undefined ? {} : { porQueNo }),
+    yaVote: datos.yaVote,
+    ...(datos.miDelegacion === undefined
+      ? {}
+      : {
+          miDelegacion: {
+            id: datos.miDelegacion.delegationId,
+            enQuien: alias.get(datos.miDelegacion.delegate) ?? 'Alguien que ya no está',
+            desde: datos.miDelegacion.grantedAt,
+            hasta: datos.miDelegacion.expiresAt,
+          },
+        }),
+    podesDelegarEn: config.electorate.members
+      .filter((miembro) => miembro.memberId !== quien)
+      .map((miembro) => ({
+        id: miembro.memberId,
+        alias: alias.get(miembro.memberId) ?? 'Alguien que ya no está',
+      }))
+      .sort((a, b) => a.alias.localeCompare(b.alias, 'es-CO')),
+    reparto: repartoDto(datos.state, config, datos.resolucion, at),
+  };
+}
+
+export function panelDeDelegacionesDto(
+  votaciones: readonly DelegacionesDeDecision[],
+): PanelDeDelegaciones {
+  return { comoFunciona: [...COMO_FUNCIONA_DELEGAR], votaciones: [...votaciones] };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Normas
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** «2 de cada 3» y no «0,667». Una fracción exacta dicha como la diría una persona. */
+function comoProporcion(fraccion: { readonly num: bigint; readonly den: bigint }): string {
+  return `${fraccion.num.toString()} de cada ${fraccion.den.toString()}`;
+}
+
+function requisitosEnPalabras(requisitos: ReformRequirements): readonly string[] {
+  return [
+    `${comoProporcion(requisitos.approvalOfCensus)} de todas las personas del padrón tiene que ` +
+      'votar a favor. No de quienes voten: del padrón entero.',
+    `Al menos ${comoProporcion(requisitos.minDirectParticipation)} tiene que votar en persona. ` +
+      'Un voto prestado no cuenta para este mínimo.',
+    `${String(requisitos.deliberationDays)} días de conversación antes de votar.`,
+    `${String(requisitos.waitingDays)} días de espera entre el cierre y la entrada en vigor, para ` +
+      'poder impugnarla.',
+    `Firma de ${String(requisitos.guaranteeThreshold)} de las ` +
+      `${String(requisitos.guaranteeCircleSize)} personas que cuidan las garantías. Sólo revisan ` +
+      'que el procedimiento se haya cumplido, nunca el fondo.',
+    `${comoProporcion(requisitos.sponsorSignatures)} del padrón tiene que firmar para abrirla.`,
+    ...(requisitos.votesRequired > 1
+      ? [
+          `${String(requisitos.votesRequired)} votaciones distintas, separadas por al menos ` +
+            `${String(requisitos.separationMonths)} meses. Un semestre dura más que una coyuntura: ` +
+            'quien vota la segunda vez ya no es el mismo grupo.',
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Las reglas, tal como están hoy.
+ *
+ * `hayNormas` sale en `false` y eso **no** es un hueco sin diseñar: es el estado real. El núcleo
+ * intangible y los requisitos de cada vía sí son datos del dominio y se publican; lo que todavía no
+ * existe es la copia versionada dentro de la plataforma, con su fecha y su decisión fundacional. Se
+ * dice, con todas las letras, en vez de enseñar una versión 1 que nadie aprobó.
+ */
+export function normasDto(normas: NormasDelDespliegue): Normas {
+  return {
+    hayNormas: normas.fijadas,
+    titulo: 'Las reglas del juego',
+    descripcion:
+      'Cómo se decide acá, qué decide cada grupo y qué no se decide nunca. Estas reglas no son ' +
+      'opciones de un panel que alguien pueda cambiar por su cuenta: cambiar una exige el ' +
+      'procedimiento que está más abajo, y quien administra la plataforma no puede tocarlas.',
+    versionVigente: 0,
+    versiones: [],
+    nucleo: {
+      titulo: 'Lo que no se puede cambiar por ninguna vía',
+      explicacion:
+        'Estas seis cosas no se reforman: ni con todos los votos, ni con todas las firmas, ni con ' +
+        'todo el tiempo del mundo. Cambiar una no sería reformar Koinonía, sería fundar otra cosa, ' +
+        'y el único camino honesto para eso es disolverla en público, entregar la historia entera y ' +
+        'empezar de nuevo.',
+      reglas: normas.nucleo.map((regla) => ({
+        id: regla.id,
+        titulo: regla.titulo,
+        texto: regla.texto,
+        irreformable: true,
+      })),
+    },
+    vias: [
+      {
+        nombre: 'Cambiar una regla',
+        paraQue: 'Para cambiar cualquiera de las reglas que no están en la lista de arriba.',
+        requisitos: [...requisitosEnPalabras(normas.ordinaria)],
+      },
+      {
+        nombre: 'Cambiar la regla de cambiar las reglas',
+        paraQue:
+          'Para cambiar el propio procedimiento de reforma. Es más difícil a propósito: si fuera ' +
+          'igual de fácil, a quien tuviera una mayoría pasajera le bastaría con cambiar primero ' +
+          'esta regla para volverse inamovible.',
+        requisitos: [...requisitosEnPalabras(normas.atrincherada)],
+      },
+    ],
+    reformasEnCurso: [],
+    vedas: [],
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Historial
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Sobre qué es cada hecho. El nombre interno del agregado no se enseña nunca. */
+const SOBRE_QUE: Readonly<Record<string, string>> = {
+  problem: 'Un problema',
+  proposal: 'Una propuesta',
+  decision: 'Una votación',
+  deliberation: 'Una conversación',
+  initiative: 'Lo que se está haciendo',
+  spine: 'La plataforma',
+};
+
+/**
+ * Qué pasó, en una frase.
+ *
+ * La tabla es explícita y no se genera partiendo el nombre interno en palabras: `BallotCast` no es
+ * «papeleta emitida», es «alguien respondió». Un nombre interno traducido a golpe de expresión
+ * regular sigue siendo un nombre interno con espacios.
+ */
+const QUE_PASO: Readonly<Record<string, string>> = {
+  LedgerAbierto: 'Se abrió el historial',
+  AgregadoAbierto: 'Empezó a registrarse algo nuevo',
+  CheckpointEmitido: 'Se selló el historial hasta acá',
+  ProblemOpened: 'Alguien escribió un problema',
+  EvidenceAttached: 'Alguien aportó algo que lo sostiene',
+  EvidenceRetracted: 'Se retiró un aporte',
+  MeTooRecorded: 'A alguien más le pasa lo mismo',
+  ProposalDrafted: 'Se escribió una propuesta',
+  ProposalAmended: 'Se corrigió una propuesta',
+  DecisionLinked: 'Una propuesta se llevó a votación',
+  DecisionDrafted: 'Se preparó una votación',
+  DecisionOpened: 'Se abrió una votación',
+  BallotCast: 'Alguien respondió',
+  DecisionClosed: 'Se cerró una votación',
+  ResultRecorded: 'Se publicó un resultado',
+  DecisionRatified: 'Se confirmó una decisión',
+  DelegationGranted: 'Alguien le prestó su voto a otra persona',
+  DelegationRevoked: 'Alguien recuperó su voto',
+  RoundOpened: 'Se abrió otra vuelta de la votación',
+  ObjectionIntegrated: 'Se atendió una objeción',
+  DeliberationOpened: 'Empezó una conversación',
+  ContributionSubmitted: 'Se escribió un aporte',
+  StageAdvanced: 'La conversación pasó a otra etapa',
+  InitiativeCreated: 'Se abrió lo que hay que hacer',
+  InitiativeActivated: 'Empezó a ejecutarse una decisión',
+  MilestonePlanned: 'Se puso una fecha de avance',
+  TaskOffered: 'Se le ofreció una tarea a alguien',
+  TaskAccepted: 'Alguien aceptó una tarea',
+  TaskRejected: 'Alguien no pudo tomar una tarea',
+  TaskStarted: 'Empezó una tarea',
+  TaskBlocked: 'Una tarea quedó trabada',
+  TaskHelpRequested: 'Alguien pidió ayuda con una tarea',
+  TaskResumed: 'Se retomó una tarea',
+  TaskEvidenceAdded: 'Se sumó una prueba de lo hecho',
+  TaskDelivered: 'Se entregó una tarea',
+  TaskChangesRequested: 'Se pidieron cambios en una entrega',
+  TaskReviewAccepted: 'Se aceptó una entrega',
+  TaskReoffered: 'Una tarea pasó a otra persona',
+};
+
+export function historialDto(leido: HistorialLeido): Historial {
+  return {
+    total: leido.total,
+    ...(leido.desde === undefined ? {} : { desde: leido.desde }),
+    ...(leido.hasta === undefined ? {} : { hasta: leido.hasta }),
+    hechos: leido.hechos.map((hecho) => {
+      const enlace = enlaceDelHecho(hecho.tipoDeAgregado, hecho.agregado);
+      return {
+        numero: hecho.numero,
+        cuando: hecho.cuando,
+        // Un tipo que esta tabla no conozca no se enseña con su nombre interno: se dice que quedó
+        // registrado. Es verdad, no es jerga, y no obliga a que la tabla esté completa para que la
+        // pantalla sea correcta.
+        que: QUE_PASO[hecho.tipo] ?? 'Quedó registrado algo',
+        sobre: SOBRE_QUE[hecho.tipoDeAgregado] ?? 'La plataforma',
+        ...(enlace === undefined ? {} : { enlace }),
+      };
+    }),
+    hayMas: leido.hayMas,
+  };
+}
+
+/** Adónde lleva un hecho, si hay pantalla que lo muestre. Sin pantalla, no hay enlace roto. */
+function enlaceDelHecho(tipoDeAgregado: string, agregado: string): string | undefined {
+  switch (tipoDeAgregado) {
+    case 'problem':
+      return `/problemas/${agregado}`;
+    case 'proposal':
+      return `/propuestas/${agregado}`;
+    case 'decision':
+      return `/decisiones/${agregado}`;
+    case 'deliberation':
+      return `/deliberaciones/${agregado}`;
+    case 'initiative':
+      return `/iniciativas/${agregado}`;
+    default:
+      return undefined;
+  }
 }

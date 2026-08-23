@@ -288,6 +288,14 @@ export const abrirDecision = z.object({
   metodo,
   /** Cuántas horas dura la ventana. Se muestra siempre en pantalla. */
   duracionHoras: z.number().int().min(1).max(720),
+  /**
+   * Si en esta votación se le puede prestar el voto a otra persona.
+   *
+   * Apagado si no se dice nada, que es el default institucional: delegar es un acto explícito de
+   * configuración y no una comodidad que se hereda. Quien abre la votación lo decide al abrirla y
+   * después ya no se puede cambiar: las reglas se congelan al abrir y ésta es una de ellas.
+   */
+  delegacion: z.boolean().optional(),
 });
 export type AbrirDecision = z.infer<typeof abrirDecision>;
 
@@ -1319,6 +1327,300 @@ export const portada = z.object({
     .optional(),
 });
 export type Portada = z.infer<typeof portada>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Círculos: quién decide qué
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Un grupo con competencia propia.
+ *
+ * `decideSinConsultar` no es adorno: es la única línea que evita la pregunta que hunde a cualquier
+ * organización horizontal —«¿esto quién lo decide?»— y por eso viaja con el nombre, siempre, y no
+ * detrás de un enlace.
+ */
+export const circulo = z.object({
+  id: opaqueId,
+  nombre: z.string().min(1),
+  decideSinConsultar: z.string().min(1),
+});
+export type Circulo = z.infer<typeof circulo>;
+
+export const circulos = z.array(circulo);
+export type Circulos = z.infer<typeof circulos>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Consenso: en qué coincide la gente y en qué no
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Un grupo de opinión. **Se numera desde 1**, que es como lo lee una persona.
+ *
+ * No lleva nombre ni etiqueta: ponerle una —«los críticos», «los moderados»— sería exactamente el
+ * salto que ADR-0038 prohíbe, de descripción a veredicto. Un grupo es un conjunto de personas que
+ * respondió parecido, y nada más.
+ */
+export const grupoDeOpinion = z.object({
+  numero: z.number().int().positive(),
+  personas: z.number().int().nonnegative(),
+});
+export type GrupoDeOpinion = z.infer<typeof grupoDeOpinion>;
+
+/** Cuánto acuerdo reunió un texto dentro de un grupo, ya redondeado a palabras de pantalla. */
+export const acuerdoDeGrupo = z.object({
+  grupo: z.number().int().positive(),
+  /** «82,4 %». Cadena y no número: el redondeo se decide una vez, en el servidor. */
+  acuerdo: z.string(),
+});
+export type AcuerdoDeGrupo = z.infer<typeof acuerdoDeGrupo>;
+
+export const textoDeConsenso = z.object({
+  /** El título de la propuesta que se votó. Es la frase sobre la que la gente se pronunció. */
+  texto: z.string(),
+  /** Cuántas personas se pronunciaron sobre ella (sin contar a quien calló). */
+  respuestas: z.number().int().nonnegative(),
+  acuerdoPorGrupo: z.array(acuerdoDeGrupo),
+});
+export type TextoDeConsenso = z.infer<typeof textoDeConsenso>;
+
+export const listaDeConsenso = z.object({
+  titulo: z.string(),
+  descripcion: z.string(),
+  textos: z.array(textoDeConsenso),
+  /** Qué decir cuando la lista queda vacía. Vacía es un resultado, no un hueco. */
+  aviso: z.string(),
+});
+export type ListaDeConsenso = z.infer<typeof listaDeConsenso>;
+
+/**
+ * Los tres desenlaces de la pantalla de consenso, como unión discriminada.
+ *
+ * `@koinonia/consensus` ya obliga por tipos a contemplar `FaccionesNoDetectadas`; aquí se conserva
+ * esa obligación **a través de la red**, que es donde suele perderse: con un campo opcional
+ * `grupos?`, una interfaz podría pintar una lista vacía y dar a entender que no hubo respuestas
+ * cuando lo que hubo fue acuerdo. Ver PRODUCT §4: «no hay grupos claros» es un resultado.
+ *
+ * El tercer caso, `todavia-no`, no viene del análisis sino de sus precondiciones: sin votaciones
+ * cerradas, sin gente suficiente o sin ninguna diferencia entre las respuestas no hay nada que
+ * calcular. Se distingue de `sin-grupos` a propósito: «nadie discrepa» y «todavía no hay datos» son
+ * cosas distintas y merecen pantallas distintas.
+ */
+export const consenso = z.discriminatedUnion('tipo', [
+  z.object({
+    tipo: z.literal('grupos'),
+    titulo: z.string(),
+    descripcion: z.string(),
+    /** De dónde salen los grupos, dicho para quien desconfía. Va SIEMPRE, arriba del mapa. */
+    deDondeSale: z.string(),
+    personas: z.number().int().nonnegative(),
+    votaciones: z.number().int().nonnegative(),
+    grupos: z.array(grupoDeOpinion),
+    /** En qué grupo quedaste vos. Ausente si no votaste en ninguna de estas votaciones. */
+    miGrupo: z.number().int().positive().optional(),
+    enQueCoinciden: listaDeConsenso,
+    enQueSeSeparan: listaDeConsenso,
+  }),
+  z.object({
+    tipo: z.literal('sin-grupos'),
+    titulo: z.string(),
+    descripcion: z.string(),
+    deDondeSale: z.string(),
+    personas: z.number().int().nonnegative(),
+    votaciones: z.number().int().nonnegative(),
+    acuerdoGeneral: listaDeConsenso,
+  }),
+  z.object({
+    tipo: z.literal('todavia-no'),
+    titulo: z.string(),
+    descripcion: z.string(),
+    /** Qué tendría que pasar para que esto se pueda calcular. Nunca un callejón sin salida. */
+    queFalta: z.string(),
+    personas: z.number().int().nonnegative(),
+    votaciones: z.number().int().nonnegative(),
+  }),
+]);
+export type Consenso = z.infer<typeof consenso>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Normas: las reglas del juego, versionadas
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const reglaEscrita = z.object({
+  /** Identificador estable de la regla. No se muestra: sirve para comparar dos versiones. */
+  id: z.string().min(1),
+  titulo: z.string().min(1),
+  texto: z.string().min(1),
+  /**
+   * `true` si pertenece al núcleo que no se puede reformar por ninguna vía.
+   *
+   * Se manda como dato y no se deduce en la interfaz: que una regla sea irreformable es la garantía
+   * más fuerte del documento y no puede depender de que el cliente acierte a marcarla.
+   */
+  irreformable: z.boolean(),
+});
+export type ReglaEscrita = z.infer<typeof reglaEscrita>;
+
+export const versionDeNormas = z.object({
+  version: z.number().int().positive(),
+  rigeDesde: instantMs,
+  /** Cuándo caduca. Las reglas caducan a propósito: un acuerdo eterno no lo revisa nadie. */
+  caduca: instantMs,
+  vigente: z.boolean(),
+  reglas: z.array(reglaEscrita),
+});
+export type VersionDeNormas = z.infer<typeof versionDeNormas>;
+
+/** Qué cambió entre dos versiones, ya resuelto en el servidor. */
+export const cambioDeNormas = z.object({
+  desde: z.number().int().positive(),
+  hasta: z.number().int().positive(),
+  agregadas: z.array(z.string()),
+  quitadas: z.array(z.string()),
+  cambiadas: z.array(z.string()),
+  /** Frase de resumen. Cuando no hay nada que comparar, lo dice y ofrece adónde ir. */
+  resumen: z.string(),
+});
+export type CambioDeNormas = z.infer<typeof cambioDeNormas>;
+
+/** Lo que hace falta para cambiar una regla, en castellano y sin fracciones sueltas. */
+export const viaDeReforma = z.object({
+  /** «Reforma ordinaria» / «Reforma del núcleo protegido». */
+  nombre: z.string(),
+  paraQue: z.string(),
+  requisitos: z.array(z.string()),
+});
+export type ViaDeReforma = z.infer<typeof viaDeReforma>;
+
+export const normas = z.object({
+  /** `false` sólo si el despliegue todavía no fijó sus reglas. Estado vacío diseñado. */
+  hayNormas: z.boolean(),
+  titulo: z.string(),
+  descripcion: z.string(),
+  versionVigente: z.number().int().nonnegative(),
+  versiones: z.array(versionDeNormas),
+  /** El núcleo, aparte y con su explicación: es irreformable y hay que verlo como tal. */
+  nucleo: z.object({
+    titulo: z.string(),
+    explicacion: z.string(),
+    reglas: z.array(reglaEscrita),
+  }),
+  vias: z.array(viaDeReforma),
+  /** Reformas en curso. Vacío es el caso normal y tiene su propio texto. */
+  reformasEnCurso: z.array(
+    z.object({ titulo: z.string(), estado: z.string(), cierraEn: instantMs.optional() }),
+  ),
+  /** Ventanas en las que no se puede reformar nada, ya traducidas a fechas y motivo. */
+  vedas: z.array(z.object({ desde: instantMs, hasta: instantMs, motivo: z.string() })),
+});
+export type Normas = z.infer<typeof normas>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Delegaciones: prestarle tu voto a alguien
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const delegar = z
+  .object({
+    requestId,
+    /** En quién delegás. Tiene que estar en la lista de quiénes podían decidir aquí. */
+    enQuienId: opaqueId,
+  })
+  .strict();
+export type Delegar = z.infer<typeof delegar>;
+
+export const revocarDelegacion = z.object({ requestId }).strict();
+export type RevocarDelegacion = z.infer<typeof revocarDelegacion>;
+
+/**
+ * Cómo está repartida la voz en una votación.
+ *
+ * El nombre del índice no aparece por ninguna parte, ni aquí ni en pantalla (ADR-0041): lo que la
+ * gente necesita saber es **cuánta voz junta la persona que más junta** y **cuál es el tope**, no
+ * cómo se llama la fórmula. Los dos son enteros: personas, no proporciones.
+ */
+export const repartoDeLaVoz = z.object({
+  /** Cuántas personas prestaron su voto y llegó a destino. */
+  prestaron: z.number().int().nonnegative(),
+  /** Cuántas personas cargan al menos un voto ajeno. */
+  cargan: z.number().int().nonnegative(),
+  /** Votos que junta quien más junta, incluido el suyo. */
+  maximo: z.number().int().nonnegative(),
+  /** Tope duro: nadie puede pasar de aquí, y lo que sobra vuelve a quien lo prestó. */
+  tope: z.number().int().positive(),
+  /** Una frase que dice si la voz está repartida o concentrada. Nunca sólo un número. */
+  comoEsta: z.string(),
+  /** Cuántos préstamos volvieron a su dueño por haber tocado el tope. */
+  devueltos: z.number().int().nonnegative(),
+});
+export type RepartoDeLaVoz = z.infer<typeof repartoDeLaVoz>;
+
+export const miDelegacion = z.object({
+  id: opaqueId,
+  /** Alias de la persona en quien delegaste. Nunca su identificador. */
+  enQuien: z.string(),
+  desde: instantMs,
+  hasta: instantMs,
+});
+export type MiDelegacion = z.infer<typeof miDelegacion>;
+
+export const delegacionesDeDecision = z.object({
+  decisionId: opaqueId,
+  titulo: z.string(),
+  cierraEn: instantMs,
+  /** `false` cuando la votación se abrió sin delegación: entonces no se ofrece delegar. */
+  sePuedeDelegar: z.boolean(),
+  /** Por qué no se puede, cuando no se puede. Un botón ausente sin explicación es un misterio. */
+  porQueNo: z.string().optional(),
+  /** Si ya votaste directo. Votar directo anula la delegación: se dice, no se deduce. */
+  yaVote: z.boolean(),
+  miDelegacion: miDelegacion.optional(),
+  /** Con quién podés delegar: integrantes del mismo grupo, sin vos. */
+  podesDelegarEn: z.array(miembroCirculo),
+  reparto: repartoDeLaVoz,
+});
+export type DelegacionesDeDecision = z.infer<typeof delegacionesDeDecision>;
+
+export const panelDeDelegaciones = z.object({
+  /** Explicación fija de qué es delegar y qué la deshace. Va arriba, siempre. */
+  comoFunciona: z.array(z.string()),
+  votaciones: z.array(delegacionesDeDecision),
+});
+export type PanelDeDelegaciones = z.infer<typeof panelDeDelegaciones>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Historial: todo lo que quedó escrito
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Una línea del historial.
+ *
+ * **No lleva quién.** No es un descuido: mientras una conversación tiene la autoría sellada, un
+ * historial que dijera «Fulana escribió un aporte a las 14:03» rompería el sello desde fuera, sin
+ * tocar la pantalla que lo protege. El historial cuenta *qué pasó y cuándo*, que es lo que hace
+ * falta para comprobar que nada se movió.
+ */
+export const hechoDelHistorial = z.object({
+  /** Número correlativo. Es lo que permite ver que no falta ninguno. */
+  numero: z.number().int().positive(),
+  cuando: instantMs,
+  /** Qué pasó, en una frase. Nunca el nombre interno del hecho. */
+  que: z.string(),
+  /** Sobre qué: «Una propuesta», «Una votación»… */
+  sobre: z.string(),
+  /** Adónde lleva, si hay pantalla que lo muestre. */
+  enlace: z.string().optional(),
+});
+export type HechoDelHistorial = z.infer<typeof hechoDelHistorial>;
+
+export const historial = z.object({
+  total: z.number().int().nonnegative(),
+  desde: instantMs.optional(),
+  hasta: instantMs.optional(),
+  /** Los últimos hechos, del más reciente al más viejo. */
+  hechos: z.array(hechoDelHistorial),
+  /** Si hay más de los que caben en esta página. */
+  hayMas: z.boolean(),
+});
+export type Historial = z.infer<typeof historial>;
 
 export { apiError };
 export type { ApiError } from './errors.js';
