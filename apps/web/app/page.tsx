@@ -15,11 +15,11 @@
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 
-import type { Portada } from '@koinonia/contracts';
+import type { Portada, SerieDeAcuerdos } from '@koinonia/contracts';
 
-import { BarraSesion, Cargando, ErrorVisible } from '../components/marco';
+import { Aviso, BarraSesion, Cargando, ErrorVisible } from '../components/marco';
 import { Medidor, Meta, Tarjeta, Vacio } from '../components/piezas';
-import { cerrarFrase, cuando, fechaCortaEnFrase, plazo, traer } from '../lib/api';
+import { cerrarFrase, cuando, fechaCorta, fechaCortaEnFrase, plazo, traer } from '../lib/api';
 
 const EJEMPLOS: readonly string[] = [
   'La sala de estudio cierra a las 6 y los de la nocturna no tenemos dónde leer.',
@@ -27,13 +27,158 @@ const EJEMPLOS: readonly string[] = [
   'Se decidió hacer una carta hace cuatro meses y nadie sabe si se escribió.',
 ];
 
+/**
+ * Cuántas ventanas de treinta días pedimos para la serie de la portada.
+ *
+ * `GET /metricas/acuerdos/serie` acepta hasta 52; acá se piden seis (medio año) porque es lo que
+ * entra legible en una fila de barras angosta de teléfono sin que cada barra quede más fina que el
+ * dedo que la mira. No es el límite del contrato, es una elección de esta pantalla.
+ */
+const PUNTOS_DE_SERIE = 6;
+
+/** Un punto ya traducido a lo que necesita dibujarse: su etiqueta, su valor (o nada) y su frase. */
+type PuntoDeGrafico = {
+  readonly etiqueta: string;
+  readonly valor: number | undefined;
+  readonly texto: string;
+};
+
+/**
+ * Una serie temporal dibujada con `<div>` y CSS en línea — cero dependencias, cero imágenes, y
+ * ninguna clase nueva en `globals.css` (que no es mío para tocar). ADR-0040/§6: el nivel importa
+ * menos que la dirección, así que lo que hay que poder leer de un vistazo es hacia dónde va la
+ * fila de barras, no el valor exacto de una sola.
+ *
+ * La barra es puramente decorativa (`aria-hidden`): la misma información, en palabras y completa,
+ * vive al lado en una lista `.solo-lectores` — el mismo patrón de gemelo visual/leído que ya usa
+ * `<Plazo>` en `piezas.tsx`. Un punto sin dato (ningún acuerdo vencía esa ventana) se dibuja como
+ * una línea plana y atenuada, nunca como una barra en cero que se leería como «fracasó».
+ */
+function GraficoDeSerie({
+  titulo,
+  puntos,
+  max,
+}: {
+  readonly titulo: string;
+  readonly puntos: readonly PuntoDeGrafico[];
+  readonly max: number;
+}): ReactNode {
+  const primero = puntos[0];
+  const ultimo = puntos[puntos.length - 1];
+  return (
+    <div>
+      <div
+        aria-hidden="true"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          gap: 'var(--e2)',
+          height: '5rem',
+          borderBottom: '1px solid var(--linea)',
+        }}
+      >
+        {puntos.map((punto, indice) => (
+          <div
+            key={indice}
+            style={{
+              flex: '1 1 0',
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: 'center',
+              height: '100%',
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                maxWidth: '2rem',
+                borderRadius: 'var(--radio-1) var(--radio-1) 0 0',
+                height:
+                  punto.valor === undefined
+                    ? '3px'
+                    : `${String(Math.max(2, Math.round((punto.valor / max) * 100)))}%`,
+                background: punto.valor === undefined ? 'var(--linea-fuerte)' : 'var(--acento)',
+                opacity: punto.valor === undefined ? 0.5 : 1,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      {primero !== undefined && ultimo !== undefined && (
+        <p
+          className="suave"
+          aria-hidden="true"
+          style={{ display: 'flex', justifyContent: 'space-between' }}
+        >
+          <span>{primero.etiqueta}</span>
+          <span>{ultimo.etiqueta}</span>
+        </p>
+      )}
+      <ul className="solo-lectores">
+        <li>{titulo}, de la ventana más antigua a la más reciente:</li>
+        {puntos.map((punto, indice) => (
+          <li key={indice}>
+            {punto.etiqueta}: {punto.texto}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function Inicio(): ReactNode {
   const [portada, setPortada] = useState<Portada | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
 
+  // Independiente de `/portada`: es una segunda llamada, a una ruta que ya tiene sus propias 92
+  // pruebas contra `@koinonia/metrics`. Si esta falla, la portada entera no tiene por qué caerse
+  // con ella —ver el aviso propio más abajo—, así que lleva su propio par de estados.
+  const [serieAcuerdos, setSerieAcuerdos] = useState<SerieDeAcuerdos | undefined>(undefined);
+  const [errorSerie, setErrorSerie] = useState<unknown>(undefined);
+
   useEffect(() => {
     traer<Portada>('/portada').then(setPortada).catch(setError);
   }, []);
+
+  useEffect(() => {
+    traer<SerieDeAcuerdos>(`/metricas/acuerdos/serie?puntos=${String(PUNTOS_DE_SERIE)}`)
+      .then(setSerieAcuerdos)
+      .catch(setErrorSerie);
+  }, []);
+
+  // El punto vigente es el último de la serie: misma ventana de treinta días que ya usa
+  // `GET /metricas/salud`, sólo que acá viene como el punto final de la serie en vez de una
+  // segunda llamada aparte.
+  const ultimoAcuerdos = serieAcuerdos?.puntos[serieAcuerdos.puntos.length - 1];
+
+  const puntosCumplimiento: readonly PuntoDeGrafico[] =
+    serieAcuerdos?.puntos.map((punto) => {
+      const c = punto.total.cumplimiento;
+      return {
+        etiqueta: fechaCorta(punto.ventana.hasta),
+        valor: c.hay ? Math.round((c.numerador / c.denominador) * 100) : undefined,
+        texto: c.hay
+          ? `cumplimiento del ${c.texto} (${String(c.numerador)} de ${String(c.denominador)})`
+          : 'no vencía ningún compromiso en esa ventana',
+      };
+    }) ?? [];
+
+  const puntosDeuda: readonly PuntoDeGrafico[] =
+    serieAcuerdos?.puntos.map((punto) => ({
+      etiqueta: fechaCorta(punto.ventana.hasta),
+      valor: punto.total.deuda,
+      texto:
+        punto.total.deuda === 0
+          ? 'sin compromisos vencidos sin cerrar'
+          : `${String(punto.total.deuda)} ${
+              punto.total.deuda === 1
+                ? 'compromiso vencido sin cerrar'
+                : 'compromisos vencidos sin cerrar'
+            }`,
+    })) ?? [];
+  // Sin tope natural en 100, a diferencia del cumplimiento: la escala de la fila de barras es
+  // relativa a lo peor que muestra la propia serie, nunca a un máximo inventado.
+  const maxDeuda = Math.max(1, ...puntosDeuda.map((punto) => punto.valor ?? 0));
 
   return (
     <div className="pagina-indice">
@@ -125,6 +270,98 @@ export default function Inicio(): ReactNode {
               </p>
             </section>
           )}
+
+          {/*
+           * Métrica 1 de `@koinonia/metrics` (ADR-0040/§6): «lo que se decide, ¿se hace?». Es
+           * independiente de `/portada` a propósito —su propia carga, su propio error— para que
+           * un fallo acá nunca tumbe el resto de la pantalla, que es la parte que de verdad
+           * importa el primer minuto. Ningún número de este bloque es de una persona: son conteos
+           * del colectivo (cuántos compromisos, no quién los cumplió), como exige ADR-0039/0040.
+           */}
+          <section aria-labelledby="acuerdos-titulo">
+            <h2 id="acuerdos-titulo">Lo que se decide, ¿se hace?</h2>
+            <p className="suave">
+              De los compromisos que vencían en cada período de treinta días, cuántos se cumplieron.
+              Es la medida principal: si decidir no cambia nada, todo lo demás es decorado.
+            </p>
+
+            {serieAcuerdos === undefined && errorSerie === undefined && (
+              <>
+                <div className="esqueleto-linea esqueleto-titulo" style={{ width: '35%' }} />
+                <div
+                  className="esqueleto-linea"
+                  style={{ height: '5rem', marginTop: 'var(--e3)' }}
+                />
+                <div className="solo-lectores">
+                  <Cargando que="el cumplimiento de acuerdos" />
+                </div>
+              </>
+            )}
+
+            {errorSerie !== undefined && (
+              <Aviso tipo="atencion" titulo="No pudimos traer esta cifra">
+                El resto de la portada sigue sirviendo igual. Volvé a cargar la página para
+                intentarlo de nuevo.
+              </Aviso>
+            )}
+
+            {ultimoAcuerdos !== undefined && (
+              <>
+                {ultimoAcuerdos.bajoLaMitad && (
+                  <Aviso tipo="atencion" titulo="Menos de la mitad se cumplió">
+                    En el último período, menos de la mitad de los compromisos vencidos llegaron a
+                    cerrarse. Si esto se sostiene, decidir acá no está sirviendo para nada.
+                  </Aviso>
+                )}
+
+                {ultimoAcuerdos.total.cumplimiento.hay ? (
+                  <Medidor
+                    etiqueta="Compromisos cumplidos"
+                    valor={ultimoAcuerdos.total.cumplimiento.numerador}
+                    total={ultimoAcuerdos.total.cumplimiento.denominador}
+                    descripcion="de los que vencían en el último período de treinta días"
+                  />
+                ) : (
+                  <p>Todavía no venció ningún compromiso en el último período.</p>
+                )}
+
+                <p>
+                  {ultimoAcuerdos.total.deuda === 0
+                    ? 'No hay compromisos vencidos que sigan abiertos.'
+                    : `Hay ${String(ultimoAcuerdos.total.deuda)} ${
+                        ultimoAcuerdos.total.deuda === 1
+                          ? 'compromiso vencido que sigue abierto'
+                          : 'compromisos vencidos que siguen abiertos'
+                      }.`}
+                  {ultimoAcuerdos.total.conRelojDetenido > 0 && (
+                    <>
+                      {' '}
+                      {ultimoAcuerdos.total.conRelojDetenido === 1
+                        ? 'Uno más avisó que estaba bloqueado o pidió ayuda'
+                        : `${String(ultimoAcuerdos.total.conRelojDetenido)} más avisaron que estaban bloqueados o pidieron ayuda`}
+                      , y no cuenta como incumplido: el plazo se detiene en cuanto se avisa.
+                    </>
+                  )}
+                </p>
+
+                <GraficoDeSerie
+                  titulo="Cumplimiento por período"
+                  puntos={puntosCumplimiento}
+                  max={100}
+                />
+
+                <p className="suave" style={{ marginTop: 'var(--e5)' }}>
+                  Y la deuda misma, período a período — acá importa menos el nivel que si sube o
+                  baja:
+                </p>
+                <GraficoDeSerie
+                  titulo="Compromisos vencidos sin cerrar, por período"
+                  puntos={puntosDeuda}
+                  max={maxDeuda}
+                />
+              </>
+            )}
+          </section>
 
           <section aria-labelledby="abiertas-titulo">
             <h2 id="abiertas-titulo">Decisiones abiertas</h2>

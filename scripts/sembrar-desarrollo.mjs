@@ -417,7 +417,9 @@ async function sembrarDeliberacion(facilitadora, problemaId, { duracionHoras, ob
       if (especificacion.clave !== undefined) ids[especificacion.clave] = aporteId;
     }
     if (i < objetivoIdx) {
-      marcarPaso(`fase 4: deliberación ${id} (problema ${problemaId}) — avanzando a «${ETAPAS[i + 1]}»`);
+      marcarPaso(
+        `fase 4: deliberación ${id} (problema ${problemaId}) — avanzando a «${ETAPAS[i + 1]}»`,
+      );
       await aseguraEtapa(id, facilitadora, ETAPAS[i + 1]);
     }
   }

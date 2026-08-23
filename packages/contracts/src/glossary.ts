@@ -110,3 +110,106 @@ export function forbiddenTermsIn(text: string): readonly string[] {
   const haystack = normalizeForGlossary(text);
   return FORBIDDEN_UI_TERMS.filter((term) => haystack.includes(normalizeForGlossary(term)));
 }
+
+/**
+ * Traducción de cada término prohibido a una palabra humana, para el saneador de abajo.
+ *
+ * No es `GLOSSARY`: esa tabla traduce *frases* completas de producto («quórum de participación» →
+ * «participación mínima») y no cubre todo lo que hay en `FORBIDDEN_UI_TERMS` —«schulze», «nonce»,
+ * «seq», «checksum»— porque esas nunca debieron llegar a una redacción de pantalla que alguien
+ * escribe a mano. Pero sí aparecen en el detalle técnico de `/integridad`, ensamblado a partir de
+ * mensajes internos (`WorkspacePersistenceError`, hallazgos de bóveda) que nombran la mecánica del
+ * motor porque están pensados para quien depura, no para quien lee la pantalla. Esta tabla es la
+ * red de seguridad para ese texto: uno por uno, cada término prohibido tiene aquí un reemplazo
+ * honesto y corto.
+ */
+const REEMPLAZO_TECNICO: Readonly<Record<string, string>> = {
+  blockchain: 'el historial no se puede alterar',
+  merkle: 'comprobante',
+  hash: 'huella',
+  'event sourcing': 'historial',
+  'event-sourcing': 'historial',
+  condorcet: 'comparación una contra una',
+  sociocracia: '¿alguien objeta?',
+  sociocratico: '¿alguien objeta?',
+  schulze: 'comparación una contra una',
+  beatpath: 'comparación una contra una',
+  cripto: 'de seguridad',
+  nonce: 'valor de un solo uso',
+  'append-only': 'que no se puede alterar',
+  ledger: 'historial',
+  quorum: 'participación mínima',
+  supermayoria: 'mayoría reforzada',
+  payload: 'contenido',
+  endpoint: 'ruta',
+  checksum: 'comprobante',
+  'sha-256': 'huella',
+  sha256: 'huella',
+  commitment: 'comprobante',
+  evento: 'lo que quedó escrito',
+  seq: 'número de orden',
+  grafo: 'qué sostiene qué',
+  arista: 'a qué responde',
+};
+
+/**
+ * Sanea un texto técnico interno para que pueda mostrarse: reemplaza cada término prohibido por su
+ * traducción, sin desordenar el resto de la frase.
+ *
+ * Existe porque el detalle técnico de `/integridad` se arma con mensajes de error internos
+ * (`WorkspacePersistenceError.message`, hallazgos de la bóveda) que nombran la mecánica del motor a
+ * propósito —son para quien depura un fallo real, no para redactar una pantalla— y esos mensajes no
+ * pasan por `mensajeDe`. Sin este paso, un fallo de integridad (raro, pero el único momento en que
+ * ese texto se ve) mostraría «ledger» o «seq» en una pantalla pública.
+ *
+ * El truco de la implementación: `normalizeForGlossary` no cambia el largo del texto (sólo minúsculas
+ * y sin diacríticos: la 'á' compuesta se descompone en 'a' + tilde y se queda en el mismo lugar), así
+ * que un índice hallado en el texto normalizado es el mismo índice en el texto original. Eso permite
+ * reemplazar sin tener que lidiar con mayúsculas o acentos en el patrón de búsqueda.
+ */
+export function sanearTextoTecnico(texto: string): string {
+  // Términos largos primero: si «event sourcing» ya se reemplazó, que «evento»... en realidad no se
+  // solapan en este vocabulario, pero ordenar así evita sorpresas si algún día se solapan.
+  const terminos = [...FORBIDDEN_UI_TERMS].sort((a, b) => b.length - a.length);
+
+  const sustituir = (fuente: string, guia: string): string => {
+    let resultado = '';
+    let cursor = 0;
+    while (cursor < fuente.length) {
+      let coincidencia: { termino: string; largo: number } | undefined;
+      for (const termino of terminos) {
+        const buscado = normalizeForGlossary(termino);
+        if (guia.startsWith(buscado, cursor)) {
+          coincidencia = { termino, largo: buscado.length };
+          break;
+        }
+      }
+      if (coincidencia === undefined) {
+        // `charAt` y no `fuente[cursor]`: con `noUncheckedIndexedAccess` el indexado devuelve
+        // `string | undefined`, y acá el cursor siempre está dentro del rango.
+        resultado += fuente.charAt(cursor);
+        cursor += 1;
+      } else {
+        resultado += REEMPLAZO_TECNICO[coincidencia.termino] ?? coincidencia.termino;
+        cursor += coincidencia.largo;
+      }
+    }
+    return resultado;
+  };
+
+  const normalizado = normalizeForGlossary(texto);
+
+  // La correspondencia de índices entre el texto original y el normalizado es la suposición que
+  // sostiene todo esto, y **no siempre se cumple**: vale para los acentos precompuestos que produce
+  // cualquier teclado ('á' U+00E1 → 'a' + tilde → 'a', mismo largo), pero un texto que YA venga
+  // descompuesto ('a' + U+0301, dos unidades) encoge al quitarle la tilde, y a partir de ahí cada
+  // índice apunta un lugar más allá y el resultado sale cortado por la mitad. Es raro, y por eso es
+  // exactamente la clase de fallo que aparece en producción y no en las pruebas.
+  //
+  // Si los largos no coinciden se renuncia a conservar mayúsculas y acentos y se sanea sobre el
+  // texto normalizado, que sí está alineado consigo mismo. Se pierde un poco de forma; no se pierde
+  // el sentido, y sobre todo no se devuelve un texto corrompido.
+  return normalizado.length === texto.length
+    ? sustituir(texto, normalizado)
+    : sustituir(normalizado, normalizado);
+}

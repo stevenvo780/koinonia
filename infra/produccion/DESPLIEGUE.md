@@ -20,12 +20,12 @@ puertos para los dos dominios públicos. Nada de esto usa Nginx, Kubernetes ni u
 
 ## 1. Los ficheros de esta carpeta y de dónde salieron
 
-| Fichero | Origen en la VPS | Qué es |
-|---|---|---|
-| `Dockerfile` | `/opt/koinonia/Dockerfile` | Imagen de la API (Fastify) |
-| `Dockerfile.web` | `/opt/koinonia/Dockerfile.web` | Imagen de la interfaz (Next.js) |
-| `docker-compose.yml` | `/opt/koinonia/docker-compose.yml` | Los tres servicios de producción |
-| `.env.ejemplo` | Calco de `/opt/koinonia/.env` con secretos sustituidos | Ver §4 |
+| Fichero              | Origen en la VPS                                       | Qué es                           |
+| -------------------- | ------------------------------------------------------ | -------------------------------- |
+| `Dockerfile`         | `/opt/koinonia/Dockerfile`                             | Imagen de la API (Fastify)       |
+| `Dockerfile.web`     | `/opt/koinonia/Dockerfile.web`                         | Imagen de la interfaz (Next.js)  |
+| `docker-compose.yml` | `/opt/koinonia/docker-compose.yml`                     | Los tres servicios de producción |
+| `.env.ejemplo`       | Calco de `/opt/koinonia/.env` con secretos sustituidos | Ver §4                           |
 
 Los tres primeros son copia literal, comentarios incluidos: esos comentarios documentan decisiones
 reales (por qué la base es `node:22.17.0-alpine3.22` y no `latest`, por qué `chmod -R a+rX` antes de
@@ -46,8 +46,8 @@ literal de un log.
 ### 2.1. Llevar el código a la VPS
 
 `/opt/koinonia/repo/` **no es un `git clone`** — no tiene `.git/`. Es un árbol traído por `rsync`,
-como dicen los propios Dockerfiles: *"El contexto de build es /opt/koinonia/repo, que llega por
-rsync sin node_modules, sin dist y sin \*.tsbuildinfo"* (y, para la interfaz, tampoco `.next/`).
+como dicen los propios Dockerfiles: _"El contexto de build es /opt/koinonia/repo, que llega por
+rsync sin node_modules, sin dist y sin \*.tsbuildinfo"_ (y, para la interfaz, tampoco `.next/`).
 Eso importa porque un `.tsbuildinfo` viejo sin su `dist/` hace que `tsc --build` se crea al día y no
 compile nada — el síntoma sería una imagen que arranca pero sirve código de una versión anterior.
 
@@ -133,13 +133,13 @@ la API, y la API antes que la interfaz — no hace falta orquestarlo a mano.
 
 `docker compose` lee `/opt/koinonia/.env` automáticamente por estar en el mismo directorio que el
 `docker-compose.yml` (eso es lo que resuelve `${POSTGRES_PASSWORD:?...}` en la definición de
-Postgres). Es un mecanismo *distinto* del `env_file:` que sólo tiene el servicio `api` — ver el
+Postgres). Es un mecanismo _distinto_ del `env_file:` que sólo tiene el servicio `api` — ver el
 comentario dentro de `docker-compose.yml` sobre por qué `web` no lleva `env_file`.
 
 ## 4. El `.env` real: cómo se genera, por qué no está en git
 
-`/opt/koinonia/.env` tiene permisos 600, dice en su primera línea *"Generado en la propia VPS con
-openssl"* y NUNCA debe copiarse al repositorio ni imprimirse en un log. `.env.ejemplo` en esta
+`/opt/koinonia/.env` tiene permisos 600, dice en su primera línea _"Generado en la propia VPS con
+openssl"_ y NUNCA debe copiarse al repositorio ni imprimirse en un log. `.env.ejemplo` en esta
 misma carpeta es la plantilla: mismas variables, mismos comentarios, cada secreto real sustituido
 por un marcador `<ENTRE_ÁNGULOS>`. Antes de dar por buena esta plantilla se releyó a mano buscando
 cualquier cadena que pareciera una clave, contraseña o cadena de conexión con credenciales, y se
@@ -163,7 +163,7 @@ Para reconstruir el `.env` real desde cero (por ejemplo, en una VPS nueva):
    adaptador de identidad rechaza cualquier otro dominio: un correo mal puesto aquí queda escrito
    en el `.env` y nunca podrá entrar al sistema — revisalo dos veces).
 4. Dejá `KOINONIA_ANCLAJE=false` a propósito salvo que de verdad quieras que el servicio salga a
-   OpenTimestamps y a las forjas en cada ciclo (el valor por defecto del código es *encendido*).
+   OpenTimestamps y a las forjas en cada ciclo (el valor por defecto del código es _encendido_).
 
 **El `.gitignore` del repositorio** ya bloquea `.env` y `.env.*` en general (para que nadie meta un
 `.env` real por accidente); se añadió una excepción puntual sólo para
@@ -217,9 +217,9 @@ quien escribe esto; documentarlo es trabajo pendiente, no algo que se pueda dar 
 **Koinonía sirve DOS dominios**, ambos definidos como bloques al final de
 `/etc/caddy/Caddyfile`:
 
-| Dominio | Reenvía a | Para qué |
-|---|---|---|
-| `api.167.114.118.213.sslip.io` | `127.0.0.1:18090` (`koinonia-api`) | La API sola |
+| Dominio                             | Reenvía a                          | Para qué              |
+| ----------------------------------- | ---------------------------------- | --------------------- |
+| `api.167.114.118.213.sslip.io`      | `127.0.0.1:18090` (`koinonia-api`) | La API sola           |
 | `koinonia.167.114.118.213.sslip.io` | `127.0.0.1:18091` (`koinonia-web`) | La interfaz (Next.js) |
 
 Hacen falta los dos: el enlace de acceso que manda el correo apunta a
@@ -316,13 +316,13 @@ El contenido completo con el que hay que reemplazar los dos bloques de sitio de 
 misma carpeta, con un comentario de cabecera largo que explica cada pieza. En resumen agrega, a cada
 uno de los dos dominios:
 
-| Pieza | Qué hace | Por qué |
-|---|---|---|
-| `skip_log @papeletas` | La emisión de papeleta no genera línea de log, en ninguno de los dos dominios | THREAT_MODEL.md línea 286 lo exige para el proxy explícitamente; T-20 y ADR-0014 |
-| `log { … format filter … }` | Registro a fichero en `/var/log/caddy/`, con IP, `Cookie`, `Authorization` y `Set-Cookie` **borrados** (no ofuscados) del JSON antes de escribirlo, y la cadena de consulta recortada | C17 (ninguna IP, en ningún componente) y el mismo criterio de `redact`/`remove` que ya usa la API |
-| `roll_size 10MiB` / `roll_keep 5` / `roll_keep_for 720h` | Tope de 50 MB por sitio, purga a 30 días | Mismo tope que ya fija `docker-compose.yml` para los tres contenedores; mismo horizonte que `consent_logs` |
-| `header { Strict-Transport-Security … X-Frame-Options … Cross-Origin-Opener-Policy … }` | Tres cabeceras de la lista de THREAT_MODEL.md §6 que hoy faltan (en modo obligatorio: son estáticas, no dependen de la aplicación) | `next.config.mjs` ya sirve las otras tres de esa misma lista |
-| `Content-Security-Policy-Report-Only` (sólo en el dominio de la interfaz) | La CSP estricta de THREAT_MODEL.md §6, sin nonce (apps/web no lo genera hoy), en modo **de sólo informe**: nunca bloquea, sólo reporta a la consola del navegador | apps/web usa Next.js, que normalmente mete script/estilo en línea; aplicarla obligatoria sin haber mirado qué reporta puede dejar la aplicación en blanco |
+| Pieza                                                                                   | Qué hace                                                                                                                                                                              | Por qué                                                                                                                                                   |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skip_log @papeletas`                                                                   | La emisión de papeleta no genera línea de log, en ninguno de los dos dominios                                                                                                         | THREAT_MODEL.md línea 286 lo exige para el proxy explícitamente; T-20 y ADR-0014                                                                          |
+| `log { … format filter … }`                                                             | Registro a fichero en `/var/log/caddy/`, con IP, `Cookie`, `Authorization` y `Set-Cookie` **borrados** (no ofuscados) del JSON antes de escribirlo, y la cadena de consulta recortada | C17 (ninguna IP, en ningún componente) y el mismo criterio de `redact`/`remove` que ya usa la API                                                         |
+| `roll_size 10MiB` / `roll_keep 5` / `roll_keep_for 720h`                                | Tope de 50 MB por sitio, purga a 30 días                                                                                                                                              | Mismo tope que ya fija `docker-compose.yml` para los tres contenedores; mismo horizonte que `consent_logs`                                                |
+| `header { Strict-Transport-Security … X-Frame-Options … Cross-Origin-Opener-Policy … }` | Tres cabeceras de la lista de THREAT_MODEL.md §6 que hoy faltan (en modo obligatorio: son estáticas, no dependen de la aplicación)                                                    | `next.config.mjs` ya sirve las otras tres de esa misma lista                                                                                              |
+| `Content-Security-Policy-Report-Only` (sólo en el dominio de la interfaz)               | La CSP estricta de THREAT_MODEL.md §6, sin nonce (apps/web no lo genera hoy), en modo **de sólo informe**: nunca bloquea, sólo reporta a la consola del navegador                     | apps/web usa Next.js, que normalmente mete script/estilo en línea; aplicarla obligatoria sin haber mirado qué reporta puede dejar la aplicación en blanco |
 
 **Verificación ya hecha, fuera de la VPS, antes de escribir esto:** se descargó el binario oficial de
 Caddy **2.6.2** —la misma versión exacta que corre en la VPS (`caddy version` por ssh)— y con él,
@@ -395,4 +395,3 @@ interfaz un tiempo con las herramientas de desarrollo del navegador abiertas, re
 reporta la consola, y decidir con quien mantenga `apps/web` si hace falta `'unsafe-inline'`, un nonce
 real (lo que exige THREAT_MODEL.md §6 y hoy no existe en el código), o ninguna de las dos. Aplicarla
 obligatoria sin haber mirado esos informes es el error que el modo de sólo informe existe para evitar.
-

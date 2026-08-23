@@ -1294,7 +1294,7 @@ export async function ratificarDecision(
         throw new ServicioError(
           'INTEGRITY_RATIFICATION_ATOMICITY',
           500,
-          'el estado ratificado no conserva su evento de ratificación',
+          'el estado ratificado no conserva lo que quedó escrito de la ratificación',
         );
       }
       await assertRatificationActivation(client, log, state, ratification, frozen, undefined);
@@ -1359,7 +1359,7 @@ async function assertRatificationActivation(
     throw new ServicioError(
       'INTEGRITY_RATIFICATION_ATOMICITY',
       500,
-      'el evento enlazado no es una ratificación',
+      'lo que quedó escrito enlazado no es una ratificación',
     );
   }
   if (frozen === undefined) {

@@ -29,6 +29,7 @@
     "@koinonia/contracts": "workspace:*",
     "@koinonia/crypto": "workspace:*",
     "@koinonia/domain": "workspace:*",
+    "@koinonia/metrics": "workspace:*",
     "@koinonia/verificar": "workspace:*",
     "fastify": "^5.6.1",
     "pg": "^8.16.3",

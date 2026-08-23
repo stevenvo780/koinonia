@@ -33,6 +33,7 @@ import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/ma
 import { Ficha, Meta, type VarianteFicha } from '../../../components/piezas';
 import { useAccionUnica } from '../../../lib/acciones';
 import { cerrarFrase, cuando, enviar, ErrorDeApi, traer } from '../../../lib/api';
+import { SeccionEvaluacion } from './evaluacion';
 
 type RespuestaElegida = 'aceptar' | 'rechazar' | 'pedir-reasignacion';
 
@@ -833,6 +834,21 @@ export default function DetalleIniciativa(): ReactNode {
             )}
           </section>
         )}
+
+        {/*
+         * El cierre del ciclo (ADR-0053): contrastar los criterios de más arriba contra lo que
+         * pasó de verdad, y dejar los aprendizajes. Vive en un componente propio —`evaluacion.tsx`—
+         * con su propia sesión, su propio fetch y sus propias acciones, para no sumarle más estado
+         * a un fichero que ya es grande. Ver la cabecera de ese fichero para por qué acá y no en el
+         * resultado de la decisión.
+         */}
+        <SeccionEvaluacion
+          iniciativaId={id}
+          circuloId={iniciativa.circuloId}
+          activa={iniciativa.activa}
+          revisarEn={iniciativa.revisarEn}
+          tareas={iniciativa.tareas}
+        />
 
         <details className="de-donde-sale">
           <summary>Ver comprobantes relacionados</summary>

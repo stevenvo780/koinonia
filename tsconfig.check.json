@@ -13,6 +13,7 @@
       "@koinonia/anchor": ["./packages/anchor/src/index.ts"],
       "@koinonia/verificar": ["./packages/verifier-cli/src/index.ts"],
       "@koinonia/domain": ["./packages/domain/src/index.ts"],
+      "@koinonia/metrics": ["./packages/metrics/src/index.ts"],
       "@koinonia/contracts": ["./packages/contracts/src/index.ts"],
       "@koinonia/api": ["./services/api/src/index.ts"]
     }

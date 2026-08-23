@@ -16,6 +16,7 @@ export {
   forbiddenTermsIn,
   GLOSSARY,
   normalizeForGlossary,
+  sanearTextoTecnico,
 } from './glossary.js';
 
 export {
@@ -30,3 +31,16 @@ export {
 
 export * from './http.js';
 export { datetimeLocalColombia, instanteColombia } from './time.js';
+
+// ── Cinco incrementos nuevos, integrados en una fase aparte ──────────────────────────────────
+//
+// Cinco agentes escribieron estos ficheros en paralelo, sin hablarse entre sí. Ninguno de sus
+// nombres exportados choca entre ellos ni contra lo de arriba (comprobado con un diff de las
+// listas de exportación antes de añadir estas líneas), así que `export *` alcanza para los
+// cinco. La única colisión real la resuelve `metricas.ts` puertas adentro: sus DTOs usan nombres
+// distintos de los de `iniciativas.ts` aunque ambos hablen de iniciativas.
+export * from './metricas.js';
+export * from './evaluacion.js';
+export * from './asistente.js';
+export * from './iniciativas.js';
+export * from './consenso.js';

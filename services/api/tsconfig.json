@@ -13,6 +13,7 @@
     { "path": "../../packages/verifier-cli" },
     { "path": "../../packages/consensus" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/metrics" },
     { "path": "../../packages/contracts" }
   ]
 }

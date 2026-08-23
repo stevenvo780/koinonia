@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@koinonia/domain": "workspace:*",
+    "@koinonia/metrics": "workspace:*",
     "zod": "^4.1.13"
   },
   "engines": {

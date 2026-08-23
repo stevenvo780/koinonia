@@ -43,13 +43,13 @@ respaldo real. `pg_dump` toma un snapshot MVCC lógico y consistente sin detener
 
 ## 2. Qué NO se copia (y por qué)
 
-| No incluido | Por qué no |
-|---|---|
+| No incluido                                                                                                | Por qué no                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/opt/koinonia/.env` (contraseñas, `KOINONIA_VAULT_MASTER_KEY`, `KOINONIA_RATE_PEPPER`, credenciales SMTP) | Es un secreto, no un dato a preservar por generaciones — y mezclarlo con las copias de datos multiplicaría el daño de una fuga: quien accediera a una copia vieja tendría además las claves para descifrar `identity.private_material` de **cualquier** copia. Se reconstruye siguiendo `DESPLIEGUE.md` §4, con secretos nuevos generados en el momento. |
-| Las imágenes Docker (`koinonia-api:*`, `koinonia-web:*`) | Son código compilado, no datos: se reconstruyen desde el commit correspondiente del repositorio (`DESPLIEGUE.md` §2). Guardarlas en la rotación de copias sólo gastaría disco compartido con 66 contenedores ajenos sin agregar nada que un `git checkout` + build no reproduzca. |
-| El volumen `koinonia-pgdata` en sí (ficheros crudos) | A propósito — ver §1. Una copia de ficheros en caliente es justamente lo que este mecanismo evita. |
-| El `Caddyfile` y los certificados TLS | No son de Koinonía: son compartidos con una decena de sitios ajenos del mismo host y ya deberían tener su propio respaldo fuera del alcance de este proyecto. |
-| El código fuente | Vive en git, no en la VPS. Perder la VPS no lo pierde. |
+| Las imágenes Docker (`koinonia-api:*`, `koinonia-web:*`)                                                   | Son código compilado, no datos: se reconstruyen desde el commit correspondiente del repositorio (`DESPLIEGUE.md` §2). Guardarlas en la rotación de copias sólo gastaría disco compartido con 66 contenedores ajenos sin agregar nada que un `git checkout` + build no reproduzca.                                                                        |
+| El volumen `koinonia-pgdata` en sí (ficheros crudos)                                                       | A propósito — ver §1. Una copia de ficheros en caliente es justamente lo que este mecanismo evita.                                                                                                                                                                                                                                                       |
+| El `Caddyfile` y los certificados TLS                                                                      | No son de Koinonía: son compartidos con una decena de sitios ajenos del mismo host y ya deberían tener su propio respaldo fuera del alcance de este proyecto.                                                                                                                                                                                            |
+| El código fuente                                                                                           | Vive en git, no en la VPS. Perder la VPS no lo pierde.                                                                                                                                                                                                                                                                                                   |
 
 ## 3. Cada cuánto y dónde queda
 
@@ -167,7 +167,7 @@ Revisar a mano, en la salida:
 
 1. Que "verificación OK" aparezca (el número de tablas restauradas coincide con el del volcado).
 2. Que el conteo de filas por tabla que imprime al final tenga sentido: si `identity.member` da 0
-   filas y se sabe que hay personas registradas, algo está mal aunque la cuenta de *tablas* haya
+   filas y se sabe que hay personas registradas, algo está mal aunque la cuenta de _tablas_ haya
    dado bien — la cuenta de tablas no puede detectar una base vacía con el esquema correcto.
 3. Que no haya quedado ningún contenedor `koinonia-verificacion-*` corriendo después (el script los
    borra solo salvo que se use `--conservar`; confirmar con `docker ps -a | grep koinonia-verificacion`).
@@ -183,14 +183,14 @@ indistinguible, en la práctica, de no tener copias.
 
 Todo lo de esta sección se midió por SSH, en lectura, contra la máquina real — no son estimaciones.
 
-| Medición | Valor |
-|---|---|
-| Tamaño lógico de la base (`pg_database_size`) | 8575 kB (~8,4 MiB) |
-| Tamaño en disco del volumen `koinonia-pgdata` completo (datos + índices + WAL) | 48 MiB |
-| Tamaño de un `pg_dump -Fc` real de la base de hoy | **55.515 bytes (~54,2 KiB)** — comprimido, formato custom |
-| Tablas en schemas de aplicación | 20 (`governance`: 8, `identity`: 8, `projection`: 3, `koinonia_meta`: 1) |
-| Espacio libre en el disco de la VPS (`/`, `/dev/md3`) | 81 GiB libres de 467 GiB (82% usado) — **compartido con 66 contenedores ajenos** |
-| `pg_dump`/`pg_restore` disponibles dentro de `koinonia-postgres` | Sí, versión 16.14 (imagen `postgres:16-alpine`) |
+| Medición                                                                       | Valor                                                                            |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Tamaño lógico de la base (`pg_database_size`)                                  | 8575 kB (~8,4 MiB)                                                               |
+| Tamaño en disco del volumen `koinonia-pgdata` completo (datos + índices + WAL) | 48 MiB                                                                           |
+| Tamaño de un `pg_dump -Fc` real de la base de hoy                              | **55.515 bytes (~54,2 KiB)** — comprimido, formato custom                        |
+| Tablas en schemas de aplicación                                                | 20 (`governance`: 8, `identity`: 8, `projection`: 3, `koinonia_meta`: 1)         |
+| Espacio libre en el disco de la VPS (`/`, `/dev/md3`)                          | 81 GiB libres de 467 GiB (82% usado) — **compartido con 66 contenedores ajenos** |
+| `pg_dump`/`pg_restore` disponibles dentro de `koinonia-postgres`               | Sí, versión 16.14 (imagen `postgres:16-alpine`)                                  |
 
 **Con la retención por defecto (14 copias):** 14 × ~54 KiB ≈ **760 KiB** — irrelevante frente a los
 81 GiB libres. Incluso si la base creciera 1000× desde hoy (algo que llevaría años de uso real al

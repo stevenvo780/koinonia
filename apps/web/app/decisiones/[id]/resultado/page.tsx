@@ -8,16 +8,50 @@
  * maquillar y la posibilidad de recalcularlo por su cuenta. Por eso los pasos del escrutinio se
  * muestran uno por uno, en castellano, con sus cifras, y al final está el botón para descargarlo
  * todo y comprobarlo con una herramienta que no es esta página.
+ *
+ * ═══ «Qué pasó después» (ADR-0053) ═══
+ *
+ * Esta pantalla demuestra **cómo se decidió**; no organiza trabajo ni valora criterios, así que no
+ * lleva ningún formulario del cierre del ciclo —eso vive en `/iniciativas/[id]`, donde ya están los
+ * criterios de éxito y donde quien organiza el trabajo puede actuar—. Pero «funcionó o no funcionó»
+ * es, literalmente, la continuación de «esto se decidió», y quien llega acá con la pregunta «¿y al
+ * final qué pasó?» no debería tener que adivinar que la respuesta vive en otra pantalla. Por eso
+ * `QuePasoDespues` agrega un resumen **de sólo lectura** —el desenlace y los aprendizajes, nunca un
+ * botón que escriba— con un enlace hacia el detalle completo y accionable.
+ *
+ * Es deliberadamente silenciosa ante cualquier fallo que no sea «todavía no se convocó» (404): esta
+ * es una sección secundaria de una pantalla que ya cumple su propósito por su cuenta, y tapar la
+ * demostración del resultado con un error de una consulta secundaria sería peor que omitirla.
  */
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import type { ResultadoDecision } from '@koinonia/contracts';
+import type {
+  DesenlaceEvaluacion,
+  InformeDeEvaluacion,
+  ResultadoDecision,
+} from '@koinonia/contracts';
 
 import { Cargando, ErrorVisible } from '../../../../components/marco';
 import { traer } from '../../../../lib/api';
+
+const DESENLACE_EN_PALABRAS: Readonly<Record<DesenlaceEvaluacion, string>> = {
+  logrado: 'Logrado',
+  parcial: 'Parcial',
+  fallido: 'Fallido',
+  inconcluso: 'Inconcluso',
+};
+
+const DESENLACE_TONO: Readonly<
+  Record<DesenlaceEvaluacion, 'bien' | 'mal' | 'atencion' | 'pendiente'>
+> = {
+  logrado: 'bien',
+  parcial: 'atencion',
+  fallido: 'mal',
+  inconcluso: 'pendiente',
+};
 
 const fmt = new Intl.NumberFormat('es-CO');
 
@@ -140,6 +174,10 @@ export default function Resultado(): ReactNode {
         </section>
       )}
 
+      {aprobada && resultado.iniciativaId !== undefined && (
+        <QuePasoDespues iniciativaId={resultado.iniciativaId} />
+      )}
+
       {aprobada && resultado.iniciativaId === undefined && (
         <AvisoHistorico>
           Esta es una decisión histórica: fue aprobada antes de que las decisiones crearan una
@@ -223,5 +261,82 @@ function AvisoHistorico({ children }: { readonly children: ReactNode }): ReactNo
       <strong>Sin iniciativa vinculada: </strong>
       {children}
     </div>
+  );
+}
+
+/**
+ * El resumen de sólo lectura del cierre del ciclo (ADR-0053). Ver la nota de cabecera del fichero
+ * para por qué es de sólo lectura y por qué se calla ante cualquier fallo que no sea «no se convocó».
+ */
+function QuePasoDespues({ iniciativaId }: { readonly iniciativaId: string }): ReactNode {
+  const [informe, setInforme] = useState<InformeDeEvaluacion | undefined>(undefined);
+  const [listo, setListo] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    traer<InformeDeEvaluacion>(`/iniciativas/${iniciativaId}/evaluacion`)
+      .then((actual) => {
+        if (vivo) {
+          setInforme(actual);
+          setListo(true);
+        }
+      })
+      .catch(() => {
+        // «Todavía no se convocó» (404) y cualquier otro fallo se tratan igual: no hay nada que
+        // mostrar. Ver la nota de cabecera del fichero sobre por qué esta sección se calla.
+        if (vivo) setListo(true);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [iniciativaId]);
+
+  // Nada que mostrar todavía (cargando, sin convocar, o un fallo secundario que se calla): la
+  // pantalla ya cumplió su propósito con lo de arriba y no necesita un hueco reservado para esto.
+  if (!listo || informe === undefined) return null;
+
+  if (informe.estado === 'en-curso') {
+    return (
+      <section aria-labelledby="que-paso-titulo">
+        <h2 id="que-paso-titulo">Qué pasó después</h2>
+        <p>
+          La evaluación de esta decisión ya se convocó y todavía está en curso: se están valorando
+          los criterios contra su evidencia. Todavía no hay un desenlace para mostrar acá.
+        </p>
+        <p>
+          <Link
+            className="boton secundario"
+            href={`/iniciativas/${iniciativaId}#evaluacion-titulo`}
+          >
+            Ver cómo va
+          </Link>
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="que-paso-titulo">
+      <h2 id="que-paso-titulo">Qué pasó después</h2>
+      <div className={`veredicto ${DESENLACE_TONO[informe.desenlace]}`} role="note">
+        <strong className="marca-estado">{DESENLACE_EN_PALABRAS[informe.desenlace]}</strong>
+        <p>{informe.narrativa}</p>
+      </div>
+      {informe.aprendizajes.length > 0 && (
+        <>
+          <h3>Qué se aprendió</h3>
+          <ul>
+            {informe.aprendizajes.map((aprendizaje) => (
+              <li key={aprendizaje.id}>{aprendizaje.enunciado}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p>
+        <Link className="boton secundario" href={`/iniciativas/${iniciativaId}#evaluacion-titulo`}>
+          Ver el detalle completo de la evaluación
+        </Link>
+      </p>
+    </section>
   );
 }

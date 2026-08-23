@@ -85,6 +85,7 @@ import {
   type InformeIntegridad,
   mensajeDe,
   MENSAJES_DELIBERACION,
+  sanearTextoTecnico,
   type Portada,
   retirarEvidencia as retirarEvidenciaSchema,
   ratificarDecision as ratificarDecisionSchema,
@@ -226,6 +227,26 @@ import {
   verPropuesta,
   verResumenEntregaTarea,
 } from './service.js';
+
+// ── Cinco incrementos integrados en esta fase ─────────────────────────────────────────────────
+//
+// Cada uno vive en su propio módulo (`rutas-*.ts`), escrito por un agente que no tocó este
+// archivo. Cada uno expone una única función `registrarRutasDeX(app, ctx)` y su tipo de contexto;
+// `buildApp`, más abajo, construye ese contexto con lo que ya tiene a mano (`options`, los mismos
+// cierres `idDe`/`actorDe`/`sujetoPropioDe`/`cupoDeEscritura` que usa el resto de la aplicación) y
+// llama a la registradora. Ninguno de los cinco módulos importa de éste ni al revés: la única
+// dirección de dependencia es la de esta lista hacia ellos.
+import {
+  cargarBorrador as cargarBorradorAsistente,
+  guardarEvento as guardarEventoAsistente,
+  listarPropios as listarPropiosAsistente,
+} from './asistente-repositorio.js';
+import { crearLectorasDeMetricas } from './metricas-lecturas.js';
+import { registrarRutasDeAsistente } from './rutas-asistente.js';
+import { registrarRutasDeConsenso, repositorioSondeosEnMemoria } from './rutas-consenso.js';
+import { registrarRutasDeEvaluacion } from './rutas-evaluacion.js';
+import { registrarRutasDeIniciativas } from './rutas-iniciativas.js';
+import { registrarRutasDeMetricas } from './rutas-metricas.js';
 
 export const COOKIE_SESION = 'koinonia_sesion';
 
@@ -1437,7 +1458,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     const detallePrivado = [...fallosPrivados]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([code, count]) => `${code}: ${String(count)}`)
+      .map(([code, count]) => `${sanearTextoTecnico(code)}: ${String(count)}`)
       .join(' · ');
     const comprobaciones = [
       {
@@ -1454,7 +1475,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
             'pública, nunca un arreglo silencioso.',
         ...(v.ledger.ok
           ? {}
-          : { detalle: v.ledger.findings.map((f) => `${f.code}: ${f.detail}`).join(' · ') }),
+          : {
+              detalle: v.ledger.findings
+                .map((f) => sanearTextoTecnico(`${f.code}: ${f.detail}`))
+                .join(' · '),
+            }),
       },
       {
         id: 'material-privado',
@@ -1496,7 +1521,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
               'respuestas que se dieron sobre ella.',
         ...(v.propuestasRotas.length === 0
           ? {}
-          : { detalle: v.propuestasRotas.map((p) => `${p.id}: ${p.motivo}`).join(' · ') }),
+          : {
+              detalle: v.propuestasRotas
+                .map((p) => sanearTextoTecnico(`${p.id}: ${p.motivo}`))
+                .join(' · '),
+            }),
       },
       {
         id: 'resultados',
@@ -1512,7 +1541,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
               'decisión entra en cuarentena.',
         ...(v.decisionesRotas.length === 0
           ? {}
-          : { detalle: v.decisionesRotas.map((d) => `${d.id}: ${d.motivo}`).join(' · ') }),
+          : {
+              detalle: v.decisionesRotas
+                .map((d) => sanearTextoTecnico(`${d.id}: ${d.motivo}`))
+                .join(' · '),
+            }),
       },
       {
         id: 'conversaciones',
@@ -1530,7 +1563,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
               'no se publica entera, y esta fila no se pone en verde.',
         ...(v.deliberacionesRotas.length === 0
           ? {}
-          : { detalle: v.deliberacionesRotas.map((d) => `${d.id}: ${d.motivo}`).join(' · ') }),
+          : {
+              detalle: v.deliberacionesRotas
+                .map((d) => sanearTextoTecnico(`${d.id}: ${d.motivo}`))
+                .join(' · '),
+            }),
       },
       {
         id: 'ejecucion',
@@ -1545,7 +1582,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           ? {}
           : {
               detalle: [...v.iniciativasRotas, ...v.ejecucionRotas]
-                .map((item) => `${item.id}: ${item.motivo}`)
+                .map((item) => sanearTextoTecnico(`${item.id}: ${item.motivo}`))
                 .join(' · '),
             }),
       },
@@ -1637,6 +1674,83 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           }),
     };
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Cinco incrementos, integrados — cada uno en su propio módulo (ver la nota de cabecera junto a
+  // sus imports). Van al final, después de que `onRequest`, `setErrorHandler` y los cierres de
+  // identidad ya existen: cada registradora hereda esos tres, igual que las 65 rutas de arriba.
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  // Iniciativas — GET /iniciativas/tablero con el estado REAL derivado del agregado (ADR-0026),
+  // en vez del `'por-empezar'` fijo que sirve hoy `GET /iniciativas`. Vive aparte porque derivar
+  // ese estado es una función pura sobre `InitiativeState` que no tenía dónde vivir sin acoplar
+  // `presenters.ts` a un cuarto paquete; no toca ni colisiona con `/iniciativas/:id`, que Fastify
+  // resuelve por especificidad (un segmento literal siempre gana sobre uno paramétrico).
+  registrarRutasDeIniciativas(app, { deps });
+
+  // Evaluación — el cierre del ciclo del ADR-0053 (`problema → … → resultado → aprendizaje`).
+  // Trae su propia persistencia (códec y ledger) porque el agregado `evaluation` no existía en
+  // `service.ts`; sólo necesita lo que `AppOptions` ya trae.
+  registrarRutasDeEvaluacion(app, {
+    pool: options.pool,
+    ports: options.ports,
+    ratePepper: options.ratePepper,
+  });
+
+  // Asistente de acción sistémica (ADR-0052). La persistencia de su historial (`assistant`, un
+  // agregado nuevo) vive en `asistente-repositorio.ts`, calcada de `workspace/repository.ts`.
+  // `puertoIA`/`destinoIA` en `undefined`: `AppOptions` todavía no trae un proveedor de IA
+  // configurado, y el propio ADR exige que ausencia de proveedor sea un valor legítimo, no un
+  // error — ver `cierre.ts` del dominio. Cablear un proveedor real es aditivo el día que exista.
+  registrarRutasDeAsistente(app, {
+    puertoIA: undefined,
+    destinoIA: undefined,
+    ahora: () => options.ports.clock.now(),
+    idOpaco: () => options.ports.random.opaqueId(),
+    actorId: idDe,
+    cupoDeEscritura,
+    cargarBorrador: (id) => cargarBorradorAsistente(options.pool, id),
+    guardarEvento: (id, evento) => guardarEventoAsistente(options.pool, id, evento),
+    listarPropios: (actor) => listarPropiosAsistente(options.pool, actor),
+  });
+
+  // Sondeos de consenso (ADR-0038, ADR-0048): siembra y valoración de afirmaciones, un espacio de
+  // nombres nuevo (`/sondeos`) que no toca el `/consenso` existente (ese analiza papeletas de
+  // decisiones ya cerradas; esto analiza afirmaciones sembradas antes de deliberar). El
+  // repositorio en memoria es la implementación de referencia del propio módulo: sobrevive al
+  // proceso, no al despliegue — cambiarlo por PostgreSQL es trabajo de una fase posterior, y es
+  // aditivo: `RepositorioSondeos` ya es la interfaz que esa implementación futura tiene que
+  // cumplir.
+  registrarRutasDeConsenso(app, {
+    repositorio: repositorioSondeosEnMemoria(),
+    ports: { clock: options.ports.clock, random: options.ports.random },
+    tituloDeAsunto: async (asuntoId, asuntoTipo) =>
+      asuntoTipo === 'problema'
+        ? (await verProblema(deps, asuntoId)).state.title
+        : ((await verPropuesta(deps, asuntoId)).state.versions.at(-1)?.title ?? ''),
+    asuntoExiste: async (asuntoId, asuntoTipo) => {
+      try {
+        if (asuntoTipo === 'problema') await verProblema(deps, asuntoId);
+        else await verPropuesta(deps, asuntoId);
+        return true;
+      } catch {
+        // `verProblema`/`verPropuesta` lanzan `ServicioError('NO_ENCONTRADO', 404, …)` cuando el
+        // asunto no existe: fallar cerrado (RepositorioSondeos exige «false» si no se puede
+        // saber) es correcto también para cualquier otro error de lectura.
+        return false;
+      }
+    },
+    idDe,
+    actorDe,
+    sujetoPropioDe,
+    cupoDeEscritura,
+  });
+
+  // Métricas de salud democrática: expone `@koinonia/metrics` (1.830 líneas, 92 pruebas, sin
+  // consumidor hasta este incremento). Las cinco proyecciones reales (`leerEntradaX`) viven en
+  // `metricas-lecturas.ts` — ese fichero documenta en su cabecera los dos huecos del dominio que
+  // no se pudieron llenar sin fabricar datos (el tipo de tarea y dos de los cuatro ejes de C11).
+  registrarRutasDeMetricas(app, { clock: options.ports.clock, ...crearLectorasDeMetricas(deps) });
 
   return app;
 }

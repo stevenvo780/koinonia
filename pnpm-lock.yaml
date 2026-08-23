@@ -107,6 +107,9 @@ importers:
       '@koinonia/domain':
         specifier: workspace:*
         version: link:../domain
+      '@koinonia/metrics':
+        specifier: workspace:*
+        version: link:../metrics
       zod:
         specifier: ^4.1.13
         version: 4.4.3
@@ -154,6 +157,9 @@ importers:
       '@koinonia/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@koinonia/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
       '@koinonia/verificar':
         specifier: workspace:*
         version: link:../../packages/verifier-cli
