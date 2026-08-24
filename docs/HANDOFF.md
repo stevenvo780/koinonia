@@ -1,8 +1,9 @@
 # Handoff de sesión — Koinonía
 
-> **Fecha:** 2026-08-23, actualización de cierre de sesión · **Destinatario:** la próxima sesión de trabajo.
+> **Fecha:** 2026-08-24, actualización de cierre de sesión · **Destinatario:** la próxima sesión de trabajo.
 >
-> **Despliegue:** El sistema está desplegado en producción sobre VPS y operativo (ver §7).
+> **Despliegue:** El sistema está desplegado en producción sobre VPS y operativo, pero **desactualizado
+> respecto al código local** (ver §7).
 >
 > ⛔ **Lo primero de §8 es la tarea 0, y está por encima de todo lo demás:** el padrón —el
 > denominador de todas las reglas de decisión— es el único estado de gobierno que **no está en el
@@ -16,31 +17,50 @@
 > **Estado:** informativo, no normativo. Cuando este documento y un ADR discrepen, manda el ADR
 > (jerarquía en §3). Lo único que aquí es vinculante son las decisiones de §4, y lo son porque están
 > recogidas en los ADR y en las especificaciones, no por estar escritas aquí.
+>
+> ⚠ **Este documento llevaba dos días atrasado y afirmando cosas falsas** (decía que faltaban seis
+> pantallas que ya existían, y en un corte previo llegó a decir que `GitForgeClient` seguía sin
+> implementar cuando existe desde `1df5ba8`, 2026-08-22). Entre el commit que este documento citaba
+> como vigente (`e9c68d9`) y el actual (`6251d60`) corrieron **22 agentes en paralelo** sobre el
+> árbol (ver `docs/OBJETIVO.md`, que sí se mantuvo al día en cada uno de esos commits). Esta
+> actualización vuelve a contrastar cada cifra contra el repositorio, **corriendo los comandos, no
+> listándolos**.
 
 ---
 
 ## 0. Verificación de este documento
 
-Todo lo verificable se recontó contra el repositorio el **2026-08-23**, sobre el commit `e9c68d9`,
-con el árbol limpio salvo los documentos de esta misma entrega. Las cifras de esta sección
-**sustituyen** las del corte del 2026-08-22, que se quedaron viejas por un margen grande. Lo que no
-se pudo verificar se marca explícitamente como *no verificado*.
+Todo lo de esta sección se **corrió de verdad hoy, 2026-08-24**, sobre el commit `6251d60`, con el
+árbol de trabajo limpio salvo los ficheros de esta misma entrega documental. A diferencia del corte
+anterior —que contaba pruebas con `vitest list` sin ejecutarlas—, **las cifras de abajo son la salida
+real de correr cada comando**, pegada, no parafraseada:
 
-**Cifras vigentes, medidas hoy:** **2 232 pruebas en 132 ficheros** de vitest; **115 escenarios de
-extremo a extremo** en **14 ficheros**; **once migraciones** (`0001`–`0011`); **54 ADR + README**;
-**10 proyectos** en el workspace; **23** ficheros `page.tsx`; **174** propiedades `fc.property` /
-`fc.asyncProperty` en dominio y **13** en consenso. **El despliegue a producción está operativo**
-(§7).
+| Comando | Resultado |
+|---|---|
+| `pnpm run typecheck` | **0 errores** |
+| `pnpm run lint` | **0 errores** (eslint + `prettier --check` + `scripts/check-domain-purity.mjs`) |
+| `pnpm run build` | **verde** (`tsc --build`, los siete paquetes) |
+| `pnpm run build:web` | **verde** — Next.js 15.5.23, 34 rutas (25 estáticas + 9 dinámicas) |
+| `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run` | **`Test Files 179 passed (179)` · `Tests 2824 passed (2824)`**, 0 fallos, corrido contra PostgreSQL 16 real por Testcontainers |
+| `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox` | **`230 passed (2.6m)`**, 0 fallos — el flake de `07-seguimiento-adr45.spec.ts` que el corte anterior sospechaba por saturación del host **no se reprodujo** en esta corrida |
 
-⚠ **Honestidad sobre cómo se midieron las pruebas: se CONTARON, no se EJECUTARON.** El conteo salió
-de `npx vitest list`, que enumera los casos sin correrlos, y de `npx playwright test --list`, que
-imprime `Total: 115 tests in 14 files`. **No hay una corrida verde de hoy**, ni de vitest ni de
-extremo a extremo. En este documento eso importa más que en otros: la regla de la casa es que un
-verde que no probó nada es una mentira, y una cifra que no se corrió **no es un verde**. Quien
-retome debe correr la suite antes de tocar nada (§11).
+**Ningún `it.fails` ni `.skip` en el árbol** (`grep -rn "\.fails(\|\.skip(" tests packages services` da
+vacío, salvo el uso legítimo de `test.describe.serial`/`test.skip` condicional documentado en
+`TESTING.md`). **Cero dependencias npm nuevas** en esta pasada.
 
-**Git verificado hoy:** `git rev-parse HEAD` y `git ls-remote origin refs/heads/main` coinciden en
-`e9c68d9`. Local y remoto están al día.
+**Cifras vigentes, medidas hoy:** **2 824 pruebas en 179 ficheros** de vitest (desglose por paquete en
+§2.3); **230 escenarios de extremo a extremo** en **14 ficheros**, los dos navegadores en verde;
+**trece migraciones** (`0001`–`0013`); **54 ADR + README**; **10 proyectos** en el workspace (siete
+paquetes); **32** ficheros `page.tsx` (34 rutas contando la portada y el proxy de API); **178**
+propiedades `fc.property`/`fc.asyncProperty` en dominio, **13** en consenso y **9** en métricas.
+**El despliegue a producción está operativo** (§7).
+
+**Git verificado hoy:** `git rev-parse HEAD` da `6251d60a4f4df7f77dce13339eb65effd565eee3`.
+`git ls-remote origin refs/heads/main` da `c89e3b9…` — **el remoto está detrás del local**: hay
+commits en `main` local (desde `c89e3b9` hasta `6251d60`, la tanda de 22 agentes en paralelo más las
+dos pasadas de integración) que **todavía no se empujaron**. No es un incidente de custodia como el
+de `ea684c4`: el repositorio tiene remoto y árbol limpio, sólo falta un `git push`. Quien retome debe
+comprobarlo de nuevo con los mismos dos comandos antes de asumir que está publicado.
 
 ---
 
@@ -82,31 +102,37 @@ Quien reduzca el proyecto a «votar en línea» va a construir la parte fácil y
 
 | Dato | Valor |
 |---|---|
-| Rama | `main`, con upstream `origin/main` *(verificado el 2026-08-23)* |
-| Commit de referencia de este documento | `e9c68d9` — *Rondas sexta y séptima del registro: catorce erratas más que salieron de escribir el código* |
-| Árbol de trabajo | **Limpio** salvo los cuatro documentos de esta entrega (`docs/adr/0054-…`, `docs/adr/README.md`, `docs/THREAT_MODEL.md`, `docs/HANDOFF.md`) |
-| Remoto | **`git@github.com:stevenvo780/koinonia.git`, por SSH.** `HEAD` y `origin/main` coinciden *(verificado el 2026-08-23)* |
-| Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` · **10 proyectos** en el workspace (`packages/*` ×7, `services/api`, `apps/web`) |
+| Rama | `main`, con upstream `origin/main` *(verificado el 2026-08-24)* |
+| Commit de referencia de este documento | `6251d60` — *El servidor deja de decirte qué votaste* |
+| Árbol de trabajo | **Limpio** *(verificado el 2026-08-24, salvo esta misma entrega documental)* |
+| Remoto | **`git@github.com:stevenvo780/koinonia.git`, por SSH.** `origin/main` está en `c89e3b9`, **detrás del local** — hace falta un `git push` (ver §0) |
+| Gestor de paquetes | `pnpm@11.20.0` · Node `>=22` · **10 proyectos** en el workspace (**siete** paquetes + `services/api` + `apps/web`) |
 | Licencia | AGPL-3.0-or-later |
 
 Últimos commits relevantes, del más nuevo al más viejo:
 
 ```
-ea684c4 Enlaza «Deliberaciones» en la navegación: la pantalla existía y no se podía alcanzar
-f836433 Propone revisar el umbral de no-facción (ADR-0050)
-99735ee Retira la retención del export y declara el alcance de la autoría oculta
-bf01277 Corrige la escalada horizontal en la sustitución de aportes
-4671c7c Democracia líquida: delegación temática, revocable y con tope de concentración
-64cb797 Corte vertical de la deliberación: contratos, API e interfaz
-199dd48 Sustituye el sellado de autoría por control de acceso con alcance de etapa
-d3ce8d4 Ajusta el análisis de consenso a lo que manda ADR-0038
-4beb7f0 Documenta la deliberación, el escrutinio y el consenso (ADR 0046-0048)
-f6f4848 Análisis de consenso transversal en packages/consensus
-a669306 Métodos de escrutinio: score, IRV, majority judgment, Schulze y sorteo
-2f4abf2 Deliberación estructurada por etapas con autoría sellada
-9e5ee94 Verifica el estado real del árbol y corrige el handoff
-286db3d Seguimiento, capacidad privada y entrega revisable (ADR-0045)
+6251d60 El servidor deja de decirte qué votaste
+e00f948 Veintitrés frentes en paralelo: flujo, motor, infraestructura e interfaz
+67c5776 El cupo deja de castigar a quien se le cortó la conexión
+9a10f2b El modelo de amenazas deja de prometer lo que no tiene
+4a8d5f4 Establece el objetivo: 91 pendientes entre el pliego y el software
+afcda2f Aclara que la rotación no se lleva la copia de emergencia
+fe2aa06 Le abre la puerta al dominio que nadie podía alcanzar
+dc6095d Rehace la interfaz: maqueta de tres patrones y una capa de piezas
+82b5c9e Renumera las erratas del ADR-0053 (E90-E96 → E95-E101)
+378cb37 Consultas de estado: preguntar si hay sesión deja de ser un 401
+cd8a281 Sistema visual: papel cálido, tinta cálida y acento petróleo
+c89e3b9 Registra el hueco de procedencia del padrón (ADR-0054)
+e9c68d9 Rondas sexta y séptima del registro: catorce erratas más que salieron de escribir el código
+625434e Ocho arreglos de pantalla: el destello de la sesión, el punto doble y el botón sin jerarquía
+ed6fe4b La constitución se guarda: el texto vive aparte, direccionado por su huella
 ```
+
+> **Entre `e9c68d9` (la referencia del corte anterior de este documento) y `6251d60` (hoy) corrieron
+> 22 agentes en paralelo** sobre el árbol, más dos pasadas de integración (`e00f948`, `6251d60`).
+> `docs/OBJETIVO.md` se actualizó en cada uno de esos commits y es la fuente más al día del estado
+> del proyecto fila por fila; este documento cuenta el repositorio, no reemplaza esa tabla.
 
 > **El riesgo de custodia está CERRADO.** Los dos cortes anteriores de este documento abrían con la
 > misma advertencia —«el repositorio existe **sólo en disco local**; configurar un remoto es la tarea
@@ -128,87 +154,68 @@ a669306 Métodos de escrutinio: score, IRV, majority judgment, Schulze y sorteo
 > abierta**: ver su fila, corregida, más abajo. Publicar no sustituye anclar, pero anclar contra las
 > dos forjas ya es código, no una tarea pendiente.
 
-### 2.2 Resultado real de los comandos (2026-08-23, sobre `e9c68d9`)
+### 2.2 Resultado real de los comandos (2026-08-24, sobre `6251d60`)
 
-Salida copiada literalmente:
+Salida copiada literalmente, **de comandos que se corrieron, no que se listaron**:
 
-| Comando | Salida | Detalle |
-|---|---|---|
-| `npx vitest list` | **código 0** | **2 232** casos enumerados en **132** ficheros. **Enumera, no ejecuta** |
-| `npx playwright test --list` | **código 0** | `Total: 115 tests in 14 files`. **Enumera, no ejecuta** |
-| `git rev-parse HEAD` / `git ls-remote origin refs/heads/main` | **código 0** | los dos devuelven `e9c68d9d143014559f845c2ad49926815aac3ed0`: local y remoto coinciden |
+| Comando | Salida |
+|---|---|
+| `pnpm run typecheck` | `tsc -p tsconfig.check.json && tsc --build packages/contracts services/api && tsc -p tests/e2e/tsconfig.json` → **código 0** |
+| `pnpm run lint` | `eslint . && prettier --check . && node scripts/check-domain-purity.mjs` → **código 0**, `Pureza del dominio: correcta` |
+| `pnpm run build` | `tsc --build` → **código 0** |
+| `pnpm run build:web` | **código 0** — `▲ Next.js 15.5.23`, `Generating static pages (25/25)`, **34 rutas** (25 estáticas `○`, 9 dinámicas `ƒ`) |
+| `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run --reporter=dot` | **código 0** — `Test Files 179 passed (179)` · `Tests 2824 passed (2824)` · `Duration 15.92s` |
+| `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox` | **código 0** — `230 passed (2.6m)` |
+| `git rev-parse HEAD` / `git ls-remote origin refs/heads/main` | `6251d60…` / `c89e3b9…` — **no coinciden**: el remoto está detrás, falta un `push` |
 
-⚠ **`KOINONIA_REQUIRE_DOCKER=1 npx vitest run` NO se ejecutó en este corte.** La última corrida
-verde conocida es la del 2026-08-22 sobre `ea684c4`, y decía `Test Files 85 passed (85)` ·
-`Tests 1213 passed (1213)` · `Duration 9.82s`. **Esa cifra ya no describe el árbol** —hoy hay 2 232
-casos en 132 ficheros— y **no debe leerse como el estado de ahora**: es el último verde, no el
-verde de hoy. Reproducirlo es el paso 3 de §11 y es lo primero que hay que hacer.
+**Docker arrancó de verdad**: los 39 ficheros de `tests/integration/` (incluida `tests/carga/node/`)
+corrieron contra PostgreSQL 16 real por Testcontainers y pasaron sus 420 pruebas; con
+`KOINONIA_REQUIRE_DOCKER=1` la ausencia de Docker sigue siendo un fallo duro, no una suite saltada.
+**La prueba de falsación de Docker** —`DOCKER_HOST` a un puerto muerto y la suite falla con
+`Error: Testcontainers no pudo levantar Docker…` en `tests/integration/helpers/api-env.ts:131`— no
+se repitió hoy, pero sigue en el código y no hay motivo para creer que dejó de valer.
 
-⚠ **`--reporter=basic` NO existe en este repositorio.** Vitest es **4.1.11** y el reporter `basic`
-se retiró; el comando aborta antes de correr una sola prueba con
-`Error: Failed to load custom Reporter from basic` / `Failed to load url basic`. **El reporter que
-hay que usar es `dot`** (o el default). Queda anotado porque el fallo es engañoso: parece un
-problema del repositorio y es un nombre de bandera muerto.
+**Delta desde el corte anterior (`e9c68d9` → `6251d60`): +592 pruebas y +47 ficheros** (de 2 232 en
+132 a **2 824 en 179**). El reparto exacto por paquete está en §2.3. El grueso vino de la tanda de 22
+agentes en paralelo (`e00f948`): métodos elegibles desde la interfaz/API, concentración de poder por
+delegación (HHI/CR1/Gini reales), PWA con service worker, cola de trabajos casera sobre PostgreSQL,
+`tests/carga/` (hallazgo crítico de pérdida de votos bajo concurrencia, ver `docs/OBJETIVO.md`
+sección `testing`), y de la segunda pasada de integración (coerción del votante, campos de
+iniciativa, conteo oculto verificado).
 
-**No re-ejecutados en esta actualización:** `pnpm install`, `pnpm run build`, `pnpm run typecheck` y
-`pnpm run lint`. Sus resultados son los del corte de media jornada (los cuatro en código 0) y **no
-deben leerse como medición de ahora**, sobre todo porque el árbol tiene trabajo a medias de otros dos
-agentes: un `typecheck` de este instante mediría el trabajo de ellos, no el de `ea684c4`.
+⚠ **Un `it.fails` que existía en el corte anterior ya no existe.** `grep -rn "\.fails(" tests
+packages services` da vacío hoy: la regresión de coerción del votante (T-10) que vivía en rojo a
+propósito ahora pasa en verde, con `yaVotaste: boolean` sustituyendo a `miRespuesta` en las lecturas.
 
-**Docker arrancó de verdad**, y no es una inferencia del código de salida: los 17 ficheros de
-`tests/integration/` corrieron y pasaron sus 177 pruebas, y con `KOINONIA_REQUIRE_DOCKER=1` la
-ausencia de Docker es un fallo duro, no una suite saltada (la falsación está documentada abajo y
-sigue vigente).
+### 2.3 Desglose por paquete (corrido hoy, 2026-08-24, sobre `6251d60`)
 
-**Delta sobre el corte de media jornada: +207 pruebas y +8 ficheros** (de 1 006 en 77 a **1 213 en
-85**). Reparto del incremento: la deliberación de extremo a extremo, la democracia líquida completa
-(**+104**, tres ficheros nuevos con 101 pruebas más las añadidas a `config.test.ts` y a las
-propiedades), la corrección de la escalada horizontal y el ajuste del consenso a ADR-0038.
+**Ejecutado con `vitest run --reporter=json`, no listado**: las once cifras suman exactamente
+**2 824** y los once conteos de fichero suman exactamente **179**.
 
-**Un dato nuevo del linter de pureza, que importa:** `scripts/check-domain-purity.mjs` ya cubre
-`packages/consensus`. El paquete admite punto flotante (ADR-0048) pero **no admite dependencias de
-runtime**, igual que `domain` y `crypto`.
-
-**La prueba de falsación de Docker sigue vigente**, y es la que de verdad cierra la cuestión: con
-`DOCKER_HOST` apuntando a un puerto muerto y `KOINONIA_REQUIRE_DOCKER=1`, la suite **falla** —
-`Error: Testcontainers no pudo levantar Docker: Could not find a working container runtime
-strategy. KOINONIA_REQUIRE_DOCKER=1 exige que corran de verdad.` en
-`tests/integration/helpers/api-env.ts:131`. Un verde que sobreviviera a romper Docker sería un verde
-vacío; éste no sobrevive, luego no lo es. La ejecutó el subagente de rescate de ADR-0045 **sobre su
-propio verde**, que es la forma correcta de usarla, y no hay motivo para creer que haya dejado de
-valer: los 17 ficheros de `tests/integration/` siguen dentro del glob `tests/**/*.test.ts` de
-`vitest.config.ts` y siguen pasando.
-
-**No reverificado hoy:** los extremos a extremo (`pnpm e2e`) **no se volvieron a ejecutar**. Los
-escenarios sí se recontaron sobre el árbol (§2.4), pero el resultado de correrlos es el del corte
-anterior.
-
-### 2.3 Desglose por paquete (contado uno por uno el 2026-08-23 sobre `e9c68d9`)
-
-Las nueve cifras suman exactamente **2 232** y los nueve conteos de fichero suman exactamente
-**132**, que es la comprobación de que no falta ni sobra nada. **Contados con `vitest list`, no
-ejecutados.**
-
-| Paquete | Ficheros | Tests | Qué contiene |
+| Paquete / carpeta | Ficheros | Tests | Qué contiene |
 |---|---:|---:|---|
-| `packages/crypto` | 4 | **108** | Canonicalización JCS (RFC 8785), SHA-256 sobre WebCrypto, cadena de hashes por agregado, Merkle RFC 6962 con pruebas de inclusión y de consistencia. Sin dependencias de runtime. |
-| `packages/domain` | 54 | **1 160** | `DecisionEngine` puro, los cinco métodos de escrutinio (`src/tally/`), el agregado de deliberación (`src/deliberation/`), la democracia líquida (`src/delegation.ts`, `src/delegation-graph.ts`), la constitución versionada (`src/constitution/`), el asistente de acción sistémica (`src/assistant/`) y la evaluación con criterios congelados. Propiedades con fast-check y semilla fija. **Es la mitad del proyecto: 52 % de las pruebas.** |
-| `packages/anchor` | 9 | **128** | `AnchorProvider` enchufable, OpenTimestamps (clase `blockchain`), git firmado con SSH —no GPG— (clase `vcs`), correo a testigos (clase `human-witness`), política de quórum **2 de 3 clases de independencia**. |
-| `packages/verifier-cli` | 2 | **34** | Verificador independiente, en español, que **no depende de nuestro servidor**. También detecta `eventId` global duplicado aunque el índice SQL haya sido retirado. ⚠ **Sus 25 códigos de hallazgo no cubren la procedencia del padrón**: ver la tarea 0 de §8 y ADR-0054. |
-| `packages/contracts` | 7 | **76** | Esquemas Zod compartidos, incluida la frontera estricta y self-only de solicitud de supresión y los contratos HTTP de deliberación. |
-| `packages/consensus` | 5 | **101** | Análisis de consenso transversal (ADR-0048): PCA determinista por *power iteration*, k-means con inicialización *furthest-first*, estadísticos con Laplace y afirmaciones puente por `GIC = ∏ p̂`. Admite punto flotante porque su salida es agenda; **sin dependencias de runtime**. |
-| `packages/metrics` | 9 | **92** | **Paquete que el corte anterior no tenía.** Métricas de salud democrática: acuerdos y deuda de acuerdos, concentración, cobertura del padrón, rotación, deliberación, sellado y textos, con una prueba dedicada a ADR-0040 (nada individual). Cubre buena parte de la tarea 13, que hay que reevaluar. |
-| `services/api` | 20 | **257** | Event store append-only, replay idempotente, capacidad cifrada, aperturas privadas autenticadas y supresión física ligada a solicitud propia, commits multiagregado, CAS, auditoría interna, codecs y presentadores. |
-| `tests/integration` | 22 | **276** | Contra **PostgreSQL 16 real** por Testcontainers. |
+| `packages/crypto` | 4 | **108** | Canonicalización JCS (RFC 8785), SHA-256 sobre WebCrypto, cadena de hashes por agregado, Merkle RFC 6962. Sin dependencias de runtime. |
+| `packages/domain` | 61 | **1 265** | `DecisionEngine` puro, los métodos de escrutinio (`src/tally/`), deliberación, democracia líquida, constitución versionada, asistente de acción sistémica, ejecución (escalones, evaluación, recursos/riesgos/presupuesto) y autorización. **Es casi la mitad del proyecto: 45 % de las pruebas.** |
+| `packages/anchor` | 9 | **128** | `AnchorProvider` enchufable: OpenTimestamps, git firmado (dos forjas), testigos por correo, quórum 2 de 3 clases. |
+| `packages/verifier-cli` | 2 | **34** | Verificador independiente, sin hablar con el servidor. |
+| `packages/contracts` | 20 | **311** | Esquemas Zod de toda la frontera HTTP: deliberación, métodos, iniciativas (13 campos), asistente, consultas de estado de sesión. |
+| `packages/consensus` | 5 | **101** | Análisis de consenso transversal (ADR-0038/0048): PCA, k-means, GIC. Admite punto flotante; sin dependencias de runtime. |
+| `packages/metrics` | 9 | **92** | Métricas de salud democrática: acuerdos, concentración, cobertura del padrón, rotación, deliberación, ADR-0040. |
+| `services/api` | 25 | **314** | Event store append-only, ledger, capacidad cifrada, sesión endurecida, rate-limit idempotente (ADR-0055), cierre de ciclo, escalones, concentración, cola de trabajos, almacén sobre disco. |
+| `tests/integration` | 39 | **420** | Contra **PostgreSQL 16 real** por Testcontainers: sesión endurecida, cupo idempotente, cierre de ciclo, conteo oculto, cola de trabajos, carga (`tests/carga/node/`). |
+| `tests/exploratorias` | 3 | **14** | Exploratorias masivas sobre límites de problemas, propuestas y decisiones/secreto. |
+| `tests/unit` | 2 | **37** | Métodos y escalones en pantalla (presentación, no dominio). |
 | `apps/web` | — | vía E2E | Next.js PWA. Sin suite unitaria propia, por decisión (`TESTING.md` §1). |
-| | **132** | **2 232** | |
+| | **179** | **2 824** | |
 
-`packages/domain` declara **174** llamadas `fc.property`/`fc.asyncProperty` (eran 124 en el corte del
-2026-08-22), y `packages/consensus` otras **13**. Comprobación:
+`packages/domain` declara **178** llamadas `fc.property`/`fc.asyncProperty` (eran 174 en el corte
+anterior), `packages/consensus` otras **13**, y `packages/metrics` **9** más (no contadas antes).
+Comprobación:
 
 ```sh
-grep -roh -E "fc\.(property|asyncProperty)" packages/domain/test | wc -l      # 174
+grep -roh -E "fc\.(property|asyncProperty)" packages/domain/test | wc -l      # 178
 grep -roh -E "fc\.(property|asyncProperty)" packages/consensus/test | wc -l   # 13
+grep -roh -E "fc\.(property|asyncProperty)" packages/metrics/test | wc -l     # 9
 ```
 
 **Cuidado con el patrón al recontar:** `fc\.\(async\)\?property` **no sirve** —busca
@@ -216,24 +223,21 @@ grep -roh -E "fc\.(property|asyncProperty)" packages/consensus/test | wc -l   # 
 
 ### 2.4 Extremo a extremo
 
-**115 escenarios** en `tests/e2e/`, en **14 ficheros**. Cifra literal de
-`npx playwright test --list`: `Total: 115 tests in 14 files`. Reparto: `01-gobernanza` 1,
-`02-versionado` 1, `03-permisos` 9, `04-accesibilidad` 16, `05-inmutabilidad` 5,
-`06-ejecucion-inicial` 8, `07-seguimiento-adr45` 5, `08-deliberacion` 11, `09-glosario` 2,
-`10-doble-envio` 6, `11-dialogo-y-entrar` 5, **`12-pantallas-nuevas` 21**, **`13-navegacion` 20**,
-`14-verificar-estados` 6. **El corte anterior decía 56 en 8 ficheros y esa cifra ya no vale**: se ha
-duplicado.
+**230 escenarios** en `tests/e2e/`, en **14 ficheros**, corridos hoy de verdad (no listados):
+`KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox` dio
+**`230 passed (2.6m)`, 0 fallos**, en los dos navegadores. **El corte anterior decía 115 y esa cifra
+ya no vale**: entre `e9c68d9` y `6251d60` el número de escenarios se duplicó (aportes de la tanda de
+22 agentes en paralelo a `12-pantallas-nuevas` y `13-navegacion`, entre otros) y esta vez sí se
+corrió, no sólo se listó.
 
-> El total de `--list` (115) es mayor que el recuento a mano de `^\s*test(` (111) porque
-> `13-navegacion` genera escenarios dentro de `test.describe` con bucles sobre la lista de destinos.
-> **Manda la salida de `--list`**, que es la que Playwright va a ejecutar.
+**La democracia líquida ya tiene escenarios**: `12-pantallas-nuevas.spec.ts` cubre la pantalla
+«Delegaciones» (prestar el voto, revocarlo votando directo, doble toque, HORIZONTAL/VERTICAL), a
+diferencia del corte anterior que decía que seguía sin ninguno.
 
-⚠ **Los escenarios se recontaron; la corrida NO se repitió.** No hay resultado de extremo a extremo
-de hoy. Lo que sí se sabe: **la democracia líquida sigue sin ningún escenario**, porque sigue sin
-interfaz. La matriz de cinco proyectos no se presenta como una cifra verde: en **WebKit** y
-**Safari móvil** el proceso del navegador sigue sin arrancar en este host. La última corrida
-completa conocida dejó `106 passed · 10 failed · 34 did not run`; el bloqueo se resuelve en CI, no
-inventando un total local.
+La matriz de cinco proyectos **sigue sin presentarse completa**: en **WebKit** y **Safari móvil** el
+proceso del navegador sigue sin arrancar en este host, por la razón de siempre (abajo). Sólo se
+corrieron **Chromium + Firefox** hoy; el bloqueo se resuelve en CI, no inventando un total local con
+los cinco proyectos.
 
 **Por qué no arranca WebKit.** Faltan librerías del sistema. Sonames verificados con `ldd` sobre
 `~/.cache/ms-playwright/webkit-2336/`:
@@ -255,7 +259,7 @@ tocar esto debe mantener esa decisión.
 
 ### 2.5 Migraciones
 
-`services/api/migrations/`, **once**, todas aplicadas por `migrate()`:
+`services/api/migrations/`, **trece**, todas aplicadas por `migrate()`:
 
 | Fichero | Contenido |
 |---|---|
@@ -269,14 +273,16 @@ tocar esto debe mantener esa decisión.
 | `0008_capacidad_privada.sql` | DSK por sujeto y capacidad semanal cifrada, self-only |
 | `0009_event_id_unico.sql` | Índice único global de identidades causales de eventos |
 | `0010_private_material.sql` | Aperturas textuales restringidas con ciphertext de longitud fija |
-| `0011_constitucion.sql` | **Nueva desde el corte anterior.** El texto de las reglas direccionado por su huella (ADR-0051), con la regla de tipos del ledger aplicada en el esquema |
+| `0011_constitucion.sql` | El texto de las reglas direccionado por su huella (ADR-0051), con la regla de tipos del ledger aplicada en el esquema |
+| `0012_sesion_endurecida.sql` | **Nueva desde el corte anterior.** Marca de actividad para el corte por inactividad de la sesión (T-06, `docs/THREAT_MODEL.md`) |
+| `0013_rate_consumption_idempotencia.sql` | **Nueva desde el corte anterior.** Tabla `identity.rate_consumption`: dedup por `(requestId, ambito, sujeto, window_start)` para que un reintento de idempotencia no gaste un cupo real (ADR-0055 — **citado en el código, pero el fichero del ADR no existe todavía**: hueco de trazabilidad anotado en `docs/OBJETIVO.md`, fila «ADRs» de `seguridad-y-tecnologia`) |
 
-**El corte anterior decía diez y hoy son once:** la añadida es `0011_constitucion.sql` (ADR-0051).
-El resto del dominio sigue sin tabla propia y eso es deliberado: los métodos de escrutinio y la
-democracia líquida viven **enteros en el dominio**, `packages/consensus` y `packages/metrics` no
-tocan la base, y la deliberación persiste por el event store genérico
-(`services/api/src/workspace/`) sin tabla propia. Las fronteras de API que se tocaron son codecs y
-presentadores, que no cambian el esquema.
+**El corte anterior decía once y hoy son trece:** se sumaron `0012_sesion_endurecida.sql` y
+`0013_rate_consumption_idempotencia.sql`. El resto del dominio sigue sin tabla propia y eso es
+deliberado: los métodos de escrutinio y la democracia líquida viven **enteros en el dominio**,
+`packages/consensus` y `packages/metrics` no tocan la base, y la deliberación persiste por el event
+store genérico (`services/api/src/workspace/`) sin tabla propia. Las fronteras de API que se tocaron
+son codecs y presentadores, que no cambian el esquema.
 
 ⚠ **La migración que falta es la de la tarea 0**, y es la más importante de las que no están
 escritas: hoy **no hay ninguna migración de padrón**, porque el padrón no es un agregado. Igual que
@@ -317,7 +323,7 @@ revés, y no «se anota la tensión»: se corrige el research.
 |---|---|
 | `docs/GOVERNANCE.md` | Máxima autoridad. Reglas de gobierno del proyecto y del colectivo. |
 | `docs/THREAT_MODEL.md` | Modelo de amenaza. Segunda autoridad. Ver C18 en §4. |
-| `docs/adr/` | **50 ADR** (`0001`–`0050`) **+ `README.md`** de índice. 51 ficheros en total. Los cinco de hoy, detallados debajo de esta tabla. |
+| `docs/adr/` | **54 ADR** (`0001`–`0054`) **+ `README.md`** de índice. 55 ficheros en total *(contado hoy, 2026-08-24: `ls docs/adr | wc -l`)*. El índice está al día hasta el 0054. Los cinco del 2026-08-22 (0046–0050), detallados debajo de esta tabla; los cuatro más nuevos (0051–0054) en §8 y en `docs/OBJETIVO.md`. |
 | `docs/research/30-decision-engine-spec.md` | Especificación del motor de decisiones. La única pieza de `research/` con rango normativo. ~2 600 líneas, 60 invariantes (`INV-01`–`INV-60`), 7 anti-invariantes. |
 | `docs/PRODUCT.md` | Producto y alcance funcional. §6 diseña ejecución y seguimiento. |
 | `docs/ARCHITECTURE.md` | Arquitectura del sistema. |
@@ -334,9 +340,10 @@ revés, y no «se anota la tensión»: se corrige el research.
 | **0049** | Autoría por alcance de etapa | Aceptado | **Sustituye el sellado criptográfico por control de acceso.** El autor va en el evento; lo que se deniega es **leerlo** mientras la etapa `perspectivas` siga vigente. Ver la advertencia de alcance en §8, tarea 19. |
 | **0050** | Umbral de no-facción revisado | **Propuesto**, no aceptado | Contraste de hipótesis nula por permutación determinista, para sustituir el umbral de silueta fijo de ADR-0048. **Es una propuesta: no está implementada y no manda todavía.** |
 
-⚠ **`docs/adr/README.md` indexa hasta el 0049.** ADR-0050 existe como fichero y **no tiene fila en el
-índice ni mención en el párrafo introductorio**; se añadió la fila el 2026-08-22 junto con esta
-actualización. Si aparece otro ADR nuevo, la fila del índice es parte del ADR, no un extra.
+✅ **Corregido:** `docs/adr/README.md` indexa hoy hasta el **0054**, con fila y nota para cada uno
+(verificado leyendo el fichero completo el 2026-08-24). Si aparece otro ADR nuevo, la fila del índice
+es parte del ADR, no un extra — la advertencia del corte anterior (que el 0050 se había quedado sin
+fila) es la razón por la que conviene seguir comprobándolo cada vez.
 
 `docs/research/` (insumo, salvo el 30):
 
@@ -562,18 +569,51 @@ Los dos matices que hacen honesto el resultado:
 
 ## 7. Despliegue en producción
 
-El despliegue en producción está realizado, configurado y plenamente funcional con las siguientes características:
+El despliegue en producción está realizado, configurado y operativo, pero **está desactualizado
+respecto al `HEAD` local** — ver el aviso al final de esta sección, verificado hoy por SSH de sólo
+lectura, que es la parte nueva de este corte.
 
-*   **Puntos de acceso:** Interfaz en `https://koinonia.167.114.118.213.sslip.io` y API en `https://api.167.114.118.213.sslip.io`.
-*   **Aislamiento y aditividad en VPS:** La máquina aloja 66 contenedores ajenos en producción. El despliegue es exclusivamente aditivo, encapsulado en `/opt/koinonia` con el prefijo `koinonia-` en todos sus contenedores. Se verificó el inventario antes y después, confirmando la total integridad de los servicios preexistentes.
-*   **Enrutamiento y Proxy:** A cargo de **Caddy 2.6.2** a través de un único `/etc/caddy/Caddyfile` compartido con diez sitios externos, sin directivas `import` ni directorios `conf.d`. Dado que cualquier recarga (`reload`) es global y crítica, es obligatorio generar una copia de seguridad y ejecutar `caddy validate` antes de aplicar cambios. Los certificados TLS son emitidos por Let's Encrypt sobre dominios `sslip.io` (las IPs públicas directas no admiten firma de certificados estándar).
-*   **Base de datos:** PostgreSQL 16 se ejecuta en un contenedor sin puertos expuestos públicamente al host. Las diez migraciones iniciales se aplicaron automáticamente al arrancar el contenedor y se verificó su registro en la tabla de migraciones.
-*   **Servicio de correo:** El envío de correos opera mediante credenciales SASL propias sobre el puerto 587 de la instancia local preexistente de Postfix. No se modificó la directiva `mynetworks` para evitar convertir el servidor en un relay abierto para los 66 contenedores ajenos. Se confirmó que el token de acceso ya no se expone en los registros del servidor.
-*   **Privilegios mínimos en la API:** La API ya no corre con privilegios de superusuario. Las conexiones de base de datos se separaron entre migración y uso de la aplicación (`KOINONIA_DATABASE_URL_APP`). Para demostrar que los bloqueos a operaciones no permitidas (como `UPDATE`) se dan estrictamente por denegación de privilegios de base de datos y no por la lógica del trigger append-only, se ejecutó una prueba desactivando temporalmente dicho trigger, verificando que la aplicación no puede modificar los datos pero un superusuario en la misma sesión sí lo logra.
+*   **Puntos de acceso:** Interfaz en `https://koinonia.167.114.118.213.sslip.io` (**responde `200`**,
+    comprobado hoy) y API en `https://api.167.114.118.213.sslip.io`. Ambos contenedores (`koinonia-web`,
+    `koinonia-api`) están **`Up` y `healthy`** *(verificado hoy, `docker ps`)*.
+*   **Aislamiento y aditividad en VPS:** La máquina aloja contenedores ajenos en producción (**83
+    contenedores en total** en el host, contados hoy con `docker ps -q | wc -l`; el corte anterior
+    decía 66 — el número ajeno crece con el tiempo porque la máquina es compartida y no está bajo
+    control de este proyecto). El despliegue es exclusivamente aditivo, encapsulado en `/opt/koinonia`
+    con el prefijo `koinonia-` en sus tres contenedores (`web`, `api`, `postgres`).
+*   **Enrutamiento y Proxy:** A cargo de **Caddy** a través de un único `/etc/caddy/Caddyfile`
+    compartido con sitios externos, sin directivas `import` ni directorios `conf.d`. Dado que
+    cualquier recarga (`reload`) es global y crítica, es obligatorio generar una copia de seguridad y
+    ejecutar `caddy validate` antes de aplicar cambios. Los certificados TLS son emitidos por Let's
+    Encrypt sobre dominios `sslip.io` (las IPs públicas directas no admiten firma de certificados
+    estándar).
+*   **Base de datos:** PostgreSQL 16 se ejecuta en un contenedor sin puertos expuestos públicamente al
+    host. **Verificado hoy** (`SELECT name FROM koinonia_meta.migration`): tiene **`0001`–`0011`
+    aplicadas — **`0012_sesion_endurecida` y `0013_rate_consumption_idempotencia` NO están en
+    producción todavía**.
+*   **Servicio de correo:** El envío de correos opera mediante credenciales SASL propias sobre el
+    puerto 587 de la instancia local preexistente de Postfix. No se modificó la directiva
+    `mynetworks` para evitar convertir el servidor en un relay abierto para los contenedores ajenos.
+*   **Privilegios mínimos en la API:** La API ya no corre con privilegios de superusuario. Las
+    conexiones de base de datos se separaron entre migración y uso de la aplicación
+    (`KOINONIA_DATABASE_URL_APP`).
 *   **Trampas desactivadas en producción:**
     *   La configuración en `infra/docker/docker-compose.yml` mapeaba originalmente `55432:5432`, lo que expondría la base de datos a internet con las credenciales por defecto del repositorio. Esto fue corregido.
     *   El anclaje externo de firmas viene activado de forma predeterminada para entornos de producción.
     *   La variable `KOINONIA_VAULT_MASTER_KEY` requiere un formato codificado en base64 y no en hexadecimal.
+
+⚠ **Producción está aproximadamente un día detrás del `HEAD` local, y es un hallazgo nuevo de este
+corte, no una repetición del anterior.** El contenedor `koinonia-api` se creó el
+**2026-08-23 17:53 (-05:00)**, lo que lo ubica entre los commits `afcda2f` (17:45) y `4a8d5f4`
+(21:24) — **antes** de que existiera `docs/OBJETIVO.md`, antes de la corrección del modelo de
+amenazas (`9a10f2b`), antes del arreglo de idempotencia del cupo (`67c5776`, migración `0013`), y
+**antes de toda la tanda de 22 agentes en paralelo** (`e00f948`) y de la corrección de coerción del
+votante (`6251d60`, hoy). Comprobado sirviendo tráfico real: `GET /concentracion` y `GET
+/aprendizajes` sobre `koinonia.167.114.118.213.sslip.io` devuelven **`404`** — esas pantallas existen
+en el árbol local y no en lo desplegado. **No es una regresión ni una avería**: nadie ha vuelto a
+desplegar desde entonces, y no hay ninguna automatización que lo haga sola. Es simplemente el estado
+real, y quien retome debe decidir cuándo redesplegar (fuera del alcance de un agente: la VPS es de
+sólo lectura para el trabajo automatizado, ver la nota de encargo de esta sesión).
 
 ---
 
@@ -618,7 +658,7 @@ una prueba dedicada a ADR-0040). **Leer el paquete antes de creer la fila.**
 | ~~**1**~~ | ~~**Métodos de escrutinio restantes**~~ | `30-...` **PARTE B.5–B.9** | **HECHO el 2026-08-22 (ADR-0047).** Los cinco implementados en `packages/domain/src/tally/` con aritmética exacta. El anti-invariante de IRV se probó **en positivo**, no con `skip`, y aparecieron **dos más** que la spec afirmaba al revés: MJ no satisface *later-no-harm* ni el criterio de mayoría fuerte. Doce erratas de spec registradas (E25–E35, más E24 retirada). |
 | ~~**2**~~ | ~~**Democracia líquida**~~ | `30-...` **PARTE C**, `INV-23..30` | **HECHA el 2026-08-22.** Delegación temática con especificidad, caducidad obligatoria y revocación inmediata; voto directo que anula (en los dos sentidos temporales); recorrido de cadenas con `maxDepth = 4`; tope de concentración sobre el censo con devolución LIFO; `HHI*`, Gini y CR1 en aritmética exacta. **+104 pruebas.** Vive en `packages/domain/src/delegation.ts` y `delegation-graph.ts`. Dejó **once erratas, E36–E46, tres de ellas autodestructivas** (§5.1-bis). ⚠ **No tiene interfaz** (tarea 17, pantalla «Delegaciones») **ni persistencia propia** (E36: falta decidir el agregado `DelegationRegistry`), y **desactiva el cierre anticipado por irreversibilidad** mientras esté habilitada (E42). |
 | ~~**20**~~ | ~~**Deliberación estructurada por etapas**~~ | ADR-0046 · ADR-0049 | **HECHA el 2026-08-22, de extremo a extremo:** dominio, contratos, API, pantalla y **11 escenarios E2E**. Nació y se cerró el mismo día, así que no llegó a figurar como pendiente. Dejó dos hallazgos: la **escalada horizontal en `supersedes`** —cualquiera podía silenciar el aporte de cualquiera, encontrada **ejecutando**, no leyendo (`bf01277`)— y el cambio de ADR-0049, que **sustituye el sellado criptográfico de la autoría por control de acceso**. La advertencia de alcance está en la tarea 19. |
-| **3** | **OpenTimestamps contra un calendario real** | `packages/anchor/src/ots/` | La **verificación** está completa y probada, pero **`httpCalendar()` (`ots/calendar.ts:55`) nunca se ha ejecutado contra `a.pool.opentimestamps.org`**. Hay que correrlo **una vez** y contrastar el `.ots` con el cliente oficial `ots verify`. Faltan **reintentos con backoff** y **envío a varios calendarios**. |
+| ~~**3**~~ | ~~**OpenTimestamps contra un calendario real**~~ | `packages/anchor/src/ots/` | **HECHO el 2026-08-24.** `httpCalendar()` (`ots/calendar.ts:55`) se ejecutó de verdad contra los **cuatro** calendarios reales de producción (`services/api/src/anchor/verificacion-manual.ts sellar`, no `a.pool.opentimestamps.org`: los cuatro nombrados, de tres operadores distintos), y el `.ots` resultante se contrastó con el **cliente oficial** (`ots info`), que no ha visto este repositorio: mismo `sha256`, mismas cuatro atestaciones pendientes. **Esta fila decía lo contrario desde antes de esa ejecución; es la tercera vez que este documento afirma algo falso** — la primera fue `THREAT_MODEL.md` T-18 (corregida 2026-08-23), la segunda esta misma tabla (fila 4, corregida 2026-08-22). Los **reintentos con backoff** y el **envío a varios calendarios** que esta fila daba por faltantes también estaban ya resueltos (`packages/anchor/src/retry.ts`, `ots/pool.ts`, commit `bac4818`, 2026-08-22): la propia fila describía como pendiente un trabajo terminado dos días antes de escribirla. Detalle de la ejecución de hoy, y de qué falta para las otras dos clases de anclaje, en `infra/produccion/ANCLAJE.md`. |
 | ~~**4**~~ | ~~**`GitForgeClient` sin implementar**~~ | `services/api/src/anchor/forjas.ts` | **HECHO el 2026-08-22 (`1df5ba8`).** `codebergForge()` (`:253`) y `githubForge()` (`:268`) están implementados, con reconstrucción del commit y contraste de OID entre las dos forjas —la comprobación de que devuelven el MISMO objeto— cubierta por `packages/anchor/test/forjas-cruzadas.test.ts` y `services/api/test/anchor-forjas.test.ts`. **Esta fila decía lo contrario desde antes del commit que la resolvió; es la segunda vez que este documento afirma algo falso: la primera fue `THREAT_MODEL.md` T-18, corregida el 2026-08-23.** |
 | ~~**5**~~ | ~~**Transporte de correo**~~ | `services/api/src/anchor/{dkim,correo}.ts` | **HECHO el 2026-08-22 (`1df5ba8`).** SMTP con firma DKIM (`dkim.ts`), rebotes y recogida por IMAP están implementados; probado en `services/api/test/anchor-correo.test.ts` y `packages/anchor/test/correo-rebotes.test.ts`, `correo-testigos.test.ts`. |
 | **6** | **Evaluación y aprendizaje** | `PRODUCT.md` §6 · ADR-0043–0045 · `03-deliberativa-sistemas-antipatrones.md` | **Seguimiento integrado:** iniciativa atómica, ratificación, hitos, consentimiento de tareas, capacidad privada, inicio, pausas, ayuda, evidencia restringida, entrega y revisión append-only. **Falta el cierre:** contrastar criterios congelados, registrar resultado real y aprendizajes recuperables; ni una votación ni completar tareas declaran éxito por sí solos. ⚠ **Corrección que hay que repetir porque ya confundió una vez:** un corte anterior reservaba «ADR-0046» para esta tarea. **ADR-0046 acabó siendo la deliberación por etapas**, y desde entonces se han gastado el 0047, el 0048, el 0049 y el 0050. Esta tarea sigue abierta y **sin número de ADR asignado**: el que le toque será el **0051 o posterior**, y **no hay que reservarlo por adelantado** — reservar números fue justamente lo que produjo la confusión. |
@@ -632,7 +672,7 @@ una prueba dedicada a ADR-0040). **Leer el paquete antes de creer la fila.**
 | **14** | **Volcar al registro los hallazgos de `api`, `anchor` y `verifier-cli`** | `00-contradicciones-resueltas.md` parte 3 | **Abierta a medias.** Las rondas de escrutinio/consenso (E24–E35, B1–B3) y de democracia líquida (E36–E46) ya están volcadas, y el acumulado está corregido a **42** errores de spec. **Siguen sin ficha `E-NN`** los cuatro hallazgos de §5.2-5.3 posteriores a `domain`. Además, `TESTING.md` §Principio rector conserva la cifra «unos 20» y la tabla de `MODEL_CONTEXT.md` §3 conserva conteos históricos (crypto 116, domain 229) que hoy son **108** y **584**. |
 | **15** | **Cerrar las divergencias entre `packages/consensus` y ADR-0038** | ADR-0048 §«Divergencias» · ADR-0038 · **ADR-0050** | Parte se cerró en `d3ce8d4` («Ajusta el análisis de consenso a lo que manda ADR-0038»), que subió el paquete de 65 a **101** pruebas. **Lo que queda:** el **umbral de no-facción** —ADR-0050 **propone** sustituir el umbral de silueta fijo por un **contraste de hipótesis nula por permutación determinista**, y está **Propuesto, no aceptado ni implementado**— y, sobre todo, que **nada conecta el paquete con el ledger**: no hay snapshot, ni hash de entrada, ni `AgendaDeConsensoCongelada`. **Hasta cerrar eso, la salida no se presenta a la asamblea.** |
 | **16** | **Revisión adversarial del esquema de autoría** | ADR-0046 · **ADR-0049** | **No ejecutada, y el objeto cambió.** ADR-0049 **retiró el esquema de seudónimo y compromiso** que esta tarea iba a auditar; lo que hay que atacar ahora es la **regla de acceso por etapa**, que es más simple y por eso más fácil de auditar de verdad. Sigue sin revisión independiente. Ver la tarea 19, que es la parte de esto que ya se sabe. |
-| **17** | **Las seis pantallas que faltan** | `PRODUCT.md` §4 | El producto define **14 pantallas** y hoy existen **8**: inicio, problemas, propuestas, decisiones, iniciativas, mis tareas, verificar y **deliberaciones** (17 ficheros `page.tsx` contando detalle y creación, más el proxy `app/api/[...ruta]/route.ts`). **Faltan seis: consenso, círculos y comisiones, reuniones, normas, delegaciones e historial.** Dos de ellas dejan sin interfaz cosas que ya funcionan en el dominio: **«Consenso»** y **«Delegaciones»** (inalcanzables desde la interfaz). ⚠ **La pantalla de Reuniones no tiene un dominio de soporte detrás y no se debe inventar.** ⚠ **Lección de `ea684c4`:** la pantalla de deliberaciones existió sin enlace de navegación; el escenario E2E que lo comprueba ya existe. |
+| ~~**17**~~ | ~~**Las seis pantallas que faltan**~~ | `PRODUCT.md` §4 | ⚠ **CORREGIDO el 2026-08-24 — esta fila decía algo falso.** El corte anterior decía «existen 8, faltan 6». **Verificado hoy leyendo el árbol** (`find apps/web/app -name page.tsx`, 32 ficheros) y la navegación (`apps/web/components/marco.tsx`): de las **14 pantallas** de `PRODUCT.md` §4, **13 existen y están enlazadas desde la barra principal** —Inicio, Problemas, Propuestas, Deliberaciones, Decisiones, **Consenso**, Iniciativas, Mis tareas, **Círculos y comisiones**, **Normas**, **Delegaciones**, **Historial**, Verificar integridad—, más tres pantallas que `PRODUCT.md` §4 no numeraba (Asistente, Concentración, Aprendizajes), de ADR-0052/0053. **La única que falta sigue siendo «Reuniones», y sigue siendo deliberado**: no tiene dominio de soporte y no se debe inventar (ver la exclusión explícita en `docs/OBJETIVO.md`). `docs/OBJETIVO.md`, fila `ux-pantallas` (`PARCIAL`, no `CUMPLE`, precisamente por esa única ausencia y porque no se comprobó cada pantalla contra cero violaciones de accesibilidad en esta pasada) es más precisa que esta fila y debe preferirse. |
 | **18** | **La constitución digital versionada y su persistencia** | `GOVERNANCE.md` §6 | **Diseñada y sin código.** Falta implementar la persistencia y la lógica del agregado event-sourced para las reglas del §6 de `GOVERNANCE.md` (círculos, normas, etc.). De ella cuelga la pantalla «Normas» de la tarea 17. **Es la pieza de gobernanza más grande que sigue sin empezar.** |
 | **19** | **Declarar bien el alcance de la autoría por etapa** | ADR-0049 · `packages/domain/src/access.ts:370` | **Hecho el código, pendiente la consecuencia.** `deliberation:read-authorship` es hoy **`CIRCLE_MEMBER`** con `deniedDuringStage: 'perspectivas'`. Es decir: **cerrar la etapa hace la autoría legible para el CÍRCULO, no para el público.** La revisión adversarial de `gemini/pro` recomendó **eliminar el ocultamiento entero** por engañoso; se aceptó **parcialmente** (se retiró la retención del export, se mantuvo la regla de acceso), y por eso queda esta tarea: **que la interfaz y los textos digan «tu círculo verá quién escribió esto cuando cierre la etapa» y no «se revelará»**. |
 | **21** | **Dirección real del facilitador** | — | **BLOQUEANTE PARA USO REAL.** El facilitador configurado es `operador@udea.edu.co`, el cual no existe (Google acepta los correos dirigidos allí pero los rebota). Hasta que no se configure una dirección institucional real, nadie puede ingresar a la plataforma como facilitador. |
@@ -753,36 +793,37 @@ para él, y ahora sí se le puede encargar.
    KOINONIA_REQUIRE_DOCKER=1 pnpm test
    ```
 
-   **Confirmar `Tests 2232 passed (2232)` en `132` ficheros**, que es lo que `e9c68d9` tiene
-   commiteado. ⚠ **Esa cifra está CONTADA con `vitest list`, no ejecutada** (§0): el corte del
-   2026-08-23 no corrió la suite, así que **el primer verde de verdad lo produce quien lea esto**.
-   Si da **menos**, o si algo está en rojo, **el primer trabajo es averiguar por qué**, no seguir
-   adelante. La variable `KOINONIA_REQUIRE_DOCKER=1` es obligatoria: sin ella, la ausencia de Docker
-   se convierte en una suite saltada y en un verde que no probó nada.
+   **Confirmar `Test Files 179 passed (179)` · `Tests 2824 passed (2824)`**, que es lo que `6251d60`
+   tiene commiteado y lo que esta sesión **corrió de verdad hoy** (§0 y §2.2, no una cuenta de
+   `vitest list`). Si da **menos**, o si algo está en rojo, **el primer trabajo es averiguar por
+   qué**, no seguir adelante. La variable `KOINONIA_REQUIRE_DOCKER=1` es obligatoria: sin ella, la
+   ausencia de Docker se convierte en una suite saltada y en un verde que no probó nada.
 
    ⚠ **No uses `--reporter=basic`:** no existe en vitest 4 y el comando aborta antes de correr nada.
    Usá `--reporter=dot` o el default.
 
-4. **Comprobar el estado de git antes que nada más**, aunque ahora sea menos dramático que en los
-   cortes anteriores: **hay remoto** (`git@github.com:stevenvo780/koinonia.git`, por SSH) y `main`
-   tiene upstream. Lo que sí hay que hacer, y no es opcional: **verificar que lo local está publicado**
-   comparando `git rev-parse HEAD` con `git ls-remote origin refs/heads/main`. Un `push` que
-   silenciosamente no empujó es indistinguible de uno que funcionó.
+4. **Comprobar el estado de git antes que nada más.** Hoy (2026-08-24) **local está adelante del
+   remoto**: `git rev-parse HEAD` da `6251d60…` y `git ls-remote origin refs/heads/main` da
+   `c89e3b9…` — falta empujar los commits de la tanda de 22 agentes en paralelo y de las dos pasadas
+   de integración. **No asumas que coinciden**: comprobalo de nuevo con esos dos comandos, porque
+   pudo haber cambiado desde que se escribió esta frase.
 
 5. **Leer la tarea 0 de §8 y ADR-0054**, antes de elegir nada. Es una decisión pendiente, no una
    tarea de código, y condiciona lo que tenga sentido construir encima: cada votación que se abra
    mientras tanto congela un padrón cuya procedencia nadie puede acreditar.
 
-6. **Sólo entonces**, elegir entre lo demás. Las tres candidatas de mayor valor que deja el
-   2026-08-22, todas **por debajo** de la tarea 0:
-   - **Tarea 17, pantallas «Consenso» y «Delegaciones».** Es donde hay más trabajo **ya hecho y no
-     usable**: el análisis de consenso calcula y nadie lo ve, y la democracia líquida entera es
-     inalcanzable desde la interfaz. Convertir dominio en producto rinde más que añadir dominio.
-   - **Tarea 19,** que es corta y es una promesa que hoy el producto no cumple: `read-authorship` es
-     `CIRCLE_MEMBER`, así que cerrar la etapa hace la autoría legible **para el círculo**, no
-     pública, y los textos no lo dicen.
-   - **Tarea 16,** la revisión adversarial independiente, que sigue sin ejecutarse desde que se
-     declaró pendiente y cuyo objeto además cambió con ADR-0049.
+6. **Sólo entonces, elegir entre lo demás — y para eso `docs/OBJETIVO.md` es la fuente que hay que
+   leer, no la lista de abajo.** Las «tres candidatas» que este documento recomendaba desde el
+   2026-08-22 ya se resolvieron: pantallas «Consenso» y «Delegaciones» **existen y están enlazadas**
+   (tarea 17, corregida arriba); la tarea 19 (alcance de la autoría) y la tarea 16 (revisión
+   adversarial) siguen sin cerrar, pero `docs/OBJETIVO.md` las tiene reflejadas fila por fila, con
+   fecha y evidencia, dentro de un inventario de **87 pendientes** más disciplinado que esta sección.
+   El pendiente más urgente de todo el proyecto **hoy** es otro y no estaba aquí: bajo carga
+   concurrente real en el cierre de una votación el sistema **pierde votos** —algunos con `500`
+   explícito, una fracción con `201` de éxito falso—, hallazgo de `tests/carga/` documentado en
+   `docs/TESTING.md` §11.2 y en la fila de `testing` de `docs/OBJETIVO.md`. Es una falla de
+   integridad electoral, no de rendimiento, y no se corrigió en ninguna de las pasadas de
+   integración porque no era propiedad de quien la encontró.
 
 Antes de delegar cualquier cosa: leer `docs/MODEL_CONTEXT.md` §1 —los **siete campos** obligatorios de
 toda delegación—, su **§8** (registro de ruteo del 2026-08-22, con las tres reglas nuevas) y §9 de
@@ -792,20 +833,46 @@ este documento.
 
 ## 12. Estado vigente y correcciones aplicadas a los datos de partida
 
-**Estado vigente en `e9c68d9`** (contado el 2026-08-23): **2 232 tests en 132 ficheros**, incluidos
-**276** contra PostgreSQL 16 real; desglose por paquete
-(**108 / 1 160 / 128 / 34 / 76 / 101 / 92 / 257 + 276**); **10 proyectos** en el workspace;
-**54 ADR + README**; migraciones **0001–0011** (**once**, con `0011_constitucion.sql` añadida);
-**174** llamadas `fc.property`/`fc.asyncProperty` en dominio y **13** en consenso; **23** páginas
-Next; **115 escenarios E2E** en **14 ficheros**; **despliegue en producción operativo** (§7);
-**local y remoto coinciden en `e9c68d9`**; licencia **AGPL-3.0-or-later**. Siguen vigentes la
-compuerta C6, las 27 preguntas y la fórmula GIC.
+**Estado vigente en `6251d60`** (corrido de verdad el 2026-08-24, no contado): **2 824 tests en 179
+ficheros, todos en verde**, incluidos **420** contra PostgreSQL 16 real; desglose por paquete
+(crypto 108 / domain 1 265 / anchor 128 / verifier-cli 34 / contracts 311 / consensus 101 /
+metrics 92 / services/api 314 / tests/integration 420 / exploratorias 14 / unit 37); **10 proyectos**
+en el workspace (siete paquetes); **54 ADR + README**, índice al día; migraciones **0001–0013**
+(**trece**); **178** llamadas `fc.property`/`fc.asyncProperty` en dominio, **13** en consenso y **9**
+en métricas; **32** ficheros `page.tsx` (**34** rutas); **230 escenarios E2E** en **14 ficheros**,
+Chromium+Firefox en verde; `pnpm run typecheck`, `lint`, `build` y `build:web` en verde, corridos
+hoy; **despliegue en producción operativo pero desactualizado** —tiene sólo `0001`–`0011` de las
+trece migraciones y falta toda la tanda de 22 agentes en paralelo (§7)—; **local adelante del
+remoto**, falta un `push` (§0); licencia **AGPL-3.0-or-later**. Siguen vigentes la compuerta C6, las
+27 preguntas y la fórmula GIC.
 
-**Lo que se contó y lo que no.** Se contó: los casos de vitest (`vitest list`), los escenarios de
-Playwright (`--list`), el desglose por paquete, las propiedades, las páginas, los ADR, las
-migraciones y el estado de git. **No se ejecutó nada de la suite**: ni `pnpm install`, ni
-`pnpm build`, ni `typecheck`, ni `vitest run`, ni la corrida E2E. **Este corte no tiene verde
-propio**, y decirlo es más útil que heredar el del 2026-08-22 como si fuera de hoy.
+**Lo que se corrió hoy y lo que no.** Al contrario que el corte del 2026-08-23 —que sólo contaba con
+`vitest list` y `playwright --list`—, **este corte tiene verde propio**: se ejecutaron
+`pnpm run typecheck`, `pnpm run lint`, `pnpm run build`, `pnpm run build:web`,
+`KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run` (con reporter `dot` y luego `json`, para el desglose
+exacto) y `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox`,
+todos de verdad, con salida pegada en §0 y §2.2. Lo que **no** se corrió esta vez: WebKit y Safari
+móvil (bloqueados por librerías del sistema, sin cambios, §2.4), `pnpm run test:coverage`, Stryker, y
+no se redesplegó producción (sólo se leyó por SSH, de sólo lectura para este trabajo).
+
+### 12.0-bis Correcciones aplicadas hoy (2026-08-24) a lo que este documento venía afirmando
+
+El encargo de esta pasada fue explícitamente «que la documentación diga la verdad de hoy», porque
+este documento **llevaba dos días afirmando cosas falsas**. Lo que se corrigió, cada uno contra un
+comando o una lectura de código, no contra el reporte de una sesión anterior:
+
+| # | Lo que este documento afirmaba | Lo verificado hoy | Comprobación |
+|---|---|---|---|
+| 1 | Tarea 17: «existen 8 pantallas, faltan 6» | **Falso.** Existen 13 de las 14 de `PRODUCT.md` §4, todas enlazadas desde la navegación; sólo falta «Reuniones», deliberadamente | `find apps/web/app -name page.tsx` (32 ficheros) + lectura de `apps/web/components/marco.tsx` (lista `CONSULTA`) |
+| 2 | §0/§2.2: los conteos de pruebas y E2E son «lo que se contó con `vitest list`/`--list`, no lo que se ejecutó» | Esta vez se **ejecutaron**: `2 824` pruebas en `179` ficheros (vitest) y `230` escenarios E2E (Chromium+Firefox), los dos en verde | `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run` y `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox`, salida pegada en §0/§2.2 |
+| 3 | §2.5: «once migraciones» | **Son trece.** `0012_sesion_endurecida.sql` y `0013_rate_consumption_idempotencia.sql` no estaban contadas | `ls services/api/migrations \| wc -l` |
+| 4 | §3.2: «50 ADR, 51 ficheros, índice hasta el 0049» | **Son 54 ADR + README (55 ficheros), índice al día hasta el 0054** | `ls docs/adr \| wc -l` + lectura de `docs/adr/README.md` |
+| 5 | §7: el despliegue en producción se describía como si reflejara el código de hoy | **No lo refleja.** El contenedor se creó el 2026-08-23 17:53, antes de 22 commits incluidos el de la tanda de 22 agentes en paralelo; tiene sólo 11 de las 13 migraciones, y `/concentracion` y `/aprendizajes` dan `404` en producción | `docker inspect koinonia-api --format '{{.Created}}'`, `SELECT name FROM koinonia_meta.migration`, y `curl` contra las dos rutas |
+| 6 | README.md: tabla de «Estructura» con cinco paquetes | **Son siete.** Faltaban `packages/consensus` y `packages/metrics`, que existen desde el 2026-08-22 | `ls packages/` |
+| 7 | *(no dictado, hallado al verificar)* | `git ls-remote origin refs/heads/main` **no coincide** con `git rev-parse HEAD`: el remoto (`c89e3b9`) está detrás del local (`6251d60`) en 12 commits, sin empujar | Los dos comandos, comparados |
+
+*(Se numera «12.0-bis» y no «12.0» para no reordenar los números de las subsecciones existentes, que
+otros documentos podrían citar por número.)*
 
 ### 12.1 Correcciones aplicadas a los datos con los que se dictó la actualización del 2026-08-23
 

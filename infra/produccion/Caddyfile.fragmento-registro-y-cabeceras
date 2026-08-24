@@ -1,31 +1,71 @@
 # Koinonía — fragmento de Caddyfile: registro de acceso + cabeceras de seguridad.
 #
 # ESTO NO ES UN FICHERO QUE CADDY LEA. Es el contenido con el que hay que REEMPLAZAR los dos
-# bloques de sitio de Koinonía dentro de /etc/caddy/Caddyfile (el fichero real, único, compartido
-# con una decena de sitios ajenos — nunca se toca directo sin el procedimiento de
-# infra/produccion/DESPLIEGUE.md §9). Los dos bloques de abajo son la versión completa que debe
-# quedar en el Caddyfile real: no un diff, para poder copiar y pegar sin ambigüedad.
+# bloques de sitio de Koinonía dentro de /etc/caddy/Caddyfile (el fichero real, único, compartido con
+# 14 sitios ajenos — 16 bloques de sitio en total contando los 2 de Koinonía — nunca se toca directo
+# sin el procedimiento de infra/produccion/DESPLIEGUE.md §9). Los dos bloques de abajo son la versión
+# completa que debe quedar en el Caddyfile real: no un diff, para poder copiar y pegar sin
+# ambigüedad. Conservan, dentro de cada bloque, el comentario de cabecera que ya traía cada sitio en
+# producción (de cuándo se añadió, a qué contenedor apunta, cómo revertir sólo ese bloque) — no se
+# pierde esa documentación al aplicar esto.
 #
-# Verificado contra el binario real de la VPS: `caddy version` da 2.6.2. La sintaxis de abajo
-# (`skip_log`, `format filter … fields { … }`, `roll_size`/`roll_keep`/`roll_keep_for`) es la de esa
-# versión exacta — en 2.8 la directiva se renombró a `log_skip`; si algún día se actualiza Caddy,
-# revisar el nombre antes de reaplicar esto. NO se pudo ejecutar `caddy validate` contra este
-# fragmento desde aquí: la VPS es de sólo lectura para quien lo escribió. Es exactamente el motivo
-# por el que el procedimiento del §9 exige correr `caddy validate` ANTES de recargar — esa es la
-# red de seguridad que reemplaza la prueba que no se pudo hacer aquí.
+# ═══ Revisado y validado de verdad el 2026-08-24 (no sólo `caddy validate` en aislado) ═══
+#
+# Verificado contra el binario real de la VPS: `caddy version` da 2.6.2 (comprobado por ssh hoy,
+# 2026-08-24). Se descargó ese mismo binario (v2.6.2, linux/amd64) y, con él, LOCALMENTE:
+#
+#   1. Se copió el `/etc/caddy/Caddyfile` real de la VPS (los 16 sitios de hoy) y se le
+#      reemplazaron los dos bloques de Koinonía por el contenido de más abajo. `caddy validate`
+#      sobre ese fichero completo — no sólo sobre el fragmento aislado — da `Valid configuration`.
+#      (Los certificados `tls .../vpn2/...` y `.../vault/...` de otros dos sitios no existen fuera
+#      de la VPS; se sustituyeron por un par de certificados autofirmados sólo para que `validate`
+#      pudiera cargar esos DOS bloques ajenos, que no se tocan ni se citan aquí más allá de eso.)
+#   2. `caddy fmt --diff` sobre el fichero completo sí marca el fichero como "no formateado" — pero
+#      el diff completo muestra que es por los OTROS 14 sitios (usan indentación de 2 espacios); las
+#      líneas de los dos bloques de Koinonía, con tabulador, no cambian ni una. No es un defecto de
+#      este fragmento y no se toca la indentación ajena para no arriesgar 14 sitios por estética.
+#   3. `caddy run` real (sin TLS, en puertos locales, contra dos backends de prueba) con este
+#      fragmento exacto, y peticiones de verdad: la ruta de papeleta —en los DOS dominios, directa y
+#      con el prefijo `/api`— no generó ninguna línea en ninguno de los dos ficheros de log; una
+#      petición con `Cookie`, `Authorization`, `X-Forwarded-For` y `X-Real-Ip` puestas a mano llegó
+#      al log sin esos cuatro campos (ni el objeto `headers` los lista); una con `?token=secreto` en
+#      la URL quedó registrada sin la cadena de consulta; y las cabeceras (HSTS, `X-Frame-Options`,
+#      COOP, y además `Content-Security-Policy-Report-Only` sólo en el dominio de la interfaz)
+#      salieron en las respuestas reales.
+#
+# La sintaxis de abajo (`skip_log`, `format filter … fields { … }`, `roll_size`/`roll_keep`/
+# `roll_keep_for`) es la de Caddy 2.6.2 exactamente — en 2.8 la directiva se renombró a `log_skip`;
+# si algún día se actualiza el Caddy de la VPS, revisar el nombre antes de reaplicar esto.
+#
+# Lo que sigue sin poderse probar fuera de la VPS, porque es de sólo lectura para quien escribe esto:
+# el fragmento **dentro** del `/etc/caddy/Caddyfile` real con los demás 14 sitios ajenos y sus certificados
+# de verdad. Para eso está el `caddy validate` del paso 4 del procedimiento (DESPLIEGUE.md §9.3): es
+# la red de seguridad que reemplaza esa última milla que no se pudo ensayar aquí.
 #
 # ═══ Qué hace cada pieza, y por qué ═══
 #
-# 1. `skip_log` sobre la ruta de emisión de papeleta. THREAT_MODEL.md (T-20, «Correlación
-#    votante↔voto por temporización») y ADR-0014 (sellado por lotes, sin timestamp en la urna) existen
-#    para que el momento exacto en que alguien vota no quede escrito en ningún sitio: con 300
-#    personas y participación dispersa, una hora de acceso —aunque no lleve identidad— cruzada con
-#    cualquier marca de participación reconstruye quién votó. THREAT_MODEL.md lo dice explícito para
-#    el proxy: «registro de rutas de emisión desactivado en el proxy» (línea 286 del documento). Esta
-#    línea es esa promesa, cumplida. La ruta se excluye en las DOS formas en que un navegador llega a
-#    ella: directa contra la API (`/decisiones/:id/papeletas`) y a través del proxy de la interfaz
+# 1. `skip_log` sobre la ruta de emisión de papeleta. THREAT_MODEL.md T-20 («Correlación
+#    votante↔voto por temporización», hoy **SÓLO DECLARADA**: la mitigación de sellado por lotes que
+#    describía no llegó a implementarse — la papeleta real SÍ tiene marca temporal y SÍ es
+#    secuencial) lista **«logs del proxy»** como una de las tres precondiciones de este ataque: con
+#    300 personas y participación dispersa, una hora de acceso a la ruta de emisión —aunque no lleve
+#    identidad— cruzada con cualquier marca de participación reconstruye quién votó, igual que si la
+#    urna tuviera timestamp. La ruta se excluye en las DOS formas en que un navegador llega a ella:
+#    directa contra la API (`/decisiones/:id/papeletas`) y a través del proxy de la interfaz
 #    (`/api/decisiones/:id/papeletas` — ver `apps/web/app/api/[...ruta]/route.ts`, que reenvía
-#    `/api/<resto>` a `<resto>` en la API tal cual, sin transformarlo).
+#    `/api/<resto>` a `<resto>` en la API tal cual, sin transformarlo). `services/api/src/http/
+#    app.ts` ya aplica la misma exclusión, con el mismo razonamiento, dentro de la propia API.
+#
+#    ⚠ Corrección sobre una cita: el comentario de cabecera de `app.ts` (y una versión anterior de
+#    este mismo fichero) atribuye a THREAT_MODEL.md la frase literal «registro de rutas de emisión
+#    desactivado en el proxy, línea 286». **Esa frase no existe en THREAT_MODEL.md** — se buscó por
+#    texto exacto en todo el documento y no aparece; hoy la línea 286 real es la mitad de otra fila
+#    (T-27), sin relación. Es probable que sea una paráfrasis de T-20 escrita como si fuera cita
+#    literal, con un número de línea que además rotó con las correcciones del 2026-08-24 (el propio
+#    documento está lleno de avisos sobre exactamente este tipo de error — nombres de prueba y citas
+#    que no corresponden a nada real). Se corrige aquí, en el fichero que sí se está tocando en este
+#    encargo; `app.ts` no se toca (es de otro workflow) pero queda señalado el mismo defecto ahí para
+#    quien lo revise.
 #
 # 2. `log … format filter … fields { … }`: registro de acceso a fichero, con cada campo peligroso
 #    borrado explícitamente antes de escribir la línea — no ofuscado, BORRADO (`delete`, el mismo
@@ -36,41 +76,94 @@
 #
 #    - `request>remote_ip`, `request>remote_port`, `request>client_ip`,
 #      `request>headers>X-Forwarded-For`, `request>headers>X-Real-Ip`: ninguna IP, en ninguna forma.
-#      Es C17 del corpus (THREAT_MODEL.md / docs/HANDOFF.md línea 372): «No se registran direcciones
-#      IP en la aplicación», aplicado aquí también al borde, que es de donde viene la IP real.
+#      Es C17 del corpus (THREAT_MODEL.md / docs/HANDOFF.md: «No se registran direcciones IP en la
+#      aplicación»), aplicado aquí también al borde, que es de donde viene la IP real.
 #    - `request>headers>Cookie`, `request>headers>Authorization`, `resp_headers>Set-Cookie`: la
 #      sesión no se registra ni de ida ni de vuelta.
 #    - `request>uri regexp "\?.*" ""`: recorta la cadena de consulta de la URL registrada. Hoy nada
-#      la necesita —el enlace mágico viaja por POST, nunca por query string, THREAT_MODEL.md línea
-#      114—, pero si algún día una ruta nueva la usa, esta línea ya la protege sin que nadie tenga
-#      que acordarse de tocar el Caddyfile otra vez.
+#      la necesita —el enlace mágico viaja por POST, nunca por query string (THREAT_MODEL.md, tabla
+#      de flujo del enlace mágico)—, pero si algún día una ruta nueva la usa, esta línea ya la
+#      protege sin que nadie tenga que acordarse de tocar el Caddyfile otra vez.
 #
 #    Lo que SÍ queda, porque es justo lo que hace investigable un incidente sin identificar a nadie:
 #    método, ruta (con el identificador de recurso interpolado — una propuesta o una decisión no son
 #    datos personales), estado HTTP, hora, duración.
 #
-#    Rotación: 10 MiB × 5 ficheros por sitio (como ya acota `docker-compose.yml` para los tres
-#    contenedores) y purga a los 30 días (`roll_keep_for 720h`) — el mismo horizonte de retención que
-#    ya usa el proyecto para `consent_logs` (THREAT_MODEL.md, resolución de C17, línea 292). Tope
-#    duro: 50 MB por sitio, 100 MB entre los dos, contra 81 GB libres en el disco medidos el
-#    2026-08-23 (`df -h /` en la VPS). El directorio `/var/log/caddy` ya existe con dueño
-#    `caddy:caddy` (comprobado el 2026-08-23): Caddy puede escribir ahí sin ningún paso previo.
+#    Rotación: 10 MiB × 5 ficheros por sitio — el mismo tope que ya usa `docker-compose.yml` para los
+#    tres contenedores de producción (verificado: `max-size: '10m'`, `max-file: '5'` en los tres
+#    servicios) — y purga a los 30 días (`roll_keep_for 720h`). Los 30 días siguen la misma
+#    convención que THREAT_MODEL.md documenta para `consent_logs`; a diferencia de aquí, esa purga
+#    automática de `consent_logs` **no llegó a implementarse** en el código (T-11 lo marca
+#    explícitamente: la fila que la prometía está tachada y dice «no existe»; `consent_logs` ni
+#    siquiera aparece en el repositorio fuera de esa prosa) — así que este fragmento no hereda una
+#    práctica ya en uso, sólo el mismo número por coherencia con el resto del proyecto. Tope duro: 50
+#    MB por sitio, 100 MB entre los dos.
+#
+#    ⚠ El disco es compartido con 66 contenedores ajenos y hoy tiene MENOS margen del que un
+#    borrador anterior de este fichero afirmaba: `df -h /` por ssh el 2026-08-23 daba 81 GB libres;
+#    la MISMA comprobación repetida el 2026-08-24 da **53 GB libres, 89 % usado** (467 GB totales,
+#    390 GB usados) — 28 GB menos en un día. 100 MB de tope duro para estos dos logs es una fracción
+#    irrelevante de esa cifra en cualquiera de los dos casos, así que no cambia la decisión de
+#    aplicar esto; pero quien lo aplique debería volver a correr `df -h /` primero (el paso 2 del
+#    procedimiento en DESPLIEGUE.md §9.3 ya lo pide) y, si el disco sigue bajando a ese ritmo,
+#    avisarlo — no es un problema que este cambio cause ni que este cambio pueda resolver. El
+#    directorio `/var/log/caddy` ya existe con dueño `caddy:caddy`, 755 (comprobado el 2026-08-24):
+#    Caddy puede escribir ahí sin ningún paso previo.
 #
 # 3. `header { … }`: cabeceras de seguridad. `Strict-Transport-Security`, `X-Frame-Options` y
 #    `Cross-Origin-Opener-Policy` son estáticas, no dependen de qué devuelva la aplicación y ya están
 #    en la lista de controles del MVP (THREAT_MODEL.md §6, «Cabeceras») — se agregan en modo
-#    obligatorio en los dos dominios. `next.config.mjs` (apps/web, de otro workflow, no tocado aquí)
-#    ya sirve `x-content-type-options`, `referrer-policy: no-referrer` y `permissions-policy`; estas
-#    tres son las que faltaban de esa misma lista y que SÍ puede poner el proxy sin pisarle nada a
-#    Next. `Content-Security-Policy-Report-Only` va SÓLO en el dominio de la interfaz (el de la API
-#    sirve JSON, no HTML: una CSP ahí no protege nada) y en modo de sólo informe — ver el porqué en
-#    el comentario dentro del bloque.
+#    obligatorio en los dos dominios. `next.config.mjs` (apps/web, de otro workflow, no tocado aquí;
+#    verificado que sirve `x-content-type-options`, `referrer-policy: no-referrer` y
+#    `permissions-policy`) ya cubre las otras tres de esa misma lista; estas tres son las que
+#    faltaban y que SÍ puede poner el proxy sin pisarle nada a Next. `Content-Security-Policy-
+#    Report-Only` va SÓLO en el dominio de la interfaz (el de la API sirve JSON, no HTML: una CSP
+#    ahí no protege nada) y en modo de sólo informe — ver el porqué en el comentario dentro del
+#    bloque.
+#
+# ═══ Aviso que quien aplique esto NO puede saltarse: este cambio activa una condición de revisión
+#     obligatoria de THREAT_MODEL.md, no sólo un cambio de infraestructura ═══
+#
+# THREAT_MODEL.md §9, riesgo aceptado **RA-8** («Correlación por metadatos fuera de la aplicación»),
+# fija como condición que obliga a revisarlo, LITERALMENTE: **«Logs de proxy conservados más allá de
+# la sesión»**. Este fragmento crea exactamente eso: un log de proxy con retención de 30 días, muy
+# por encima de las 8 horas máximas de una sesión (§6, «Sesiones»). El diseño ya lo tiene en cuenta
+# —sin IP, sin cookie, sin cuerpo, con la ruta de papeleta excluida— y por eso el riesgo residual es
+# bajo, pero **bajo no es cero** y la condición se cumple igual, textualmente. Por THREAT_MODEL.md
+# §10 («Disparadores obligatorios», inciso b: «se acepte, modifique o venza cualquier riesgo del
+# §9»), aplicar esto en producción debería ir acompañado de traer RA-8 a revisión — quien la aprueba
+# es la asamblea por consentimiento (§10, «Quién»), no una decisión técnica unilateral. No es un
+# trámite que este fragmento pueda completar por sí mismo: es una decisión de la comunidad, y aplicar
+# el Caddyfile sin haberla pedido deja a Koinonía con un control técnico correcto pero sin la
+# aprobación que su propio modelo de amenaza exige para él.
 #
 # ═══ Los dos bloques completos ═══
-# (reemplazan a los que hoy existen al final de /etc/caddy/Caddyfile con ese mismo nombre de sitio)
+# (reemplazan a los que hoy existen al final de /etc/caddy/Caddyfile con ese mismo nombre de sitio;
+# se conserva el comentario de cabecera original de cada uno)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# api.167.114.118.213.sslip.io — API de Koinonía. AÑADIDO 2026-08-23.
+#
+# Bloque nuevo al final del fichero. No se modificó ni una línea de los bloques
+# anteriores; en particular NO se tocó ns512213.ip-167-114-118.net, cuyo
+# certificado consumen demeter-cert-sync.timer y postfix-sync-cert.timer.
+#
+# Backend: contenedor `koinonia-api` (/opt/koinonia/docker-compose.yml), publicado
+# SÓLO en 127.0.0.1:18090. PostgreSQL (`koinonia-postgres`) no publica ningún
+# puerto: sólo lo alcanza la API por la red docker `koinonia_net`.
+#
+# Revertir TODO el fichero: cp de Caddyfile.bak-koinonia-registro-* (ver DESPLIEGUE.md §9.3) y
+# `systemctl reload caddy`. Revertir SÓLO este bloque a como estaba antes de este cambio (sin log ni
+# cabeceras nuevas): cp de Caddyfile.bak-koinonia-* (el backup del 2026-08-23, anterior a este
+# cambio) y `systemctl reload caddy`.
+#
+# AÑADIDO 2026-08-24: registro de acceso a fichero (sin IP, sin Cookie, sin Authorization, sin
+# Set-Cookie, sin cadena de consulta; la emisión de papeleta no genera línea) y tres cabeceras de
+# seguridad estáticas. Ver el comentario de cabecera de este fichero para el porqué completo, y el
+# aviso sobre THREAT_MODEL.md RA-8 antes de aplicar esto en producción.
+# ═══════════════════════════════════════════════════════════════════════════════
 api.167.114.118.213.sslip.io {
-	# Ver punto 1 arriba. Nunca se registra que se emitió una papeleta, ni con qué código respondió.
+	# Nunca se registra que se emitió una papeleta, ni con qué código respondió (ver punto 1 arriba).
 	@papeletas {
 		method POST
 		path /decisiones/*/papeletas
@@ -108,6 +201,35 @@ api.167.114.118.213.sslip.io {
 	reverse_proxy 127.0.0.1:18090
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# koinonia.167.114.118.213.sslip.io — INTERFAZ de Koinonía. AÑADIDO 2026-08-23.
+#
+# Bloque nuevo al final del fichero. No se modificó ni una línea de los bloques
+# anteriores; en particular NO se tocó ns512213.ip-167-114-118.net, cuyo
+# certificado consumen demeter-cert-sync.timer y postfix-sync-cert.timer, ni
+# mail.stevenvallejo.com, que es el certificado del submission de Postfix.
+#
+# Backend: contenedor `koinonia-web` (Next.js, /opt/koinonia/docker-compose.yml),
+# publicado SÓLO en 127.0.0.1:18091.
+#
+# Por qué existe este dominio y no basta con el de la API: el enlace de acceso que
+# se manda por correo apunta a /entrar/confirmar?token=…, que es una PANTALLA de
+# Next, no un endpoint. Servida desde el dominio de la API daba 404.
+#
+# El navegador NO habla con la API directamente: la interfaz expone /api/* y lo
+# reenvía por la red docker `koinonia_net` a koinonia-api:3001. Así la cookie de
+# sesión es de primera parte y no hace falta CORS con credenciales ni SameSite=None.
+#
+# Revertir TODO el fichero: cp de Caddyfile.bak-koinonia-registro-* (ver DESPLIEGUE.md §9.3) y
+# `systemctl reload caddy`. Revertir SÓLO este bloque a como estaba antes de este cambio (sin log ni
+# cabeceras nuevas): cp de Caddyfile.bak-koinonia-web-* (el backup del 2026-08-23, anterior a este
+# cambio) y `systemctl reload caddy`.
+#
+# AÑADIDO 2026-08-24: mismo registro de acceso que el bloque de la API (misma exclusión de la
+# papeleta, con el prefijo /api de este proxy), más HSTS/X-Frame-Options/COOP y una CSP en modo
+# SÓLO INFORME (nunca bloquea) — ver el porqué en el comentario dentro de la cabecera de más abajo,
+# y el aviso sobre THREAT_MODEL.md RA-8 en el comentario de cabecera de este fichero.
+# ═══════════════════════════════════════════════════════════════════════════════
 koinonia.167.114.118.213.sslip.io {
 	# Misma ruta de emisión, vista desde el proxy de la interfaz: `/api/<resto>` reenvía a `<resto>`
 	# en la API sin tocarlo (apps/web/app/api/[...ruta]/route.ts), así que aquí lleva el prefijo /api.

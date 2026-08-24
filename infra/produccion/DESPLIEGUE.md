@@ -277,7 +277,7 @@ interfaz).
   con `ufw` inactivo y la cadena `DOCKER-USER` vacía, cualquier puerto publicado es público al
   instante.
 
-## 9. Registro de acceso y cabeceras de seguridad (pendiente de aplicar, 2026-08-23)
+## 9. Registro de acceso y cabeceras de seguridad (pendiente de aplicar; borrador 2026-08-23, revisado y validado de verdad el 2026-08-24)
 
 **Estado hoy, comprobado en la propia VPS:** Caddy no registra una sola petición para ninguno de los
 dos dominios de Koinonía (`grep -n "log " /etc/caddy/Caddyfile` no da nada), y la API corre con el
@@ -285,7 +285,7 @@ registrador en `warn` (sin `KOINONIA_LOG` en `/opt/koinonia/.env`, que es el ún
 fija). En una plataforma donde se vota, eso significa que un incidente —una sesión robada, un pico
 de 500, un abuso del control de cupos— no se puede investigar después: no queda ni una línea. Esta
 sección cierra ese hueco en dos frentes, API y Caddy, y dice cómo aplicar el segundo sin arriesgar
-los otros diez sitios del fichero compartido.
+los otros 14 sitios ajenos del fichero compartido.
 
 ### 9.1. Lado API: ya en el código, falta encenderlo en el despliegue
 
@@ -318,28 +318,62 @@ uno de los dos dominios:
 
 | Pieza                                                                                   | Qué hace                                                                                                                                                                              | Por qué                                                                                                                                                   |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `skip_log @papeletas`                                                                   | La emisión de papeleta no genera línea de log, en ninguno de los dos dominios                                                                                                         | THREAT_MODEL.md línea 286 lo exige para el proxy explícitamente; T-20 y ADR-0014                                                                          |
+| `skip_log @papeletas` | La emisión de papeleta no genera línea de log, en ninguno de los dos dominios | T-20 (proxy logs es una de sus tres precondiciones) y ADR-0014 — **no** la cita de THREAT_MODEL.md «línea 286» de una versión anterior de este documento: esa frase no existe en el fichero, corregida al revisar esto (ver cabecera del fragmento) |
 | `log { … format filter … }`                                                             | Registro a fichero en `/var/log/caddy/`, con IP, `Cookie`, `Authorization` y `Set-Cookie` **borrados** (no ofuscados) del JSON antes de escribirlo, y la cadena de consulta recortada | C17 (ninguna IP, en ningún componente) y el mismo criterio de `redact`/`remove` que ya usa la API                                                         |
-| `roll_size 10MiB` / `roll_keep 5` / `roll_keep_for 720h`                                | Tope de 50 MB por sitio, purga a 30 días                                                                                                                                              | Mismo tope que ya fija `docker-compose.yml` para los tres contenedores; mismo horizonte que `consent_logs`                                                |
-| `header { Strict-Transport-Security … X-Frame-Options … Cross-Origin-Opener-Policy … }` | Tres cabeceras de la lista de THREAT_MODEL.md §6 que hoy faltan (en modo obligatorio: son estáticas, no dependen de la aplicación)                                                    | `next.config.mjs` ya sirve las otras tres de esa misma lista                                                                                              |
+| `roll_size 10MiB` / `roll_keep 5` / `roll_keep_for 720h` | Tope de 50 MB por sitio, purga a 30 días | Mismo tope que ya fija `docker-compose.yml` para los tres contenedores (verificado); 30 días sigue la convención que THREAT_MODEL.md usa para `consent_logs`, **no** una práctica ya en producción — esa purga automática está marcada como no implementada (T-11) |
+| `header { Strict-Transport-Security … X-Frame-Options … Cross-Origin-Opener-Policy … }` | Tres cabeceras de la lista de THREAT_MODEL.md §6 que hoy faltan (en modo obligatorio: son estáticas, no dependen de la aplicación) | `next.config.mjs` ya sirve las otras tres de esa misma lista (verificado) |
 | `Content-Security-Policy-Report-Only` (sólo en el dominio de la interfaz)               | La CSP estricta de THREAT_MODEL.md §6, sin nonce (apps/web no lo genera hoy), en modo **de sólo informe**: nunca bloquea, sólo reporta a la consola del navegador                     | apps/web usa Next.js, que normalmente mete script/estilo en línea; aplicarla obligatoria sin haber mirado qué reporta puede dejar la aplicación en blanco |
 
-**Verificación ya hecha, fuera de la VPS, antes de escribir esto:** se descargó el binario oficial de
-Caddy **2.6.2** —la misma versión exacta que corre en la VPS (`caddy version` por ssh)— y con él,
+### 9.2bis. Antes de aplicar esto: activa una revisión obligatoria de THREAT_MODEL.md
+
+Esto no es sólo un cambio de infraestructura. THREAT_MODEL.md §9, riesgo aceptado **RA-8**
+(«Correlación por metadatos fuera de la aplicación»), fija como condición que obliga a revisarlo,
+literalmente: **«Logs de proxy conservados más allá de la sesión»**. Este cambio crea exactamente
+eso — 30 días de retención contra 8 horas de sesión máxima (§6, «Sesiones»). El diseño ya lo
+compensa (sin IP, sin cookie, sin cuerpo, con la ruta de papeleta excluida — verificado en §9.2), pero
+la condición se cumple igual, textualmente, y por §10 («Disparadores obligatorios», inciso b: «se
+acepte, modifique o venza cualquier riesgo del §9») eso activa la obligación de traer RA-8 a
+revisión, que aprueba la asamblea por consentimiento (§10, «Quién»), no una decisión técnica
+unilateral. **Aplicar el Caddyfile no sustituye pedir esa revisión** — son dos pasos distintos, y
+sólo el primero está en el alcance técnico de este documento.
+
+**Verificación ya hecha, fuera de la VPS, el 2026-08-24 — con el binario real, no sólo revisado a
+ojo:** una versión anterior de esta sección afirmaba una validación que, al revisar esto, no se
+encontró evidencia de que se hubiera ejecutado — el directorio de trabajo no tenía ningún binario de
+Caddy ni rastro de haberlo descargado. Se repitió desde cero: se descargó el binario oficial de Caddy
+**2.6.2** —la misma versión exacta que corre en la VPS, reconfirmado por ssh hoy— y con él,
 localmente:
 
-1. `caddy validate` sobre un Caddyfile con SOLO estos dos bloques nuevos: `Valid configuration`.
-2. `caddy fmt --diff`: sin cambios — el fragmento ya está formateado como Caddy lo escribiría.
-3. `caddy run` real, contra un backend de prueba, con peticiones de verdad: la ruta de papeleta
-   (en los dos dominios) **no aparece** en ninguno de los dos ficheros de log; una petición con
-   `Cookie`, `Authorization` y `X-Forwarded-For` puestos a mano llega al log **sin esos tres
-   campos**; una petición con `?token=secreto` en la URL llega **sin la cadena de consulta**; las
-   cuatro cabeceras (HSTS, `X-Frame-Options`, COOP, CSP-Report-Only) salen en las respuestas reales.
+1. Se tomó el `/etc/caddy/Caddyfile` **real** de la VPS de hoy (14 sitios ajenos + los 2 de
+   Koinonía, 194 líneas) y se le reemplazaron los dos bloques de Koinonía por el fragmento completo.
+   `caddy validate` sobre ese fichero **completo**, no sólo sobre los dos bloques aislados: `Valid
+   configuration`. (A los otros dos bloques que usan certificados de fichero —`vpn2` y `vault`— hubo
+   que darles un par de certificados autofirmados de prueba sólo para que `validate` pudiera leerlos;
+   no se tocó nada de esos dos sitios más allá de eso.)
+2. `caddy fmt --diff` sobre ese mismo fichero completo sí avisa que el fichero "no está formateado"
+   — pero el diff muestra que es por los 14 sitios ajenos (indentación de 2 espacios); ni una línea
+   de los dos bloques de Koinonía, con tabulador, cambia.
+3. `caddy run` real (sin TLS, en puertos locales, contra dos backends de prueba), con el fragmento
+   final tal cual queda en `Caddyfile.fragmento-registro-y-cabeceras`, y peticiones de verdad: la
+   ruta de papeleta (en los dos dominios, directa y con el prefijo `/api`) **no generó ninguna línea**
+   en ninguno de los dos ficheros de log — 0 líneas frente a las peticiones normales que sí quedaron
+   registradas; una petición con `Cookie`, `Authorization`, `X-Forwarded-For` y `X-Real-Ip` puestas a
+   mano llegó al log **sin esos cuatro campos** (el objeto `headers` de la línea registrada ni los
+   menciona); una con `?token=secreto` en la URL quedó **sin la cadena de consulta**; y las cabeceras
+   (HSTS, `X-Frame-Options`, COOP, y `Content-Security-Policy-Report-Only` sólo en el dominio de la
+   interfaz) salieron en las respuestas reales.
 
-Eso prueba la sintaxis y el comportamiento contra el binario real. Lo que **no** se pudo probar —
-porque la VPS es de sólo lectura para quien escribió esto— es este fragmento **dentro** del
-`/etc/caddy/Caddyfile` real, con los otros diez sitios alrededor. Para eso está el `caddy validate`
-del paso 2 de abajo: es la red de seguridad que reemplaza esa prueba.
+Eso prueba la sintaxis contra el fichero real completo y el comportamiento contra el binario real.
+Lo que **no** se pudo probar —porque la VPS es de sólo lectura para quien escribió esto— es aplicar
+el fragmento **dentro de la VPS misma**, con sus certificados ACME reales y sus 14 sitios ajenos tal
+como estén el día en que alguien lo aplique, que puede no ser este mismo día: el propio
+`consola.humanizar.tech` es prueba de que ese fichero cambia bajo otras manos sin avisar en el sitio
+que se toca — su comentario dice que el backend real es `100.64.0.6:8444`, pero la directiva
+`reverse_proxy` que sí ejecuta Caddy apunta hoy a `100.64.0.11:8444`; el comentario quedó desactualizado
+y nadie lo corrigió. Es exactamente el motivo por el que este documento insiste en releer el
+Caddyfile real antes de tocar nada, no confiar en una copia ni en lo que dice un comentario. Para eso
+está el `caddy validate` del paso 4 de abajo: es la red de seguridad que reemplaza esa última milla
+que no se pudo ensayar aquí.
 
 ### 9.3. Procedimiento para aplicarlo (reutiliza el de §7, con las comprobaciones propias de este cambio)
 
@@ -347,9 +381,14 @@ del paso 2 de abajo: es la red de seguridad que reemplaza esa prueba.
 # 1. Copia de seguridad fechada — siempre, sin excepción (§7):
 cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak-koinonia-registro-$(date -u +%Y%m%dT%H%M%SZ)"
 
-# 2. Confirmar que /var/log/caddy admite escritura de Caddy (ya lo hacía el 2026-08-23: dueño
-#    caddy:caddy, comprobado por ssh — repetir el chequeo igual, por si cambió):
+# 2. Confirmar que /var/log/caddy admite escritura de Caddy (dueño caddy:caddy, 755 — comprobado
+#    por ssh el 2026-08-23 y reconfirmado el 2026-08-24; repetir el chequeo igual, por si cambió) y
+#    que el disco tiene margen: el mismo día 24 el disco daba 53 GB libres / 89 % usado (467 GB
+#    totales) — 28 GB menos que los 81 GB del día anterior. 100 MB de tope duro para estos dos logs
+#    no cambia esa cuenta, pero si `df -h /` sigue cayendo a ese ritmo es una señal a escalar aparte
+#    de este cambio, no algo que este cambio cause:
 ls -la /var/log/caddy
+df -h /
 
 # 3. Editar /etc/caddy/Caddyfile a mano: reemplazar el bloque completo de
 #    `api.167.114.118.213.sslip.io` y el de `koinonia.167.114.118.213.sslip.io` por el contenido de

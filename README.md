@@ -211,7 +211,7 @@ pnpm run typecheck   # tsc estricto sobre fuentes, pruebas y extremo a extremo
 pnpm run lint        # eslint + prettier + pureza del dominio
 pnpm run test        # vitest: unitarias, de propiedad y de integración contra PostgreSQL real
 pnpm run e2e         # Playwright: el corte vertical por la interfaz
-pnpm run build       # tsc --build con project references (los cinco paquetes)
+pnpm run build       # tsc --build con project references (los siete paquetes)
 pnpm run build:web   # la interfaz
 pnpm run verify      # typecheck + lint + test
 ```
@@ -220,7 +220,7 @@ pnpm run verify      # typecheck + lint + test
 
 ## Estructura
 
-Cinco paquetes, un servicio y una interfaz:
+Siete paquetes, un servicio y una interfaz:
 
 | Ruta                    | Qué es                                                                                                                                                                                                                                               |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,19 +229,23 @@ Cinco paquetes, un servicio y una interfaz:
 | `packages/contracts`    | Los esquemas Zod de la frontera y el léxico de la interfaz. Una sola definición para servidor y cliente.                                                                                                                                             |
 | `packages/anchor`       | **Anclaje externo**: `AnchorProvider` con tres implementaciones de clases de independencia distintas —OpenTimestamps sobre Bitcoin, commit firmado con SSH en dos forjas, testigos por correo— y la política de quórum **2 clases de 3** (ADR-0016). |
 | `packages/verifier-cli` | **Verificador independiente** (`@koinonia/verificar`). Comprueba un paquete exportado **sin hablar con este servidor**, reimplementando los algoritmos por su cuenta.                                                                                |
+| `packages/consensus`    | Análisis de consenso transversal como agenda, nunca como decisión (ADR-0038/0048): PCA determinista, k-means y afirmaciones puente. Admite punto flotante porque su salida no alimenta ningún umbral ni conteo. Sin dependencias de runtime.         |
+| `packages/metrics`      | Métricas de salud democrática (acuerdos, concentración, cobertura del padrón, rotación, deliberación); depende sólo de `@koinonia/domain`, por su aritmética exacta.                                                                                 |
 | `services/api`          | Adaptadores: ledger sobre PostgreSQL, bóveda de identidad, anclaje, export y capa HTTP con Fastify. Lo único que hace I/O.                                                                                                                           |
-| `apps/web`              | Interfaz: Next.js, móvil primero, español de Colombia, WCAG 2.2 AA.                                                                                                                                                                                  |
+| `apps/web`              | Interfaz: Next.js, móvil primero, español de Colombia, WCAG 2.2 AA. PWA con service worker (cache-first en estáticos, network-first en navegaciones, nunca en `/api/*`), activo sólo en producción.                                                  |
 | `tests/integration`     | Contra PostgreSQL real, con Testcontainers.                                                                                                                                                                                                          |
 | `tests/e2e`             | Playwright: el corte vertical por la interfaz y por la API.                                                                                                                                                                                          |
 | `infra/docker`          | PostgreSQL de desarrollo.                                                                                                                                                                                                                            |
 | `docs/`                 | Investigación, ADR, arquitectura, producto, gobernanza y estrategia de pruebas.                                                                                                                                                                      |
 
-El orden de dependencia es total y sin ciclos, con **dos ramas deliberadamente separadas** que sólo
-comparten la hoja `crypto`:
+El orden de dependencia es total y sin ciclos, con **tres ramas deliberadamente separadas** que sólo
+comparten la hoja `crypto` (y `metrics`, que además depende de `domain`):
 
 ```
 crypto ← domain ← contracts ← { services/api, apps/web }
+crypto ← domain ← metrics
 crypto ← anchor ← verifier-cli
+crypto ← consensus
 ```
 
 El verificador no conoce las reglas de decisión y no importa nada de `services/api`: los algoritmos
@@ -259,15 +263,23 @@ SQL plano numerado en `services/api/migrations/`, aplicado en orden por un runne
 aplicada deja de ser invisible. Dos ficheros con el mismo número son un error duro, no un
 desempate arbitrario, porque el orden tiene que ser total.
 
-| Migración                   | Qué crea                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `0001_governance_ledger`    | `governance`: eventos, cabezas de agregado, cursor, checkpoints.             |
-| `0002_append_only_guard`    | El trigger `ENABLE ALWAYS` que rechaza `UPDATE`, `DELETE` y `TRUNCATE`.      |
-| `0003_roles_and_grants`     | `koinonia_ddl` y `koinonia_app`, con la asimetría de privilegios.            |
-| `0004_projection`           | Proyecciones desechables con offset transaccional.                           |
-| `0005_identidad`            | `identity`: bóveda de datos personales, **físicamente separada** (ADR-0008). |
-| `0006_anclaje`              | `governance.anchor_attempt` y `governance.bitcoin_header`.                   |
-| `0007_append_request_scope` | Separa claves de idempotencia públicas de consecuencias internas atómicas.   |
+| Migración                            | Qué crea                                                                     |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `0001_governance_ledger`             | `governance`: eventos, cabezas de agregado, cursor, checkpoints.             |
+| `0002_append_only_guard`             | El trigger `ENABLE ALWAYS` que rechaza `UPDATE`, `DELETE` y `TRUNCATE`.      |
+| `0003_roles_and_grants`              | `koinonia_ddl` y `koinonia_app`, con la asimetría de privilegios.            |
+| `0004_projection`                    | Proyecciones desechables con offset transaccional.                           |
+| `0005_identidad`                     | `identity`: bóveda de datos personales, **físicamente separada** (ADR-0008). |
+| `0006_anclaje`                       | `governance.anchor_attempt` y `governance.bitcoin_header`.                   |
+| `0007_append_request_scope`          | Separa claves de idempotencia públicas de consecuencias internas atómicas.   |
+| `0008_capacidad_privada`             | DSK por sujeto y capacidad semanal cifrada, self-only, dentro de la bóveda.  |
+| `0009_event_id_unico`                | Índice único global de `eventId`: ningún tipo puede repetirlo.               |
+| `0010_private_material`              | Aperturas textuales restringidas, con ciphertext de longitud fija.           |
+| `0011_constitucion`                  | El texto de las reglas direccionado por su huella (ADR-0051).                |
+| `0012_sesion_endurecida`             | Marca de actividad para el corte de la sesión por inactividad (T-06).        |
+| `0013_rate_consumption_idempotencia` | Consumo idempotente del cupo anti-spam por `requestId` (ADR-0055).           |
+
+Trece migraciones en total (`services/api/migrations/`, ver ahí si esta tabla queda atrás).
 
 ---
 

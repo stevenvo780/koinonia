@@ -173,6 +173,50 @@ más urgente de todo este documento.
 
 ---
 
+## Pasada de documentación — 2026-08-24 (encargo C)
+
+Esta pasada no tocó código: **corrigió `docs/OBJETIVO.md`, `docs/HANDOFF.md` y `README.md`** contra
+lo que hay hoy en el árbol, sobre el mismo commit `6251d60` de la segunda pasada REMATE. `HANDOFF.md`
+llevaba **dos días** afirmando cosas falsas (pantallas que ya existían dadas por faltantes,
+`GitForgeClient` dado por sin implementar en un corte previo) y quedó corregido con salida de
+comandos pegada, no parafraseada — el detalle está en `docs/HANDOFF.md` §12.0-bis.
+
+**Los siete comandos de verificación se corrieron de nuevo, completos, hoy:**
+
+1. `pnpm run typecheck` — **0 errores**.
+2. `pnpm run lint` — **0 errores** (eslint + `prettier --check` + `scripts/check-domain-purity.mjs`).
+3. `pnpm run build` — **verde**.
+4. `pnpm run build:web` — **verde**, Next.js 15.5.23, 34 rutas (25 estáticas + 9 dinámicas).
+5. `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run` — **`Test Files 179 passed (179)` ·
+   `Tests 2824 passed (2824)`**, 0 fallos, contra PostgreSQL 16 real. Coincide exactamente con la
+   cifra que este documento y `HANDOFF.md` venían citando de la pasada anterior — **hoy además se
+   ejecutó, no se heredó**.
+6. `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox` —
+   **`230 passed (2.6m)`, 0 fallos.** El flake de `07-seguimiento-adr45.spec.ts` que preocupaba a las
+   dos pasadas anteriores no se reprodujo hoy tampoco.
+7. `grep -rn "\.fails(\|\.skip(" tests packages services` — **vacío**: sigue sin quedar ningún
+   `it.fails` ni `skip` en el árbol.
+
+**Un hallazgo nuevo, de infraestructura, no de código:** producción está **desactualizada**. Por SSH
+de sólo lectura (`docker inspect`, `docker exec … psql`, y `curl` contra las URLs públicas) se
+confirmó que el contenedor `koinonia-api` se creó el **2026-08-23 17:53**, antes de que existiera
+`docs/OBJETIVO.md` (creado a las 21:24 ese mismo día) y antes de los 22 agentes en paralelo de la
+pasada REMATE. Tiene aplicadas sólo **11 de las 13** migraciones (`0001`–`0011`; faltan
+`0012_sesion_endurecida` y `0013_rate_consumption_idempotencia`), y las rutas `/concentracion` y
+`/aprendizajes` —que sí existen en el árbol local— dan `404` en producción. Las 13 pantallas que
+**sí** estaban antes de ese corte responden `200`. Detalle en `docs/HANDOFF.md` §7 y en la fila de
+`ux-pantallas` abajo. No es un pendiente de código de este documento: es información para quien
+decida cuándo redesplegar (fuera del alcance de un agente sobre esta VPS).
+
+**Lo que este documento no re-verificó hoy**, para ser honesto sobre el límite de esta pasada: las
+**87** filas de la tabla de abajo **no se recorrieron una por una otra vez**. Se comprobaron
+puntualmente las filas de `ux-pantallas` (pantallas, navegación, producción) porque eran las que
+`HANDOFF.md` citaba mal, y quedan corregidas con su propia evidencia. El resto de la tabla queda tal
+como la dejó la segunda pasada REMATE (2026-08-24, más arriba), que ya citaba comandos y líneas de
+código para cada verificación marcada como tal.
+
+---
+
 ## Los 91 pendientes, por área
 
 **Nota 2026-08-24**: el título y los contadores por área son los de la auditoría original del
@@ -329,7 +373,7 @@ entero conviene recontar y actualizar los encabezados de cada área.
 | Estado | Requisito |
 | --- | --- |
 | `NO VERIFICADO` | Móvil primero: la interfaz debe ser responsive y accesible en pantallas pequeñas |
-| `PARCIAL` | Catorce pantallas disponibles: Inicio, Problemas, Propuestas, Deliberaciones, Decisiones, Consenso, Iniciativas, Mis tareas, Círculos/comisiones, Reun |
-| `PARCIAL` | Cada pantalla debe estar enlazada desde la navegación principal |
+| `PARCIAL` | Catorce pantallas disponibles: Inicio, Problemas, Propuestas, Deliberaciones, Decisiones, Consenso, Iniciativas, Mis tareas, Círculos/comisiones, Reuniones, Normas, Delegaciones, Historial, Verificar integridad. **Verificado 2026-08-24 (encargo C)**: existen **13 de las 14** (`find apps/web/app -name page.tsx`, 32 ficheros + lectura de `PRODUCT.md` §4). Sigue faltando sólo **Reuniones**, y sigue siendo deliberado: no tiene dominio de soporte detrás (ver «Lo que NO entra en este objetivo» arriba). El corte anterior de `docs/HANDOFF.md` decía «existen 8, faltan 6» — era falso, y se corrigió ahí también. |
+| `PARCIAL` | Cada pantalla debe estar enlazada desde la navegación principal. **Verificado 2026-08-24**: las 13 existentes están en `CONSULTA` de `apps/web/components/marco.tsx` y cubiertas por `tests/e2e/13-navegacion.spec.ts` (corrido hoy, en verde). Sigue `PARCIAL` y no `CUMPLE` sólo porque la 14.ª pantalla (Reuniones) no existe para poder enlazarse. |
 | `PARCIAL` | Accesibilidad WCAG 2.2 AA: cero violaciones serias o críticas en todas las pantallas |
-| `PARCIAL` | Producción debe responder a todas las rutas de las 14 pantallas |
+| `PARCIAL` | Producción debe responder a todas las rutas de las 14 pantallas. **Verificado 2026-08-24**: las 13 pantallas existentes responden `200` en `https://koinonia.167.114.118.213.sslip.io` (comprobado ruta por ruta). Sigue `PARCIAL` porque falta Reuniones (no construida, deliberado) **y porque producción está desactualizada respecto al código local** —el contenedor es de 2026-08-23 17:53, anterior a 12 commits incluida la tanda de 22 agentes en paralelo; `/concentracion` y `/aprendizajes`, que sí existen en el árbol local, dan `404` en producción. Ver `docs/HANDOFF.md` §7. |
