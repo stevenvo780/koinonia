@@ -209,10 +209,28 @@ export function propuestaDetalleDto(
   };
 }
 
+/**
+ * El método del estado, en los nueve nombres que la frontera pública conoce. Lo que la pantalla
+ * ve es exactamente el `kind` del motor: la coincidencia es uno a uno, y un `kind` desconocido
+ * (que el dominio no debería producir) cae al método por defecto para no romper la papeleta con
+ * un identificador que el cliente no entiende.
+ */
 function metodoDe(state: DecisionState): MetodoSoportado {
-  return state.config?.method.kind === 'sociocratic-consent'
-    ? 'sociocratic-consent'
-    : 'simple-majority';
+  const kind = state.config?.method.kind;
+  if (
+    kind === 'simple-majority' ||
+    kind === 'supermajority' ||
+    kind === 'unanimity' ||
+    kind === 'sociocratic-consent' ||
+    kind === 'score' ||
+    kind === 'irv' ||
+    kind === 'majority-judgment' ||
+    kind === 'condorcet-schulze' ||
+    kind === 'deliberative-sortition'
+  ) {
+    return kind;
+  }
+  return 'simple-majority';
 }
 
 export function decisionResumenDto(

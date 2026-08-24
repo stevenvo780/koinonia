@@ -5,11 +5,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import type { DecisionResumen } from '@koinonia/contracts';
 
-import { ErrorVisible } from '../../components/marco';
+import { ErrorVisible, useSesion } from '../../components/marco';
 import { Esqueleto, Medidor, Meta, Tarjeta, Vacio } from '../../components/piezas';
 import { cuando, fechaCortaEnFrase, plazo, traer } from '../../lib/api';
+import { nombreDelMetodo } from './metodos-en-palabras';
 
 export default function Decisiones(): ReactNode {
+  const { sesion } = useSesion();
   const [decisiones, setDecisiones] = useState<DecisionResumen[] | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
 
@@ -27,6 +29,19 @@ export default function Decisiones(): ReactNode {
         Abrir una votación es el acto más caro del sistema, no el más barato: exige que antes haya
         habido discusión y evidencia.
       </p>
+
+      {/*
+       * La entrada a abrir una votación vivía sólo dentro de `/propuestas/{id}`, y con dos reglas
+       * escritas a mano en un desplegable. Acá está la puerta, y detrás están las nueve reglas con
+       * la explicación de en qué caso conviene cada una.
+       */}
+      {sesion?.roles.includes('facilitator') === true && (
+        <p>
+          <Link className="boton" href="/decisiones/abrir">
+            Abrir una votación
+          </Link>
+        </p>
+      )}
 
       <ErrorVisible error={error} />
       {decisiones === undefined && error === undefined && <Esqueleto que="las decisiones" />}
@@ -55,7 +70,15 @@ export default function Decisiones(): ReactNode {
                 titulo={decision.titulo}
                 enlace={`/decisiones/${decision.id}`}
               >
-                <Meta>{plazo(decision.cierraEn)}</Meta>
+                {/*
+                 * Con qué regla se decide, en la tarjeta. Antes sólo estaba la frase larga de
+                 * «qué hace falta»; el nombre de la regla es lo que permite reconocer de un
+                 * vistazo que dos votaciones abiertas no se cuentan igual.
+                 */}
+                <Meta>
+                  {plazo(decision.cierraEn)}
+                  {nombreDelMetodo(decision.metodo)}
+                </Meta>
                 <Medidor
                   etiqueta="Se manifestaron"
                   valor={decision.seManifestaron}

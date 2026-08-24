@@ -485,6 +485,84 @@ el denominador de un umbral es un problema de legitimidad, no de redacción (B.1
 frase **en la papeleta**). (3) **La severidad la propone quien reporta y la confirma quien hace
 triage**, que no es la misma persona; bajarla exige justificación escrita en el mismo reporte.
 
+### Sesión real — 2026-08-24
+
+Primera corrida de verdad de este mecanismo: nunca se había lanzado ni un obrero. Se levantó la
+interfaz de desarrollo real (web en `:3199`, API en `:3001`, el mismo PostgreSQL de siempre detrás,
+sin dobles) y se lanzaron **10 obreros MiniMax en paralelo** (`enjambre.sh minimax`), cada uno con
+una misión concreta de una sola área — problemas, propuestas y enmiendas, votación, autorización
+horizontal/vertical, deliberaciones, delegaciones, iniciativas/capacidad, mensajes de error y jerga
+prohibida, navegación/enlaces rotos, sesión — usando exactamente la plantilla de arriba y el modo de
+entrar por `enlaceDeDesarrollo` (sin servidor de correo).
+
+**Lo que pasó con el enjambre, dicho tal cual, no lo que se esperaba que pasara.** De los 10, 8
+terminaron sin reporte: 6 por *timeout* del propio obrero (`ENJAMBRE-TIMEOUT`, ni una línea de
+salida recuperable — el intérprete bufferiza toda la salida y un `timeout` la mata sin volcarla) y 2
+por un error interno de la herramienta de MiniMax a mitad de sesión (`Failed to execute statement`,
+en un caso además un límite de tasa del propio proveedor). **Ninguno de los 10 entregó la tabla en
+el formato exigido.** Esto no es «no había nada que encontrar»: es que la infraestructura del
+enjambre barato falló ese día más de lo que el pliego asumía — dato real para quien decida cuánto
+confiarle a esta vía sin supervisión, y contradice el «MiniMax sobra, gastalo sin miedo» de la
+consigna operativa: hoy no sobró, se agotó a media sesión más de una vez.
+
+Dos de los ocho fallidos (`misión 2`: propuestas/enmiendas; `misión 4`: autorización horizontal)
+alcanzaron a dejar una transcripción parcial larga (37-47 KB de `curl` real contra el entorno) antes
+de caerse. Ninguna de las dos aportó un hallazgo nuevo: ambas **confirmaron** por su cuenta lo mismo
+que la verificación directa de abajo — enmendar con el mismo contenido se rechaza
+(`VERSION_UNCHANGED`), y B no puede retirar evidencia de A (403). Se descartan como reporte formal
+(no llegaron a la tabla final ni se verificaron dos veces por el propio obrero, que es la regla), y
+se usan sólo como corroboración de segunda mano de algo ya verificado de primera mano.
+
+**Por eso, siguiendo la regla del pliego («el comando que decide lo corrés vos»), la sesión se
+completó con exploración directa**, mismas reglas exactas del guion (camino feliz una vez, después
+valores límite, dobles envíos, emoji y texto de derecha a izquierda, IDs inventados, API directa
+saltando la interfaz, cada hallazgo verificado dos veces) — primero a mano contra la interfaz de
+desarrollo real con `curl`, después convertido en prueba hermética sobre PostgreSQL real
+(Testcontainers, el mismo patrón de `tests/integration/`) para que quede como regresión permanente y
+no como una nota.
+
+**Hallazgos reales — un solo hallazgo, el resto son protecciones confirmadas (ver más abajo):**
+
+| escenario | pasos | esperado | obtenido | evidencia | severidad |
+|---|---|---|---|---|---|
+| Alguien vota en una decisión con voto abierto (no `secret-ballot`) y quiere que su propia respuesta deje de ser recuperable más tarde, igual que un recibo que no delata la opción elegida | 1. Julián entra con su enlace mágico. 2. `POST /decisiones/:id/papeletas` con `{"respuesta":{"tipo":"binary","aprueba":false}}` → 201. 3. En una petición **posterior e independiente** (otra sesión de lectura, ej. Julián vuelve a abrir la pantalla al día siguiente, o alguien le pide que la abra delante suyo): `GET /decisiones/:id` con la sesión de Julián | Que `miRespuesta` no aparezca, o que sólo aparezca en la confirmación inmediata del propio envío — así lo describe ADR-0010 para el recibo del voto («…sin la opción elegida») y así lo exige C6-GATE/T-10 del modelo de amenazas contra la coerción | `GET /decisiones/:id` devuelve `"miRespuesta":"No"` en texto plano, en cualquier lectura posterior mientras la decisión siga `Open`, indefinidamente — no sólo en el instante del envío | `tests/exploratorias/decisiones-secreto-y-limites.test.ts` (prueba `it.fails` con el `ANÁLISIS` completo en el comentario); código: `services/api/src/http/presenters.ts` función `miRespuestaEnPalabras`, expuesta en `decisionDetalleDto`; pantalla: `apps/web/app/decisiones/[id]/page.tsx:219,388,390` («Tu respuesta ahora mismo es «{decision.miRespuesta}»») | **S1** — toca el secreto del voto y la coerción del votante (T-10), así que el piso es S1 aunque el defecto viva en presentación y no en el ledger (regla 2 de arriba). Con 300 personas que se conocen entre sí, pedirle a alguien que abra su propia votación es tan trivial como pedir un pantallazo, y el sistema se lo entrega sin fricción mientras la votación esté abierta. Coincide con un hallazgo independiente de otra sesión de verificación de `docs/THREAT_MODEL.md` T-10 el mismo día: dos vías distintas llegan al mismo defecto. |
+
+Este hallazgo **no se corrige en esta sesión**: `presenters.ts` y `apps/web/app/decisiones/[id]/page.tsx`
+quedan fuera de la propiedad de escritura de esta sesión (`tests/exploratorias/**` y esta sección
+nada más). La prueba de regresión queda escrita con `it.fails(...)` a propósito — así el CI se
+mantiene verde sin fingir que el defecto no existe, y el día que alguien lo corrija esa misma prueba
+empieza a fallar «al revés» (pasó cuando se esperaba que fallara), que es la señal exacta de que hay
+que quitarle `.fails` y dejarla en verde normal. Queda para quien tenga `presenters.ts` y esa pantalla
+en su lista.
+
+**Protecciones confirmadas** (se probó activamente romperlas; no se rompieron; cada una es ahora una
+prueba de regresión permanente — ver `tests/exploratorias/*.test.ts`, cada archivo corrido en verde
+con `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run tests/exploratorias/`, y cada aserción clave
+invertida a mano una vez para comprobar que la prueba SÍ se pone roja si la protección se rompe,
+según manda la regla 1 de la casa):
+
+| Área | Qué se intentó | Qué hizo el sistema |
+|---|---|---|
+| Problemas | Círculo inventado (32 hex que no existe) | `404 NO_ENCONTRADO`, nunca un problema fantasma |
+| Problemas | Título de 10 000 caracteres | `400 DATOS_INVALIDOS`, nunca un `500` |
+| Problemas | Emoji y texto árabe (derecha a izquierda) en título y cuerpo | `201`, texto conservado byte a byte de ida y vuelta por PostgreSQL |
+| Problemas | «Me pasa lo mismo» dos veces con la misma persona, con el mismo `requestId` repetido y con uno nuevo cada vez | `422 ALREADY_ME_TOO` en ambos casos; el contador sólo sube una vez |
+| Propuestas | Plan con `revisarEn` en el pasado, y con `revisarEn = 0` (el epoch) | `422 EXECUTION_PLAN_REVIEW_NOT_FUTURE` en los dos casos, sin tratar el epoch como especial |
+| Propuestas | Plan con `criteriosDeExito: []` | `400 DATOS_INVALIDOS`, rechazado por el contrato antes de llegar al dominio |
+| Propuestas | Enmendar con el mismo contenido exacto que la versión vigente (`requestId` nuevo cada vez) | `422 VERSION_UNCHANGED`, no crea una versión repetida |
+| Votación | `POST /decisiones/:id/papeletas` sin `Authorization` | `401`, nunca se cuenta como abstención silenciosa |
+| Votación | Una cuenta con rol `member` intenta `POST /decisiones` (abrir votación) por API directa | `403` en el servidor, no sólo un botón oculto en pantalla |
+| Votación | `GET /decisiones/:id` y `GET /decisiones/:id/resultado` con la votación todavía `Open` y votos ya cargados | Ni desglose ni `desenlace` ni `tablas`; el resultado no da `200` |
+| Votación | Doble voto de la misma persona, con dos respuestas distintas | Una sola persona manifestada (INV-07: la última papeleta reemplaza, no se suma) |
+
+Nota aparte, sin prueba propia: al pasar por `/mi/capacidad` contra la instancia compartida de
+desarrollo (no la hermética de las pruebas) se encontró un `503 CAPACITY_SERVICE_UNAVAILABLE`
+persistente. Verificado por lectura de código (`services/api/src/anchor` no; `services/api/src/server.ts`
+función `vaultFromEnvironment`) que es **exactamente lo esperado**: esa instancia compartida no tenía
+`KOINONIA_VAULT_MASTER_KEY` en su entorno, y en modo desarrollo sin esa variable el sistema falla
+cerrado a propósito (nunca sirve ni guarda capacidad sin cifrar) en vez de fingir que funciona. No es
+un hallazgo del producto; es una nota de configuración de esa instancia de desarrollo puntual.
+
 ---
 
 ## 9. Adversarial testing
@@ -546,25 +624,206 @@ comentario que explique por qué lo son**; sin comentario, la exclusión no pasa
 
 ## 11. Rendimiento
 
-| Métrica | Presupuesto |
-|---|---|
-| `tally` con `N = 300` sin delegación | < 50 ms (p95) |
-| `tally` con `N = 300` y grafo denso (`maxDepth = 4`) | < 200 ms (p95) |
-| `replay` de un log de 1 000 eventos | < 150 ms (p95) |
-| Verificación completa del ledger, 100 000 eventos | < 60 s |
-| `POST /ballots` con 100 usuarios concurrentes | p95 < 400 ms, p99 < 1 s, 0 errores |
-| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos |
-| Pantalla de votación en Slow 3G | LCP < 2,5 s · INP < 200 ms · CLS < 0,1 |
-| Bundle inicial de `apps/web` | < 250 kB comprimido |
+| Métrica | Presupuesto | Medido 2026-08-24 |
+|---|---|---|
+| `tally` con `N = 300` sin delegación | < 50 ms (p95) | **✓ 2,9 ms (p95)** — §11.3 |
+| `tally` con `N = 300` y grafo denso (`maxDepth = 4`) | < 200 ms (p95) | no medido esta sesión (§11.4) |
+| `replay` de un log de 1 000 eventos | < 150 ms (p95) | **✓ 1,4 ms (p95)**, log de 1 002 — §11.3 |
+| Verificación completa del ledger, 100 000 eventos | < 60 s | 20 000 reales en 0,95 s; **100 000 no se corrió** (§11.3) |
+| `POST /ballots` con 100 usuarios concurrentes | p95 < 400 ms, p99 < 1 s, 0 errores | ver pico de cierre abajo — el problema no es la latencia |
+| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos | **✗ NO SE CUMPLE — hallazgo crítico, §11.2** |
+| Pantalla de votación en Slow 3G | LCP < 2,5 s · INP < 200 ms · CLS < 0,1 | no medido esta sesión (fuera del alcance de `tests/carga`) |
+| Bundle inicial de `apps/web` | < 250 kB comprimido | no medido esta sesión |
 
 **El escenario que de verdad importa es el pico de cierre.** El uso de una asamblea no es uniforme:
 casi nadie vota el primer día y mucha gente vota en la última hora, porque la ventana es dura y no hay
 gracia. Una degradación a las 17:59 no es un problema de rendimiento: es **privación del derecho a
 votar**, y la papeleta rechazada por *timeout* a las 18:00:00 no se recupera nunca.
 
+**2026-08-24: se escribieron y se corrieron pruebas de carga por primera vez** (`tests/carga/`, este
+encargo). Antes de esta fecha el pliego pedía carga con k6 y **no existía ningún guion**, corrido o
+sin correr. Ahora existen dos capas — ver §11.1 — y correrlas encontró que el escenario que "de verdad
+importa" **no se cumple hoy**, por una causa mucho más grave que la latencia: §11.2.
+
+### 11.1 Qué existe y cómo correrlo
+
+`tests/carga/` es la propiedad exclusiva de este encargo. Dos capas, porque el pliego pide k6
+explícitamente y k6 **no está instalado en este entorno** (`which k6` → nada) y la instrucción es no
+instalarlo — así que la carga real de esta sesión se corrió con Node puro, y k6 queda escrito para el
+día que el binario esté disponible:
+
+- **`tests/carga/node/*.run.mjs`** — ejecutables HOY, sin instalar nada: Node 22 + `fetch()` +
+  `perf_hooks` bastan para percentiles con concurrencia real. Cuando hace falta PostgreSQL, lo
+  levantan ellos mismos con Testcontainers (igual que `tests/integration/`) — nadie tiene que tener
+  nada corriendo de antemano. Cuatro guiones:
+  - `01-tiempos-api-navegacion-consultas.run.mjs` — tiempos de API en serie, carga inicial
+    (`/portada` de golpe), navegación (sesión secuencial por pantallas) y consultas sostenidas.
+  - `02-pico-cierre-y-escrutinio.run.mjs` — **el escenario que más importa**: `CARGA_N` personas
+    matriculadas de verdad, una decisión abierta por HTTP, el reloj de la API (un puerto
+    controlable, ADR-0001) adelantado hasta el último minuto de la ventana, y `CARGA_N` papeletas
+    disparadas TODAS A LA VEZ contra el servidor real. Encontró el hallazgo de §11.2.
+  - `03-tally-y-replay-dominio.run.mjs` — `packages/domain` puro (sin red, sin base): construye un
+    `DecisionLog` real con las mismas funciones de producción (`draftDecision`, `openDecision`,
+    `castBallot`, `closeDecision`) y cronometra `computeResult`/`replay`/`verifyLog`. Existe porque
+    §11.2 hace que un log de N=300 papeletas REALES sea imposible de conseguir por el camino HTTP
+    concurrente — así que este guion lo construye por el camino secuencial, sin la carrera.
+  - `04-ledger-a-escala.run.mjs` — `governance.event` con miles de eventos reales (Testcontainers):
+    escritura en volumen, `readStream`/`verifyAggregate` de un agregado y `verifyLedger` de la tabla
+    completa.
+  - Todos aceptan variables de entorno para ajustar `N`/concurrencia/repeticiones — ver el
+    encabezado de cada fichero. Todos imprimen, al final, un bloque JSON listo para pegar en esta
+    sección la próxima vez que alguien vuelva a correrlos.
+- **`tests/carga/k6/*.js`** — escritos con la API real de k6 (`scenarios`, `thresholds`, `Trend`,
+  `Counter`, `ramping-vus`, `shared-iterations`), **NO corridos en este entorno**. Tres guiones que
+  cubren el mismo terreno que los de Node pero por el camino que el pliego nombró (`k6 run
+  tests/carga/k6/<archivo>.js` contra `BASE_URL`): `01-tiempos-api-y-carga-inicial.js`,
+  `02-navegacion-y-consultas.js`, `03-pico-cierre-votacion.js`. Este último documenta en su propia
+  cabecera por qué, contra un servidor real, no puede acortar la ventana mínima de una hora
+  (`duracionHoras` ≥ 1 en el contrato) como sí puede el guion Node vía el reloj-puerto: admite
+  apuntar a una decisión ya abierta (`DECISION_ID`, `HUELLA_VERSION`, `CIERRA_EN_MS`) o esperar la
+  hora completa contra un servidor de desarrollo.
+
+Corridos hoy contra: PostgreSQL 16 en un contenedor Testcontainers efímero (no la base compartida de
+`docker compose`), Node 22.23.1, host CachyOS de 32 núcleos **compartido con otros 6-12 agentes
+trabajando a la vez** (`free -h` marcaba ~102 GiB de 125 GiB en uso al momento de medir) — así que
+los números de latencia absoluta tienen ruido de vecino ruidoso y **no** son los de un servidor de
+producción dedicado; el hallazgo estructural de §11.2, en cambio, no depende de la máquina: es una
+carrera de escritura que existe en el código, se reproduce igual de mal con poca o mucha carga
+ambiental, y se confirmó dos veces por separado (`N=15` y `N=300`, resultados abajo).
+
+### 11.2 HALLAZGO CRÍTICO — el pico de cierre pierde votos, y una parte los pierde EN SILENCIO
+
+**Comando:** `KOINONIA_REQUIRE_DOCKER=1 node tests/carga/node/02-pico-cierre-y-escrutinio.run.mjs`
+(por defecto `CARGA_N=300`). Corrido dos veces esta sesión, resultados consistentes:
+
+| Corrida | Papeletas HTTP 201 | Realmente persistidas (`participacion.emitidas`) | 500 explícito | **Fantasma (201 pero perdida)** |
+|---|---|---|---|---|
+| N=15 | 1 / 15 | 1 | 14 | 0 |
+| N=300 | 34 / 300 | **3** | 266 | **31** |
+
+Es decir: con 300 personas votando en el mismo minuto, **sólo 3 votos quedaron realmente contados**,
+266 recibieron un 500 explícito (`ERROR_INTERNO`, «Algo se rompió de nuestro lado») y **31 recibieron
+un `201` — "tu voto se registró" — que era falso: nunca llegaron a la base**. Nadie que reciba un 201
+tiene ninguna señal de que su voto no cuenta.
+
+Esto **no es lentitud**: las respuestas —éxito, error o fantasma— vuelven en cientos de milisegundos,
+muy por debajo de cualquier *timeout* razonable (ver percentiles completos en §11.3). Es un defecto de
+**concurrencia de escritura** en el camino que persiste una papeleta, con dos síntomas distintos y la
+misma raíz:
+
+**Causa raíz.** `emitirPapeleta()` (`services/api/src/http/service.ts:1403-1444`) lee el
+`DecisionLog` UNA vez (`verDecision`), construye la papeleta en memoria contra esa lectura
+(`castBallotBy`) y llama **una sola vez, sin reintentar**, a `persistDecisionLog()`
+(`services/api/src/decision/repository.ts:51-107`). Cuando dos o más personas votan en la misma
+decisión casi al mismo tiempo, todas leen el mismo estado y todas intentan escribir contra la misma
+cabeza esperada — y sólo puede ganar una:
+
+- **Camino del 500 explícito.** Si, para cuando esta papeleta llega a escribir, el ledger ya avanzó
+  MÁS de lo que esta papeleta esperaba, `append()` (`services/api/src/ledger/event-store.ts:331-374`)
+  lanza `HeadConflictError`. La propia función documenta por qué **no** la reintenta sola («un
+  conflicto de cabeza con expectativa EXPLÍCITA es una respuesta del dominio, no un problema de
+  infraestructura: reintentarlo escribiría sobre un estado que el llamante nunca vio» — comentario en
+  `event-store.ts:351-353`, con el que este informe está de acuerdo). El problema no es esa decisión
+  de diseño: es que **nadie, ni `emitirPapeleta` ni la ruta HTTP, vuelve a intentarlo con el estado
+  fresco**. `grep -rn HeadConflictError services/api/src` fuera de `ledger/` no da NINGÚN resultado:
+  el error sube sin que nadie lo atrape, cae en el manejador genérico
+  (`services/api/src/http/app.ts:591-593`) y sale como `500 ERROR_INTERNO` — sin siquiera registrar
+  la causa real en el log del servidor (el manejador nunca llama a `app.log.error`).
+- **Camino de la papeleta FANTASMA — el más grave de los dos.** Si, en cambio, el ledger avanzó
+  EXACTAMENTE lo mismo que el largo del log de esta papeleta (`persisted === log.length`, el caso
+  límite en el que la cuenta cuadra por pura coincidencia aritmética aunque el CONTENIDO no sea el
+  mismo), `persistDecisionLog()` entra a su rama de «nada pendiente que escribir»
+  (`repository.ts:71-73`, `if (pending.length === 0) return { appended: 0, ... }`) **sin comparar el
+  contenido contra lo que de verdad hay en la base**. Esa rama existe para el reintento idempotente
+  legítimo (la MISMA petición, con el MISMO `requestId`, que ya se persistió) — pero aquí dispara
+  también cuando la papeleta de OTRA persona ocupó por casualidad ese mismo número de posición: la
+  propia papeleta de quien llamó **nunca se escribió**, y sin embargo `emitirPapeleta` no distingue
+  el caso y responde `201` con el estado que YA tenía en memoria (`service.ts:1442-1443`), que dice
+  que el voto se contó. La ruta HTTP (`app.ts:1180-1195`) tampoco inspecciona `appended`: siempre
+  manda `201` con `decisionDetalleDto(...)`.
+
+**Por qué esto es más grave que «0 rechazos por *timeout*».** El presupuesto original de esta tabla
+sólo pedía que nadie se quedara esperando. Lo que se encontró es peor en dos sentidos: (1) el rechazo
+no es un *timeout*, es una respuesta de error definitiva bajo un patrón de tráfico completamente
+esperable (cualquier ráfaga de más de un puñado de personas votando la misma decisión casi a la vez
+—no hace falta llegar a 300—); y (2) una fracción de esos "rechazos" en realidad **no se comunican
+como rechazo**: la persona ve la confirmación de que votó y su voto no existe. En un sistema de
+gobernanza esto es una falla de integridad electoral, no sólo de rendimiento.
+
+**Qué NO es esto.** No es un artefacto del guion de carga: se leyó el código fuente de
+`persistDecisionLog`, `append` y el manejador de errores para confirmar la causa exacta antes de
+escribir este párrafo (líneas citadas arriba), no sólo se infirió del síntoma. No es tampoco cuestión
+de que la máquina esté ocupada (§11.1): el mecanismo es una carrera lógica que existe con cualquier
+velocidad de red, y se reprodujo igual en la corrida de N=15.
+
+**Qué no se tocó.** `services/api/src/http/service.ts` y `services/api/src/decision/repository.ts` no
+son propiedad de este encargo (`tests/carga/**` y esta sección de `docs/TESTING.md` sí lo son) — la
+corrección queda para quien tenga esos ficheros asignados. La forma más directa de arreglarlo, a
+juzgar por lo leído, es un bucle de reintento en `emitirPapeleta` que, ante `HeadConflictError` (o
+ante `appended === 0` sin que el `requestId` coincida con un reintento propio), vuelva a leer el log,
+reconstruya la papeleta contra el estado fresco y reintente — el mismo patrón que
+`tests/integration/append-concurrente.test.ts` ya prueba para la creación de un agregado, pero
+aplicado también a la escritura repetida sobre uno que ya existe.
+
+### 11.3 Números reales medidos, 2026-08-24
+
+**Tiempos de API, carga inicial, navegación, consultas** —
+`node tests/carga/node/01-tiempos-api-navegacion-consultas.run.mjs` (valores por defecto):
+
+| Medición | n | p50 | p95 | p99 |
+|---|---|---|---|---|
+| `GET /portada` (serie) | 50 | 10,4 ms | 22,2 ms | 29,8 ms |
+| `GET /decisiones` (serie) | 50 | 2,9 ms | 4,9 ms | 7,6 ms |
+| `GET /problemas` (serie) | 50 | 9,7 ms | 12,5 ms | 15,6 ms |
+| Carga inicial: `/portada` × 300 a la vez | 300 | — | 764,0 ms | 764,5 ms (0 errores; 383 req/s) |
+| Navegación: `/portada` (60 sesiones, concurrencia 15) | 60 | 39,8 ms | 48,5 ms | 52,2 ms |
+| Navegación: detalle de propuesta | 60 | 18,0 ms | 33,8 ms | 34,5 ms |
+| Consultas mezcladas × 600 (concurrencia 20) | 600 | 9,4 ms | 59,8 ms | 103,0 ms (0 errores) |
+
+**Tally y replay puros (dominio, sin red)** — `node tests/carga/node/03-tally-y-replay-dominio.run.mjs`
+(valores por defecto, 300 repeticiones): `computeResult` con N=300 → **p95 2,9 ms, p99 3,6 ms**
+(presupuesto < 50 ms, cumple con margen amplio); `verifyLog` (recomputa toda la cadena de hashes) con
+N=300 → p95 17,1 ms; `replay` de un log de 1 002 eventos (padrón sintético de 1 000, mayor a las ~300
+personas reales, a propósito) → **p95 1,4 ms, p99 1,7 ms** (presupuesto < 150 ms).
+
+**Ledger a escala** — `node tests/carga/node/04-ledger-a-escala.run.mjs`: con 5 000 eventos reales
+repartidos en 500 agregados, `verifyLedger()` completo tomó **349 ms**; con 20 000 eventos (mismos 500
+agregados, 40 eventos cada uno — para no repetir el costo de género de agregado), **955 ms**. La
+escritura sostenida ronda **~500 eventos/s** en ambas corridas por igual (20 000 eventos en 39,8 s),
+consistente con que `attemptAppend` toma un `pg_advisory_xact_lock` de ALCANCE GLOBAL sobre el ledger
+(`services/api/src/ledger/event-store.ts`, comentario «(1) Cerrojo de escritura del ledger. Orden
+total») — cada escritura, sea del agregado que sea, serializa contra todas las demás. Extrapolando
+LINEALMENTE de estas dos corridas a 100 000 eventos: **entre 4,8 s y 7,0 s**, muy por debajo del
+presupuesto de 60 s — pero es una extrapolación, no una medición a 100 000; no se corrió a esa escala
+esta sesión por tiempo.
+
+**Pico de cierre y escrutinio** — ver §11.2 para los números completos; es la corrida más importante
+de esta sesión y merece su propia sección, no un renglón de tabla.
+
+### 11.4 Lo que quedó sin medir esta sesión
+
+- **`tally` con grafo denso de delegación (`maxDepth = 4`)**: el motor lo soporta
+  (`packages/domain/src/delegation.ts`, probado en `packages/domain/test/delegation.test.ts`) pero
+  armar el escenario (una cadena de delegaciones válida además del padrón) no entró en el tiempo de
+  esta sesión. `tests/carga/node/03-tally-y-replay-dominio.run.mjs` es el lugar natural para
+  agregarlo — reutiliza las mismas funciones de producción que ya usa para el caso sin delegación.
+- **Web vitals de la pantalla de votación en Slow 3G** y **tamaño del *bundle*** de `apps/web`: son
+  medición de frontend (Lighthouse/`chrome-devtools`), no de API/base; quedan fuera del alcance de
+  `tests/carga`, que es donde este encargo tiene propiedad de escritura.
+- **Verificación del ledger a 100 000 eventos de verdad** (no la extrapolación de §11.3): el guion
+  (`04-ledger-a-escala.run.mjs`) ya admite el tamaño por variable de entorno
+  (`CARGA_AGREGADOS`/`CARGA_POR_AGREGADO`); sólo hace falta el tiempo de máquina para correrlo (la
+  escritura, no la verificación, es la parte lenta: al ritmo medido de ~500 eventos/s, 100 000
+  eventos son ≈ 200 s sólo de escritura).
+- **Los tres guiones de k6** (§11.1): escritos con la API real de k6, no corridos — k6 no está
+  instalado en este entorno y la instrucción del encargo es no instalarlo.
+
 **Cuándo.** Microbenchmarks de `domain` y `crypto` en cada PR que los toque: regresión > 20 % frente a
-`main` **falla el build**; entre 10 % y 20 % avisa. k6 nightly y antes de cada release. Web vitals en
-cada PR que toque `apps/web`. Ledger a escala, nightly.
+`main` **falla el build**; entre 10 % y 20 % avisa. Nada de esto corre todavía en un flujo de trabajo
+de `.github/workflows/` (§13 ya lo marca así para k6 nightly, y sigue siendo cierto para los guiones
+Node de `tests/carga/node/`): existen y se corrieron a mano hoy, pero integrarlos al pipeline —
+CI, nightly, antes de cada *release*— es trabajo pendiente de quien tenga esos flujos de trabajo
+asignados. Web vitals en cada PR que toque `apps/web`. Ledger a escala, nightly.
 
 ---
 

@@ -370,9 +370,124 @@ export type PropuestaDetalle = z.infer<typeof propuestaDetalle>;
 // Decisiones
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** Los dos métodos del MVP (PRODUCT §9), con los nombres del motor. */
-export const metodo = z.enum(['simple-majority', 'sociocratic-consent']);
+/**
+ * Los nueve métodos que el sistema soporta hoy. El motor (`@koinonia/domain`) ya implementa los
+ * nueve; el catálogo público está en `metodos.ts` y el cliente lo cruza por `GET /metodos` para
+ * mostrar nombre, descripción, forma de papeleta y si admite delegación. Los identificadores
+ * coinciden uno a uno con los del motor: quien abre una votación manda el `id` del catálogo, y
+ * el servidor lo traduce a la configuración congelada del método.
+ */
+export const metodo = z.enum([
+  'simple-majority',
+  'supermajority',
+  'unanimity',
+  'sociocratic-consent',
+  'score',
+  'irv',
+  'majority-judgment',
+  'condorcet-schulze',
+  'deliberative-sortition',
+]);
 export type Metodo = z.infer<typeof metodo>;
+
+/**
+ * La configuración pública de cada método, discriminada por el nombre del método. Cada rama
+ * admite los campos opcionales que el catálogo correspondiente describe; los que no se mandan
+ * toman el valor por defecto declarado en `services/api/src/http/service.ts:construirMetodo`.
+ *
+ * Es la MISMA forma que se valida en el cliente (la pantalla usa `configSchema` del catálogo) y
+ * en el servidor (este esquema): una sola fuente de verdad sobre la frontera, igual que el resto
+ * de `@koinonia/contracts`.
+ */
+export const configuracionDeMetodoHttp = z.discriminatedUnion('metodo', [
+  z
+    .object({
+      metodo: z.literal('simple-majority'),
+      abstenciones: z.enum(['excluir', 'incluir', 'como-no']).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('supermajority'),
+      fraccion: z
+        .object({
+          numerador: z.number().int().min(1).max(99),
+          denominador: z.number().int().min(1).max(100),
+        })
+        .strict()
+        .optional(),
+      estricto: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('unanimity'),
+      abstencionesBloquean: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('sociocratic-consent'),
+      rondasMaximas: z.number().int().min(1).max(5).optional(),
+      minimoDeParticipacion: z
+        .object({
+          numerador: z.number().int().min(1).max(99),
+          denominador: z.number().int().min(1).max(100),
+        })
+        .strict()
+        .optional(),
+      plazoDelPanelHoras: z.number().int().min(1).max(720).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('score'),
+      coberturaMinima: z
+        .object({
+          numerador: z.number().int().min(1).max(99),
+          denominador: z.number().int().min(1).max(100),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('irv'),
+      admiteTruncamiento: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('majority-judgment'),
+      escala: z
+        .array(
+          z
+            .object({
+              id: z.string().min(1).max(32),
+              etiqueta: z.string().min(1).max(40),
+            })
+            .strict(),
+        )
+        .min(3)
+        .max(7)
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('condorcet-schulze'),
+      admiteTruncamiento: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      metodo: z.literal('deliberative-sortition'),
+      tamanoDeMuestra: z.number().int().min(1).max(100).optional(),
+    })
+    .strict(),
+]);
+export type ConfiguracionDeMetodoHttp = z.infer<typeof configuracionDeMetodoHttp>;
 
 export const abrirDecision = z.object({
   requestId,
@@ -380,6 +495,13 @@ export const abrirDecision = z.object({
   /** Versión exacta que se somete. Si se omite, la vigente. */
   version: z.number().int().positive().optional(),
   metodo,
+  /**
+   * Configuración pública del método, opcional. Si se omite, el servidor usa los valores por
+   * defecto del método elegido (los del catálogo de `metodos.ts`). La clave de discriminación es
+   * `metodo`, así que un error de método y configuración no se confunde con un método sin
+   * configuración.
+   */
+  configuracion: configuracionDeMetodoHttp.optional(),
   /** Cuántas horas dura la ventana. Se muestra siempre en pantalla. */
   duracionHoras: z.number().int().min(1).max(720),
   /**
@@ -388,6 +510,9 @@ export const abrirDecision = z.object({
    * Apagado si no se dice nada, que es el default institucional: delegar es un acto explícito de
    * configuración y no una comodidad que se hereda. Quien abre la votación lo decide al abrirla y
    * después ya no se puede cambiar: las reglas se congelan al abrir y ésta es una de ellas.
+   *
+   * El servidor rechaza este campo si el método elegido no admite delegación (`sociocratic-consent`
+   * y `deliberative-sortition`): el catálogo lo dice y el motor lo aplica.
    */
   delegacion: z.boolean().optional(),
 });

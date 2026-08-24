@@ -27,6 +27,7 @@ import { Ficha, Medidor, Meta, Plazo } from '../../../components/piezas';
 import { PlanEjecucionVisible } from '../../../components/plan-ejecucion';
 import { useAccionUnica } from '../../../lib/acciones';
 import { cuando, enviar, traer } from '../../../lib/api';
+import { enPalabras, nombreDelMetodo, porQueTodaviaNo } from '../metodos-en-palabras';
 
 type Postura = 'consent' | 'concern' | 'object';
 type Binario = 'si' | 'no' | 'abstengo';
@@ -65,7 +66,7 @@ export default function Decision(): ReactNode {
     setEnviado(false);
     if (decision === undefined) return;
     const respuesta =
-      decision.metodo === 'sociocratic-consent'
+      enPalabras(decision.metodo).formulario === 'consentimiento'
         ? {
             tipo: 'consent' as const,
             postura,
@@ -125,7 +126,19 @@ export default function Decision(): ReactNode {
     );
   }
 
-  const consentimiento = decision.metodo === 'sociocratic-consent';
+  /**
+   * Qué papeleta le toca a este método.
+   *
+   * Antes esto era `decision.metodo === 'sociocratic-consent'`, y todo lo que no fuera eso recibía
+   * el sí/no. Con dos métodos en el sistema la simplificación era exacta; con nueve dejó de serlo y
+   * pasó a ser un error que sólo se ve al enviar: una votación de deliberación aleatoria —donde
+   * **nadie llena una papeleta**— mostraba «¿Estás de acuerdo con este texto?», y cualquier
+   * respuesta se estrellaba contra el motor, que para ese método no admite ninguna clase de
+   * papeleta. Ahora la papeleta la decide el método, en un solo sitio y con las cuatro salidas
+   * posibles dichas. Ver `../metodos-en-palabras.ts`.
+   */
+  const formulario = enPalabras(decision.metodo).formulario;
+  const consentimiento = formulario === 'consentimiento';
   const cerrada = decision.estado !== 'Open';
 
   return (
@@ -160,6 +173,14 @@ export default function Decision(): ReactNode {
          */}
         <section aria-labelledby="regla-titulo">
           <h2 id="regla-titulo">Qué hace falta para que esto pase</h2>
+          {/*
+           * El nombre de la regla, antes de la regla. Faltaba: la pantalla explicaba con qué se
+           * cuenta pero no decía cómo se llama eso, y sin el nombre nadie puede ir a leer en qué
+           * casos conviene ni discutir en asamblea si era el que correspondía.
+           */}
+          <p className="suave">
+            Se decide con <strong>{nombreDelMetodo(decision.metodo)}</strong>.
+          </p>
           <p>{decision.queHaceFaltaParaQuePase}</p>
         </section>
         <Medidor
@@ -233,7 +254,28 @@ export default function Decision(): ReactNode {
           </Aviso>
         )}
 
-        {!cerrada && decision.puedoDecidir && (
+        {!cerrada && decision.puedoDecidir && formulario === 'sin-papeleta' && (
+          <Aviso tipo="atencion" titulo="Acá no hay nada que responder">
+            {enPalabras(decision.metodo).queLlenaLaGente} Estás en la lista de quienes podían
+            decidir, así que podés salir sorteada o sorteado: si sale tu nombre, te va a llegar el
+            aviso y a partir de ahí la conversación sigue con ese grupo.
+          </Aviso>
+        )}
+
+        {/*
+         * El caso que antes terminaba en un rechazo del motor sin explicación: el método existe, el
+         * motor lo cuenta, y la respuesta que pide no tiene todavía por dónde entrar. Se dice, con
+         * la misma frase que usa la pantalla de abrir, en vez de ofrecer un sí/no que iba a fallar.
+         */}
+        {!cerrada && decision.puedoDecidir && formulario === 'todavia-no' && (
+          <Aviso tipo="atencion" titulo="Esta votación todavía no se puede responder">
+            {porQueTodaviaNo(decision.metodo)} Mientras tanto no se pierde nada: el texto y el plan
+            siguen acá, y quien cuida el procedimiento puede cerrarla y volver a abrirla con una
+            regla que sí se pueda responder.
+          </Aviso>
+        )}
+
+        {!cerrada && decision.puedoDecidir && (consentimiento || formulario === 'binaria') && (
           <form onSubmit={(e) => void responder(e)} noValidate>
             {consentimiento ? (
               <>

@@ -33,6 +33,15 @@ import { Aviso, Cargando, ErrorVisible, useSesion } from '../../../components/ma
 import { Ficha, Meta, type VarianteFicha } from '../../../components/piezas';
 import { useAccionUnica } from '../../../lib/acciones';
 import { cerrarFrase, cuando, enviar, ErrorDeApi, traer } from '../../../lib/api';
+import { hayRevisionColectiva, type EscalonTarea } from '../escalones';
+import {
+  AntesDeArrancar,
+  AvisoDeRevisionColectiva,
+  PeldanoDeTarea,
+  PlanComprometido,
+  selloDeTareas,
+  useEscalones,
+} from '../piezas-ejecucion';
 import { SeccionEvaluacion } from './evaluacion';
 
 type RespuestaElegida = 'aceptar' | 'rechazar' | 'pedir-reasignacion';
@@ -95,6 +104,12 @@ export default function DetalleIniciativa(): ReactNode {
 
   const [miembros, setMiembros] = useState<MiembrosCirculo | undefined>(undefined);
   const [errorMiembros, setErrorMiembros] = useState<unknown>(undefined);
+
+  // Los peldaños de incumplimiento (ADR-0040). Van por su propia ruta y no dentro del detalle
+  // porque el servidor tiene que decidir, tarea por tarea, cuáles le corresponde ver a quien
+  // pregunta: los dos primeros son privados de quien tiene la tarea. Si esa petición falla, la
+  // pantalla se queda sin peldaños y no muestra ningún error — ver `useEscalones`.
+  const escalones = useEscalones([id], selloDeTareas(iniciativa?.tareas ?? []));
 
   const [tituloHito, setTituloHito] = useState('');
   const [criterioHito, setCriterioHito] = useState('');
@@ -526,11 +541,22 @@ export default function DetalleIniciativa(): ReactNode {
       </aside>
 
       <div className="cuerpo-detalle">
-        <p className="suave">
-          Nace de un{' '}
-          <Link href={`/decisiones/${iniciativa.decisionId}/resultado`}>resultado aprobado</Link>.
-        </p>
         <p className="texto destacado">{iniciativa.objetivo}</p>
+
+        {/*
+         * De dónde sale y qué falta para arrancar. Sustituye a la línea suelta que decía «Nace de
+         * un resultado aprobado» con el enlace: decía lo mismo con menos —no contaba que la
+         * iniciativa se creó SOLA al cerrar la votación, ni cuánto dura el plazo de impugnación, ni
+         * cuánto falta— y mantener las dos habría dejado el mismo enlace dos veces en la misma
+         * columna.
+         */}
+        <AntesDeArrancar
+          decisionId={iniciativa.decisionId}
+          creadaEn={iniciativa.creadaEn}
+          ratificableEn={iniciativa.ratificableEn}
+          activa={iniciativa.activa}
+          activadaEn={iniciativa.activadaEn}
+        />
 
         <section aria-labelledby="criterios-iniciativa-titulo">
           <h2 id="criterios-iniciativa-titulo">Cómo sabremos si funcionó</h2>
@@ -546,8 +572,11 @@ export default function DetalleIniciativa(): ReactNode {
           </ul>
         </section>
 
+        <PlanComprometido hitos={iniciativa.hitos} tareas={iniciativa.tareas} />
+
         <section aria-labelledby="hitos-titulo">
           <h2 id="hitos-titulo">Hitos y tareas</h2>
+          {hayRevisionColectiva(escalones) && <AvisoDeRevisionColectiva />}
           {!iniciativa.activa && (
             <div className="vacio" role="status">
               <p>Los hitos aparecerán acá después de la ratificación.</p>
@@ -578,6 +607,7 @@ export default function DetalleIniciativa(): ReactNode {
                               iniciativaId={id}
                               tarea={tarea}
                               todas={iniciativa.tareas}
+                              escalon={escalones.get(tarea.id)}
                               esResponsableInicial={iniciativa.esResponsableInicial}
                               miembros={miembros}
                               accionEnCurso={accionEnCurso}
@@ -870,6 +900,7 @@ function TareaVisible({
   iniciativaId,
   tarea,
   todas,
+  escalon,
   esResponsableInicial,
   miembros,
   accionEnCurso,
@@ -886,6 +917,8 @@ function TareaVisible({
   readonly iniciativaId: string;
   readonly tarea: Tarea;
   readonly todas: readonly Tarea[];
+  /** El peldaño vigente de esta tarea, si hay alguno **y** si a quien mira le corresponde verlo. */
+  readonly escalon: EscalonTarea | undefined;
   readonly esResponsableInicial: boolean;
   readonly miembros: MiembrosCirculo | undefined;
   readonly accionEnCurso: string | undefined;
@@ -1053,6 +1086,14 @@ function TareaVisible({
             </dd>
           </div>
         </dl>
+        {/*
+         * El peldaño va inmediatamente debajo de los datos y encima de todo lo demás porque es lo
+         * único de esta tarjeta que le pide algo a alguien AHORA. Va después del estado y no en su
+         * lugar: son dos lecturas distintas —«dónde está el trabajo» y «qué le toca a la comunidad
+         * hacer al respecto»— y fundirlas dejaría sin decir la segunda, que es la que ADR-0040
+         * regula.
+         */}
+        {escalon !== undefined && <PeldanoDeTarea escalon={escalon} />}
         {estadoDependencias.length > 0 && (
           <p className="suave">
             Necesita primero:{' '}

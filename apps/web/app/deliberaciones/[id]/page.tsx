@@ -35,9 +35,11 @@ import {
   clavesDeAporte,
   ETAPA_EN_PALABRAS,
   GRAVEDAD_EN_PALABRAS,
+  MENSAJES_DELIBERACION,
   type AporteDeliberacion,
   type ClaveAporte,
   type DeliberacionDetalle,
+  type EtapaDeliberacion,
   type GravedadRiesgo,
   type MiembroCirculo,
   type ModoPosicion,
@@ -54,6 +56,22 @@ const ETAPAS: readonly { readonly id: string; readonly nombre: string }[] = Obje
 ).map(([id, nombre]) => ({ id, nombre }));
 
 const GRAVEDADES: readonly GravedadRiesgo[] = [1, 2, 3, 4, 5];
+
+/**
+ * Las tres etapas en las que lo que importa ya no es el orden en que se dijeron las cosas, sino
+ * **las salidas** y lo que se les objetó.
+ *
+ * En Objeciones se señala qué puede salir mal en cada salida; en Enmiendas cada salida se corrige
+ * para responder a eso; en «Listo para decidir» ya no se escribe y lo único que queda por leer es en
+ * qué acabó cada una. En las tres, la lista de «Lo que se dijo» —que es cronológica y arrastra todo
+ * lo de las etapas anteriores— deja el trabajo de cruzar riesgo con salida en la cabeza de quien
+ * lee. Con veinte aportes en un teléfono eso no se hace: se abandona.
+ */
+const ETAPAS_DE_SALIDAS: readonly EtapaDeliberacion[] = [
+  'objeciones',
+  'enmiendas',
+  'listo_para_decidir',
+];
 
 /**
  * La arista que exige cada clase de aporte, con la pregunta que se le hace a la persona.
@@ -198,6 +216,30 @@ export default function DetalleDeliberacion(): ReactNode {
 
   async function aportar(evento: SyntheticEvent, opcion: OpcionDeAporte): Promise<void> {
     evento.preventDefault();
+    /*
+     * En Enmiendas una salida SIEMPRE corrige a otra, y el `required` del `<select>` no sirve para
+     * exigirlo: el formulario lleva `noValidate` a propósito —la validación nativa del navegador
+     * escribe en inglés y no la controlamos—, así que sin esta guarda el envío sale igual.
+     *
+     * No se para acá por elegancia: se para porque **el cupo se consume antes de validar**. En
+     * `POST /deliberaciones/:id/aportes` el orden es `cupoDeComentario` → `cupoDeEscritura` →
+     * `parse`, de modo que un aporte incompleto gasta uno de los veinte comentarios del día de esa
+     * persona y no deja nada escrito. El mensaje es el del propio contrato, no uno redactado acá:
+     * si el motor cambia lo que dice, cambia también lo que se lee antes de llegar a él.
+     */
+    if (
+      deliberacion?.laSalidaDebeCorregirAOtra === true &&
+      opcion.tipo === 'alternativa' &&
+      corrigeA === ''
+    ) {
+      setErrorAporte(
+        new Error(
+          MENSAJES_DELIBERACION['AMENDMENT_MUST_SUPERSEDE'] ??
+            'En Enmiendas una salida corrige a otra: elegí cuál estás corrigiendo.',
+        ),
+      );
+      return;
+    }
     // El `requestId` **no** entra acá: entra en `llamar`, ya elegido por `useAccionUnica`. Lo que
     // se arma en este bloque es exactamente lo que define que el aporte es *el mismo* aporte, y es
     // lo que decide si un reintento reusa la clave o estrena una.
@@ -283,6 +325,27 @@ export default function DetalleDeliberacion(): ReactNode {
   const opciones = opcionesDe(deliberacion);
   const opcion = opciones.find((o) => o.clave === clave);
   const porId = new Map(deliberacion.aportes.map((a) => [a.id, a]));
+
+  // Las salidas, y lo que cuelga de cada una. Se deriva de lo que ya viaja en el detalle —el tipo
+  // del aporte y a qué apunta— y no de un campo nuevo: la relación «este riesgo es de esa salida»
+  // la declara el propio aporte, y agruparla acá no inventa ninguna regla que el motor no tenga.
+  const salidas = deliberacion.aportes.filter((a) => a.tipo === 'alternativa');
+  const riesgosDe = (salidaId: string): readonly AporteDeliberacion[] =>
+    deliberacion.aportes.filter(
+      (a) => a.tipo === 'riesgo' && a.responde.some((vinculo) => vinculo.aporteId === salidaId),
+    );
+  const laCorrigen = (salidaId: string): readonly AporteDeliberacion[] =>
+    deliberacion.aportes.filter((a) => a.tipo === 'alternativa' && a.corrigeA === salidaId);
+  const enEtapaDeSalidas = ETAPAS_DE_SALIDAS.includes(deliberacion.etapa);
+  const queSeHaceConLasSalidas =
+    deliberacion.etapa === 'objeciones'
+      ? 'Señalar un riesgo no tumba una salida: la obliga a responderlo en la etapa siguiente. Por ' +
+        'eso hay que decir además qué tan grave sería y cómo se reduciría.'
+      : deliberacion.etapa === 'enmiendas'
+        ? 'Cada salida se corrige para responder a lo que se le objetó. La corregida no se borra: ' +
+          'queda con su fecha, y debajo aparece la versión nueva.'
+        : 'Acá ya no se escribe. Esto es lo que va a llegar a la votación, con lo que se le ' +
+          'objetó y lo que se corrigió a la vista.';
   const candidatos = (
     tipo: TipoAporte | undefined,
     modo?: ModoPosicion,
@@ -353,6 +416,126 @@ export default function DetalleDeliberacion(): ReactNode {
 
         <div className="cuerpo-detalle">
           <ErrorVisible error={errorAporte} />
+
+          {/*
+           * Las salidas, agrupadas con lo que se les objetó y con lo que las corrigió.
+           *
+           * «Lo que se dijo», que va debajo, es la conversación **en orden**, y ese orden es el que
+           * hace falta mientras se construyen las ideas. A partir de Objeciones el orden deja de
+           * ser lo útil: para señalar un riesgo hay que tener delante la salida, y para escribir
+           * una enmienda hay que tener delante la salida Y lo que se le objetó. Buscarlos entre
+           * treinta aportes cronológicos, en un teléfono, es lo que hace que nadie objete.
+           *
+           * Nada de esto es información nueva ni una regla nueva: el vínculo «este riesgo es de esa
+           * salida» lo declara cada aporte en `responde`, y «esta salida corrige a aquélla» en
+           * `corrigeA`. Acá sólo se agrupa lo que ya viajaba suelto.
+           */}
+          {enEtapaDeSalidas && (
+            <section aria-labelledby="salidas-titulo">
+              <h2 id="salidas-titulo">Las salidas y lo que se les objetó</h2>
+              <p>{queSeHaceConLasSalidas}</p>
+
+              {salidas.length === 0 ? (
+                <div className="vacio" role="status">
+                  <h3>Todavía no hay ninguna salida escrita</h3>
+                  <p>
+                    La conversación llegó a «{deliberacion.etapaEnPalabras}» sin que nadie alcanzara
+                    a proponer una salida al problema. Lo que se objeta y lo que se enmienda sale de
+                    ahí, así que por ahora no hay nada que mirar en esta sección.
+                  </p>
+                  <p>
+                    <Link
+                      className="boton secundario"
+                      href={`/problemas/${deliberacion.problemaId}`}
+                    >
+                      Volver al problema
+                    </Link>
+                  </p>
+                </div>
+              ) : (
+                <ol className="tarjetas">
+                  {salidas.map((salida) => {
+                    const riesgos = riesgosDe(salida.id);
+                    const correcciones = laCorrigen(salida.id);
+                    return (
+                      <li key={`salida-${salida.id}`}>
+                        <h3>
+                          <a href={`#aporte-${salida.id}`}>{resumen(salida)}</a>
+                        </h3>
+
+                        {salida.corrigeA !== undefined && (
+                          <p className="suave">
+                            Corrige a:{' '}
+                            <a href={`#aporte-${salida.corrigeA}`}>
+                              {textoDelCorregido(porId, salida.corrigeA)}
+                            </a>
+                          </p>
+                        )}
+
+                        {riesgos.length === 0 ? (
+                          <p>
+                            Todavía nadie le señaló un riesgo. Que no se lo hayan señalado no quiere
+                            decir que no lo tenga: quiere decir que nadie lo escribió.
+                          </p>
+                        ) : (
+                          <>
+                            <h4>
+                              {riesgos.length === 1
+                                ? 'Un riesgo señalado'
+                                : `${String(riesgos.length)} riesgos señalados`}
+                            </h4>
+                            <ul>
+                              {riesgos.map((riesgo) => (
+                                <li key={`riesgo-${salida.id}-${riesgo.id}`}>
+                                  {/*
+                                    `resumen` y no `riesgo.texto` a secas: el texto de un aporte
+                                    llega hasta cuatro mil caracteres, y un enlace de cuatro mil
+                                    caracteres dentro de una lista deja de ser un enlace. El
+                                    completo está a un toque, en la lista de abajo.
+                                  */}
+                                  <a href={`#aporte-${riesgo.id}`}>{resumen(riesgo)}</a>
+                                  {riesgo.gravedad !== undefined && (
+                                    <p className="suave">
+                                      Qué tan grave sería:{' '}
+                                      {riesgo.gravedadEnPalabras ??
+                                        GRAVEDAD_EN_PALABRAS[riesgo.gravedad]}
+                                    </p>
+                                  )}
+                                  {riesgo.mitigacion !== undefined && (
+                                    <p className="suave">Cómo se reduciría: {riesgo.mitigacion}</p>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+
+                        {correcciones.length === 0 ? (
+                          deliberacion.etapa === 'enmiendas' &&
+                          riesgos.length > 0 && (
+                            <p className="suave">
+                              Todavía nadie la corrigió. Corregirla es cosa de quien la escribió:
+                              abajo, en «Aportar», eligiendo esta salida.
+                            </p>
+                          )
+                        ) : (
+                          <p>
+                            Ya se corrigió:{' '}
+                            {correcciones.map((correccion, indice) => (
+                              <span key={`corrige-${correccion.id}`}>
+                                {indice > 0 && ' · '}
+                                <a href={`#aporte-${correccion.id}`}>{resumen(correccion)}</a>
+                              </span>
+                            ))}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </section>
+          )}
 
           <section aria-labelledby="aportes-titulo">
             <h2 id="aportes-titulo">Lo que se dijo</h2>

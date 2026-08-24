@@ -406,6 +406,9 @@ export * from './assistant/index.js';
 // ── Evaluación, resultado y aprendizajes: el cierre del ciclo (ADR-0053) ─────────────────────────
 export * from './evaluation/index.js';
 
+// ── Flujo de incumplimiento de la tarea viva, los siete peldaños de ADR-0040 ──────────────────────
+export * from './execution/escalones.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,

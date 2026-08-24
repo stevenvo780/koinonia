@@ -18,6 +18,8 @@ import {
 
 import { Aviso, Cargando, ErrorVisible, useSesion } from '../../components/marco';
 import { Esqueleto, Ficha, Meta, Vacio, type VarianteFicha } from '../../components/piezas';
+import { type EscalonTarea } from '../iniciativas/escalones';
+import { PeldanoDeTarea, selloDeTareas, useEscalones } from '../iniciativas/piezas-ejecucion';
 import { useAccionUnica } from '../../lib/acciones';
 import {
   cerrarFrase,
@@ -139,6 +141,16 @@ export default function MisTareas(): ReactNode {
   const borradorCapacidadDeRef = useRef<string | undefined>(undefined);
   const borradorCapacidadSucioRef = useRef(false);
   const resultadoRef = useRef<HTMLDivElement>(null);
+
+  // Los peldaños de incumplimiento (ADR-0040) de las tareas propias. Acá llegan los DOS privados
+  // —«se acerca la fecha» y «toca preguntar cómo va»— que el servidor no le enseña a nadie más:
+  // esta pantalla es, literalmente, el único sitio donde ese recordatorio existe, y por eso es el
+  // sitio donde hay que decir que es privado. Se piden por iniciativa (no hay ruta por tarea), y un
+  // fallo no rompe la pantalla: sin peldaños se sigue viendo el trabajo entero.
+  const escalones = useEscalones(
+    (misTareas ?? []).map((item) => item.iniciativaId),
+    selloDeTareas((misTareas ?? []).map((item) => item.tarea)),
+  );
 
   function adoptarCapacidad(owner: string, actual: CapacidadPropia): void {
     if (miembroActualRef.current !== owner) return;
@@ -587,18 +599,21 @@ export default function MisTareas(): ReactNode {
             <GrupoTareas
               titulo="Ofertas pendientes"
               tareas={pendientes}
+              escalones={escalones}
               accionEnCurso={accionEnCurso}
               onMutar={mutarTarea}
             />
             <GrupoTareas
               titulo="Mis compromisos"
               tareas={compromisos}
+              escalones={escalones}
               accionEnCurso={accionEnCurso}
               onMutar={mutarTarea}
             />
             <GrupoTareas
               titulo="Ofertas que no asumí"
               tareas={noAsumidas}
+              escalones={escalones}
               accionEnCurso={accionEnCurso}
               onMutar={mutarTarea}
             />
@@ -621,11 +636,14 @@ type Mutar = (input: {
 function GrupoTareas({
   titulo,
   tareas,
+  escalones,
   accionEnCurso,
   onMutar,
 }: {
   readonly titulo: string;
   readonly tareas: readonly MiTarea[];
+  /** Índice `tareaId → peldaño`, aplanado sobre todas las iniciativas: ver `useEscalones`. */
+  readonly escalones: ReadonlyMap<string, EscalonTarea>;
   readonly accionEnCurso: string | undefined;
   readonly onMutar: Mutar;
 }): ReactNode {
@@ -644,6 +662,7 @@ function GrupoTareas({
           <TareaRapida
             key={`${item.iniciativaId}:${item.tarea.id}`}
             item={item}
+            escalon={escalones.get(item.tarea.id)}
             accionEnCurso={accionEnCurso}
             onMutar={onMutar}
           />
@@ -655,10 +674,13 @@ function GrupoTareas({
 
 function TareaRapida({
   item,
+  escalon,
   accionEnCurso,
   onMutar,
 }: {
   readonly item: MiTarea;
+  /** El peldaño vigente de ESTA tarea, incluidos los dos que sólo ve quien la tiene. */
+  readonly escalon: EscalonTarea | undefined;
   readonly accionEnCurso: string | undefined;
   readonly onMutar: Mutar;
 }): ReactNode {
@@ -716,6 +738,13 @@ function TareaRapida({
         </>
         {`Iniciativa: ${objetivo}`}
       </Meta>
+
+      {/*
+       * El peldaño va antes que cualquier formulario: es lo que explica por qué la pantalla te está
+       * pidiendo algo. Puesto después, la persona ya decidió qué hacer sin haber leído que atrasarse
+       * no es una falta que se le anota a nadie.
+       */}
+      {escalon !== undefined && <PeldanoDeTarea escalon={escalon} />}
 
       {tarea.estado === 'ofrecida' && (
         <div className="respuesta-tarea">

@@ -252,10 +252,16 @@ import {
   listarPropios as listarPropiosAsistente,
 } from './asistente-repositorio.js';
 import { crearLectorasDeMetricas } from './metricas-lecturas.js';
+import { registrarRutasDeAprendizajes } from './rutas-aprendizajes.js';
 import { registrarRutasDeAsistente } from './rutas-asistente.js';
+import { registrarRutasDeCierreCiclo } from './rutas-cierre-ciclo.js';
+import { registrarRutasDeConcentracion } from './rutas-concentracion.js';
 import { registrarRutasDeConsenso, repositorioSondeosEnMemoria } from './rutas-consenso.js';
+import { registrarRutasDeEscalones } from './rutas-escalones.js';
+import { registrarRutasDeEtapas } from './rutas-etapas.js';
 import { registrarRutasDeEvaluacion } from './rutas-evaluacion.js';
 import { registrarRutasDeIniciativas } from './rutas-iniciativas.js';
+import { registrarRutasDeMetodos } from './rutas-metodos.js';
 import { registrarRutasDeMetricas } from './rutas-metricas.js';
 
 /**
@@ -1893,6 +1899,67 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   // `metricas-lecturas.ts` — ese fichero documenta en su cabecera los dos huecos del dominio que
   // no se pudieron llenar sin fabricar datos (el tipo de tarea y dos de los cuatro ejes de C11).
   registrarRutasDeMetricas(app, { clock: options.ports.clock, ...crearLectorasDeMetricas(deps) });
+
+  // Catálogo de los nueve métodos de decisión. Sirve metainformación: nombre en español, descripción,
+  // forma de la papeleta (binaria, puntuación, ordenamiento, menciones, consentimiento) y si cada
+  // método permite delegación (la mayoría sí; sociocratic-consent con voto secreto no, y sortition
+  // tampoco). La pantalla cruza esta ruta al armar el formulario de la papeleta y al abrir una
+  // decisión; el cliente valida contra el schema que viene en cada entrada del catálogo.
+  registrarRutasDeMetodos(app);
+
+  // Cierre explícito de decisiones (ADR-0043): POST /cierre-ciclo/:id/cerrar cierra una votación
+  // y crea la iniciativa atómicamente si fue aprobada (lo mismo que ya hace el cierre automático
+  // por vencimiento; esta ruta lo expone para que el facilitador lo pida a mano). GET
+  // /cierre-ciclo/:id/estado consulta el resultado. Vive aparte porque es un puente entre
+  // decisiones e iniciativas y no pertenece temáticamente a ninguna de las dos rutas existentes.
+  registrarRutasDeCierreCiclo(app, { deps, actorDe });
+
+  // Objeciones y enmiendas (deliberación): rutas dedicadas sobre el mismo `aportarADeliberacion`
+  // que ya usa `POST /deliberaciones/:id/aportes`, con un contrato más estrecho (el subconjunto de
+  // tipos que cada etapa admite, y `corrigeA` obligatorio en la rama `alternativa` de enmiendas).
+  // No duplica la máquina de etapas: STAGE_RULES sigue siendo la única fuente de verdad.
+  registrarRutasDeEtapas(app, {
+    deps,
+    actorDe,
+    cupoDeEscritura,
+    cupoDeComentario,
+    tituloDelProblema,
+  });
+
+  // Memoria institucional por parecido (ADR-0053): GET /aprendizajes/parecidos. Llama a
+  // GET /aprendizajes **por dentro** (`app.inject`, sin reimplementar el decodificador privado del
+  // ledger de evaluación) y le suma un puntaje léxico de coincidencia de palabras. Exige que
+  // `registrarRutasDeEvaluacion` (arriba) esté en la misma instancia — lo está.
+  registrarRutasDeAprendizajes(app, {});
+
+  // Peldaños del incumplimiento del pliego (ADR-0040): GET /iniciativas/:id/escalones. Cálculo
+  // puro en el dominio (`calcularEscalonDeTarea`); esta ruta sólo lee el estado real de la
+  // iniciativa y aplica la visibilidad exacta del pliego (0 y 2 privados; el resto, el círculo).
+  registrarRutasDeEscalones(app, { deps });
+
+  // Concentración de poder por delegación DEL COLECTIVO (docs/OBJETIVO.md), nunca de una persona:
+  // publica la FORMA del reparto (índices normalizados, deciles de tamaño fijo), con doble gate de
+  // k-anonimato, nunca quién sostiene el voto de quién. Sólo delegaciones de ámbito `global`: las
+  // de `circle`/`topic` sólo tienen sentido resueltas contra una decisión concreta, y esta foto no
+  // vive dentro de ninguna. `leerCenso` reutiliza `allMembers` (igual que `congelarPadron`);
+  // `leerDelegaciones` recorre las delegaciones ya conocidas por cada decisión del ledger —no hay
+  // un agregado de delegaciones aparte de las decisiones que las conceden.
+  registrarRutasDeConcentracion(app, {
+    clock: options.ports.clock,
+    leerCenso: async () => {
+      const client = await options.pool.connect();
+      try {
+        const miembros = await allMembers(client, options.ports.clock.now());
+        return miembros.map((m) => m.memberId);
+      } finally {
+        client.release();
+      }
+    },
+    leerDelegaciones: async () => {
+      const decisiones = await listarDecisiones(deps);
+      return decisiones.flatMap((d) => d.state.delegations);
+    },
+  });
 
   return app;
 }

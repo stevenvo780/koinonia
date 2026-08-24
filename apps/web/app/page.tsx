@@ -44,15 +44,22 @@ type PuntoDeGrafico = {
 };
 
 /**
- * Una serie temporal dibujada con `<div>` y CSS en línea — cero dependencias, cero imágenes, y
- * ninguna clase nueva en `globals.css` (que no es mío para tocar). ADR-0040/§6: el nivel importa
- * menos que la dirección, así que lo que hay que poder leer de un vistazo es hacia dónde va la
- * fila de barras, no el valor exacto de una sola.
+ * Una serie temporal dibujada con `<div>` y CSS — cero dependencias, cero imágenes. ADR-0040/§6:
+ * el nivel importa menos que la dirección, así que lo que hay que poder leer de un vistazo es
+ * hacia dónde va la fila de barras, no el valor exacto de una sola.
  *
  * La barra es puramente decorativa (`aria-hidden`): la misma información, en palabras y completa,
  * vive al lado en una lista `.solo-lectores` — el mismo patrón de gemelo visual/leído que ya usa
  * `<Plazo>` en `piezas.tsx`. Un punto sin dato (ningún acuerdo vencía esa ventana) se dibuja como
  * una línea plana y atenuada, nunca como una barra en cero que se leería como «fracasó».
+ *
+ * La versión anterior traía las trece declaraciones de forma en `style={{…}}` y se disculpaba en
+ * este mismo comentario: «ninguna clase nueva en globals.css (que no es mío para tocar)». Ya lo es,
+ * y estaban de más: la forma vive en `.serie` (ver `globals.css`) y acá queda **sólo el alto de
+ * cada barra**, que es lo único que depende del dato y por tanto lo único que no puede ser una
+ * clase. Importa más de lo que parece: un color escrito a mano en un `style` no lo revisa el
+ * fichero donde están medidos todos los contrastes, y en un fichero de 2.200 líneas de dirección
+ * de arte, lo que se dibuja aparte se despinta aparte.
  */
 function GraficoDeSerie({
   titulo,
@@ -67,49 +74,22 @@ function GraficoDeSerie({
   const ultimo = puntos[puntos.length - 1];
   return (
     <div>
-      <div
-        aria-hidden="true"
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 'var(--e2)',
-          height: '5rem',
-          borderBottom: '1px solid var(--linea)',
-        }}
-      >
+      <div className="serie" aria-hidden="true">
         {puntos.map((punto, indice) => (
-          <div
-            key={indice}
-            style={{
-              flex: '1 1 0',
-              display: 'flex',
-              alignItems: 'flex-end',
-              justifyContent: 'center',
-              height: '100%',
-            }}
-          >
+          <div className="serie-hueco" key={indice}>
             <div
-              style={{
-                width: '100%',
-                maxWidth: '2rem',
-                borderRadius: 'var(--radio-1) var(--radio-1) 0 0',
-                height:
-                  punto.valor === undefined
-                    ? '3px'
-                    : `${String(Math.max(2, Math.round((punto.valor / max) * 100)))}%`,
-                background: punto.valor === undefined ? 'var(--linea-fuerte)' : 'var(--acento)',
-                opacity: punto.valor === undefined ? 0.5 : 1,
-              }}
+              className={punto.valor === undefined ? 'serie-barra sin-dato' : 'serie-barra'}
+              style={
+                punto.valor === undefined
+                  ? undefined
+                  : { height: `${String(Math.max(2, Math.round((punto.valor / max) * 100)))}%` }
+              }
             />
           </div>
         ))}
       </div>
       {primero !== undefined && ultimo !== undefined && (
-        <p
-          className="suave"
-          aria-hidden="true"
-          style={{ display: 'flex', justifyContent: 'space-between' }}
-        >
+        <p className="suave serie-extremos" aria-hidden="true">
           <span>{primero.etiqueta}</span>
           <span>{ultimo.etiqueta}</span>
         </p>
@@ -432,11 +412,24 @@ export default function Inicio(): ReactNode {
             </section>
           )}
 
+          {/*
+           * Los dos números llevan cada uno a su índice. Antes esta frase contaba las propuestas y
+           * el único enlace era «Verlos todos» a `/problemas`: se nombraba una pantalla que existía
+           * y no se ofrecía la puerta, que es la forma más silenciosa de tener una pantalla
+           * inalcanzable —peor que no nombrarla, porque quien lee sabe que está y no encuentra
+           * cómo llegar—.
+           */}
           <p>
-            Hay {portada.problemas}{' '}
-            {portada.problemas === 1 ? 'problema escrito' : 'problemas escritos'} y{' '}
-            {portada.propuestas} {portada.propuestas === 1 ? 'propuesta' : 'propuestas'}.{' '}
-            <Link href="/problemas">Verlos todos</Link>.
+            Hay{' '}
+            <Link href="/problemas">
+              {portada.problemas}{' '}
+              {portada.problemas === 1 ? 'problema escrito' : 'problemas escritos'}
+            </Link>{' '}
+            y{' '}
+            <Link href="/propuestas">
+              {portada.propuestas} {portada.propuestas === 1 ? 'propuesta' : 'propuestas'}
+            </Link>
+            .
           </p>
         </>
       )}

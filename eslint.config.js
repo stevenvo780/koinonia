@@ -162,5 +162,37 @@ export default tseslint.config(
     },
   },
 
+  {
+    // Guiones de carga ejecutables con Node puro (tests/carga/node/**): usan `fetch`, `URL` y
+    // `performance` del runtime global de Node 22, no de un DOM ni de un bundler — no hay `tsconfig`
+    // que los cubra a propósito, igual que el resto de `**/*.{js,mjs,cjs}` de arriba.
+    files: ['tests/carga/node/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        fetch: 'readonly',
+        Headers: 'readonly',
+        performance: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+
+  {
+    // Guiones de k6 (tests/carga/k6/**): `__ENV`/`__VU`/`__ITER` los inyecta el runtime de k6, que
+    // no es Node ni un navegador — no existen en ningún otro sitio del repositorio a propósito
+    // (docs/TESTING.md §11.1: no corren en este entorno, están escritos para cuando k6 exista).
+    files: ['tests/carga/k6/**/*.js'],
+    languageOptions: {
+      globals: {
+        __ENV: 'readonly',
+        __ITER: 'readonly',
+        __VU: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+
   prettier,
 );

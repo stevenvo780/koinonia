@@ -517,8 +517,34 @@ nav.principal .abridor .signo {
   font-size: 0.5rem;
 }
 
+/*
+ * El grupo de consulta ya no es una lista sino el envoltorio de tres tramos («Escribir», «Cómo se
+ * decide acá», «Lo que quedó»). En el teléfono los tramos se apilan; el `gap` entre ellos es lo
+ * único que hace visible la junta cuando la lista se abre entera.
+ */
+nav.principal .consulta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e3);
+}
+
 nav.principal .consulta[data-abierto='no'] {
   display: none;
+}
+
+/*
+ * El rótulo del tramo. Un escalón por debajo del rótulo del grupo —mismas versalitas, pero en
+ * tinta suave en vez de acento— para que se lea como subdivisión y no como otro grupo. Igual que
+ * `.titulo-grupo`, no es un encabezado: ver el comentario de aquél, y el del componente.
+ */
+nav.principal .titulo-tramo {
+  margin: 0 0 var(--e1);
+  color: var(--tinta-suave);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 
 /*
@@ -552,15 +578,25 @@ nav.principal .aca-consulta strong {
   color: var(--tinta);
 }
 
-nav.principal .consulta > li {
+nav.principal .consulta li {
   flex-direction: column;
   align-items: flex-start;
   gap: 0;
   width: 100%;
 }
 
+/*
+ * 44 px, no 40.
+ *
+ * Acá había un `min-height: 40px` que rebajaba, sólo para estos enlaces, el piso de 44 px que
+ * promete la cabecera de este fichero y que cumple el resto de la interfaz. Cuatro píxeles por
+ * enlace parecen nada, y ése es justamente el problema: es la clase de recorte que se hace para
+ * ganar alto y que deja el peor objetivo táctil de toda la plataforma en la lista más larga que
+ * tiene. El alto que se ganaba (24 px con seis destinos) se recupera de sobra plegando el grupo,
+ * que es lo que ya hace.
+ */
 nav.principal .consulta a {
-  min-height: 40px;
+  min-height: 44px;
 }
 
 /*
@@ -594,7 +630,35 @@ nav.principal .pista {
     display: flex;
   }
 
-  nav.principal .consulta > li {
+  /*
+   * Donde el ancho sobra, los tres tramos dejan de ser bloques apilados y pasan a ser tramos de
+   * una misma fila: cada uno es su rótulo seguido de sus destinos, y `flex-wrap` decide dónde
+   * corta. Es el mismo mecanismo que usan los dos grupos entre sí a partir de 64rem, un nivel más
+   * adentro. El rótulo se queda a la vista también acá: es lo que hace que diez destinos en fila
+   * se lean como tres tramos y no como diez enlaces seguidos.
+   */
+  nav.principal .consulta {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: var(--e5);
+    row-gap: var(--e2);
+  }
+
+  nav.principal .tramo {
+    display: flex;
+    align-items: baseline;
+    gap: var(--e3);
+    min-width: 0;
+  }
+
+  nav.principal .titulo-tramo {
+    flex: 0 0 auto;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  nav.principal .consulta li {
     flex-direction: row;
     align-items: baseline;
     width: auto;
@@ -620,8 +684,12 @@ nav.principal .pista {
  * La versión anterior de este comentario prometía que los DOS grupos iban a compartir un único
  * renglón entre sí. Medido: no cabe. `.interior` tope en `--ancho-pagina` (76rem), así que el
  * ancho disponible para `nav.principal` no crece más allá de eso por más ancha que sea la pantalla
- * —y once destinos con su texto completo («El recorrido» + 5 pasos, «Consultar» + 6 destinos con
- * su rótulo) piden bastante más que eso sin envolver. `flex-wrap` en `nav.principal` es quien
+ * —y quince destinos con su texto completo («El recorrido» + 5 pasos, «Consultar» + 10 destinos
+ * repartidos en tres tramos rotulados) piden bastante más que eso sin envolver. Con los diez de
+ * consulta el segundo grupo ya no entra tampoco en un renglón propio, y eso está previsto: el
+ * `flex-wrap` de `.consulta` (48rem, más arriba) corta entre tramos, así que lo que se ve son
+ * tramos completos uno debajo de otro y no una lista partida por la mitad de un rótulo.
+ * `flex-wrap` en `nav.principal` es quien
  * decide, línea por línea, cuánto entra: hoy entran los DOS grupos en dos renglones prolijos, cada
  * uno completo en el suyo, y es lo que se ve —no un salto roto ni una regla que no aplicó, sino la
  * red de seguridad haciendo exactamente lo que tiene que hacer cuando el contenido no entra en una
@@ -1413,6 +1481,69 @@ details[open] > summary::before {
   min-width: 2px;
   border-radius: inherit;
   background: var(--acento);
+}
+
+/*
+ * ── `.serie` ─────────────────────────────────────────────────────────────────────────────
+ *
+ * La fila de barras verticales de la portada: seis ventanas de treinta días, una al lado de otra.
+ * Es la otra mitad de `.medidor`, y son cosas distintas a propósito: `.medidor` responde «cuánto
+ * de un total» (participación de una decisión, con `role="progressbar"` y su total real) y `.serie`
+ * responde «hacia dónde va esto» (ADR-0040/§6: el nivel importa menos que la dirección).
+ *
+ * Vive acá y no en un `style={{…}}` de la portada porque el color de una barra es una decisión de
+ * dirección de arte —`--acento` para el dato, `--linea-fuerte` atenuado para la ventana sin dato—
+ * y las decisiones de color de esta interfaz se toman todas en este fichero, donde están medidos
+ * los contrastes. Lo único que se queda en línea es el **alto de cada barra**, que sale del dato.
+ *
+ * Igual que la barra del medidor, la figura entera es decorativa (`aria-hidden` en la portada): la
+ * serie completa en palabras va al lado, en una lista `.solo-lectores`.
+ */
+.serie {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--e2);
+  height: 5rem;
+  border-bottom: 1px solid var(--linea);
+}
+
+/* El hueco reservado a cada ventana. Reparte el ancho en partes iguales y centra su barra. */
+.serie-hueco {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  min-width: 0;
+}
+
+/*
+ * `max-width` y no un ancho fijo: con seis ventanas en un teléfono de 390 px cada hueco mide unos
+ * 53 px, y una barra que ocupara los 53 px sería una mancha. Con el tope en 2rem la fila se lee
+ * como una serie de barras separadas en cualquier ancho, también en escritorio, donde si no se
+ * volverían seis columnas anchísimas.
+ */
+.serie-barra {
+  width: 100%;
+  max-width: 2rem;
+  border-radius: var(--radio-1) var(--radio-1) 0 0;
+  background: var(--acento);
+}
+
+/*
+ * La ventana sin dato. Una línea plana y atenuada, nunca una barra en cero: en cero se leería
+ * «esto fracasó», y lo que pasó es que no vencía ningún compromiso en esa ventana.
+ */
+.serie-barra.sin-dato {
+  height: 3px;
+  background: var(--linea-fuerte);
+  opacity: 0.5;
+}
+
+/* Las dos fechas de los extremos, una a cada lado del pie de la figura. */
+.serie-extremos {
+  display: flex;
+  justify-content: space-between;
 }
 
 /*

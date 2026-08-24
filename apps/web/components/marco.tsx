@@ -256,6 +256,29 @@ export function BarraSesion(): ReactNode {
  * una decisión, se deja puesto una vez y se revisa de tanto en tanto. Ponerlo entre los pasos
  * sugeriría que hay que pasar por ahí, y no hay que pasar por ahí.
  *
+ * ═══ Y por qué ahora el segundo grupo va subdividido ═══
+ *
+ * Llegaron cuatro pantallas más —«Propuestas» y «El asistente», que existían y **no las enlazaba
+ * nadie**, y «Lo que aprendimos» y «Qué tan repartida está la voz», nuevas—. Este proyecto ya tuvo
+ * una pantalla viva a la que sólo se llegaba escribiendo la dirección a mano, así que dejarlas
+ * fuera no era una opción; pero colgarlas del mismo grupo plano lo llevaba a **diez destinos
+ * seguidos sin una sola junta**, que en un teléfono es una lista que se recorre entera cada vez
+ * que se busca uno.
+ *
+ * La junta que faltaba no es un segundo botón —dos mandos que hay que probar por turnos son peores
+ * que uno—, es **decir de qué trata cada tramo**. El grupo se sigue abriendo con un solo botón y
+ * por dentro va partido en tres, con el rótulo de cada tramo escrito:
+ *
+ *   · **Escribir** — dónde están los textos y quién te ayuda a redactar uno.
+ *   · **Cómo se decide acá** — las reglas, quién manda sobre qué, y cuánta voz junta cada quien.
+ *   · **Lo que quedó** — lo que ya pasó, lo que se aprendió, y cómo comprobarlo sin creerle a nadie.
+ *
+ * «Propuestas» cae en «Escribir» y no entre los pasos numerados a propósito, y no por falta de
+ * sitio: una propuesta **no se empieza desde su índice**. Se escribe desde el problema que la pide
+ * (`/propuestas/nueva?problema=…` es la única puerta que existe), así que el índice es el sitio al
+ * que se va a *ver qué se redactó*, que es consulta. Numerarlo como paso prometería una puerta que
+ * la pantalla no tiene.
+ *
  * `prefetch={false}` en todos: la precarga por omisión de trece destinos costaba 73 KiB, un tercio
  * de la portada, sin que nadie hubiera pulsado nada. Daniela paga esos datos.
  */
@@ -266,14 +289,29 @@ type Destino = {
    * El texto del enlace es el `h1` del destino: quien salta por la lista de enlaces reconoce dónde
    * cayó.
    *
-   * Con **una** excepción, `/verificar`, cuyo `h1` es «Comprobar que nada se cambió». Ese `h1` no
-   * es mío y no se toca; y como rótulo de navegación ocupa dos líneas en un teléfono de 360 px y
-   * baja los cinco destinos que tiene al lado. Así que ahí el enlace dice «Verificar» —que es el
-   * verbo que la gente busca— y la pista dice el resto. Es la única de las doce que no coincide.
+   * Con **una** excepción entre los quince, `/verificar`, cuyo `h1` es «Comprobar que nada se
+   * cambió». Ese `h1` no es mío y no se toca; y como rótulo de navegación ocupa dos líneas en un
+   * teléfono de 360 px y baja los cinco destinos que tiene al lado. Así que ahí el enlace dice
+   * «Verificar» —que es el verbo que la gente busca— y la pista dice el resto.
+   *
+   * Las cuatro pantallas que se enlazaron después se comprobaron una por una contra el `h1` que
+   * tienen HOY escrito, no contra el nombre que parecía razonable: «Propuestas», «El asistente»,
+   * «Lo que ya aprendimos» y «Cómo está repartido el voto prestado». Los dos últimos no eran los
+   * que este fichero había supuesto («Lo que aprendimos», «Qué tan repartida está la voz»), y la
+   * diferencia es justo la que rompe el trato: el enlace habría prometido un título que la
+   * pantalla no dice.
    */
   readonly texto: string;
   /** Sólo en el grupo de consulta, donde tres nombres se parecían entre sí y había que separarlos. */
   readonly pista?: string;
+};
+
+/** Un tramo del grupo de consulta: su rótulo y sus destinos. */
+type Tramo = {
+  /** Sufijo del `id` del rótulo, que es a quien apunta el `aria-labelledby` de la lista. */
+  readonly id: string;
+  readonly titulo: string;
+  readonly destinos: readonly Destino[];
 };
 
 const RECORRIDO: readonly Destino[] = [
@@ -284,38 +322,89 @@ const RECORRIDO: readonly Destino[] = [
   { href: '/mis-tareas', texto: 'Mis tareas' },
 ];
 
-const CONSULTA: readonly Destino[] = [
+const TRAMOS: readonly Tramo[] = [
   {
-    href: '/consenso',
-    texto: 'En qué coincidimos',
-    pista: 'dónde ya hay acuerdo y no hace falta votar',
+    id: 'escribir',
+    titulo: 'Escribir',
+    destinos: [
+      {
+        href: '/propuestas',
+        texto: 'Propuestas',
+        pista: 'los textos ya redactados para decidir sobre ellos',
+      },
+      {
+        href: '/asistente',
+        texto: 'El asistente',
+        pista: 'te arma un plan, una pregunta por pantalla',
+      },
+    ],
   },
   {
-    href: '/circulos',
-    texto: 'Quién decide qué',
-    pista: 'los grupos y hasta dónde llega cada uno',
+    id: 'como-se-decide',
+    titulo: 'Cómo se decide acá',
+    destinos: [
+      {
+        href: '/consenso',
+        texto: 'En qué coincidimos',
+        pista: 'dónde ya hay acuerdo y no hace falta votar',
+      },
+      {
+        href: '/circulos',
+        texto: 'Quién decide qué',
+        pista: 'los grupos y hasta dónde llega cada uno',
+      },
+      {
+        href: '/normas',
+        texto: 'Las reglas del juego',
+        pista: 'cómo se decide acá y con qué plazos',
+      },
+      {
+        href: '/delegaciones',
+        texto: 'Prestar tu voto',
+        pista: 'quién lleva tu parte cuando no podés estar',
+      },
+      {
+        // El texto es, letra por letra, el `h1` de esa pantalla —«Cómo está repartido el voto
+        // prestado»— y no el rótulo más corto que pedía el renglón. Es largo, sí: entra en dos
+        // líneas dentro de los 44 px que el enlace ya reserva por área táctil, así que no cuesta
+        // alto, y a cambio quien salta por la lista de enlaces cae en un título que reconoce.
+        href: '/concentracion',
+        texto: 'Cómo está repartido el voto prestado',
+        pista: 'si unas pocas personas juntan la decisión',
+      },
+    ],
   },
   {
-    href: '/normas',
-    texto: 'Las reglas del juego',
-    pista: 'cómo se decide acá y con qué plazos',
-  },
-  {
-    href: '/delegaciones',
-    texto: 'Prestar tu voto',
-    pista: 'quién lleva tu parte cuando no podés estar',
-  },
-  {
-    href: '/historial',
-    texto: 'Todo lo que quedó escrito',
-    pista: 'todo lo que pasó, en orden y sin filtrar',
-  },
-  {
-    href: '/verificar',
-    texto: 'Verificar',
-    pista: 'comprobalo por tu cuenta, sin creerle a nadie',
+    id: 'lo-que-quedo',
+    titulo: 'Lo que quedó',
+    destinos: [
+      {
+        href: '/aprendizajes',
+        texto: 'Lo que ya aprendimos',
+        pista: 'lo que dejaron los intentos que ya cerraron',
+      },
+      {
+        href: '/historial',
+        texto: 'Todo lo que quedó escrito',
+        pista: 'todo lo que pasó, en orden y sin filtrar',
+      },
+      {
+        href: '/verificar',
+        texto: 'Verificar',
+        pista: 'comprobalo por tu cuenta, sin creerle a nadie',
+      },
+    ],
   },
 ];
+
+/**
+ * Los diez destinos de consulta en una sola lista, para buscar en ellos el «estás acá».
+ *
+ * Se deriva de `TRAMOS` y no se escribe a mano: una segunda lista escrita aparte es la que se
+ * olvida de actualizar el día que se agrega un destino, y el síntoma sería justo el que este
+ * fichero vino a arreglar —un destino sin marca de «estás acá»—.
+ */
+const CONSULTA: readonly Destino[] = TRAMOS.flatMap((tramo) => tramo.destinos);
 
 function esDestinoActual(camino: string, href: string): boolean {
   return camino === href || camino.startsWith(`${href}/`);
@@ -345,7 +434,7 @@ export function Cabecera(): ReactNode {
   const [abierto, setAbierto] = useState(false);
 
   /*
-   * El grupo llega plegado a todas partes, también a las seis pantallas de consulta.
+   * El grupo llega plegado a todas partes, también a las diez pantallas de consulta.
    *
    * Antes se abría solo al llegar a una de ellas. La intención era buena —que la marca de «estás
    * acá» no quedara escondida detrás de un botón, que es igual que no tenerla— pero el precio,
@@ -420,20 +509,44 @@ export function Cabecera(): ReactNode {
               )}
             </div>
             <p className="titulo-grupo solo-ancho">Consultar</p>
-            <ul
-              id="lista-consulta"
-              className="lista consulta"
-              role="list"
-              aria-label="Consultar"
-              data-abierto={abierto ? 'si' : 'no'}
-            >
-              {CONSULTA.map((destino) => (
-                <li key={destino.href}>
-                  <EnlaceDestino destino={destino} actual={esDestinoActual(camino, destino.href)} />
-                  {destino.pista !== undefined && <span className="pista">{destino.pista}</span>}
-                </li>
-              ))}
-            </ul>
+            {/*
+             * El contenedor pasó de `<ul>` a `<div>` porque ya no es una lista: es el envoltorio de
+             * tres. Sigue siendo el mismo `id="lista-consulta"` al que apunta el `aria-controls`
+             * del botón —el mando tiene que seguir señalando exactamente lo que abre— y el mismo
+             * `data-abierto` que decide si se ve.
+             */}
+            <div id="lista-consulta" className="consulta" data-abierto={abierto ? 'si' : 'no'}>
+              {TRAMOS.map((tramo) => {
+                const idRotulo = `tramo-${tramo.id}`;
+                return (
+                  <div className="tramo" key={tramo.id}>
+                    {/*
+                     * El rótulo del tramo NO es un encabezado, por el mismo motivo que el rótulo
+                     * del grupo: un `h2` en la cabecera se cuela en el índice de encabezados de
+                     * todas las pantallas y aparece por delante del `h1`, que es lo que usa para
+                     * orientarse quien navega con lector de pantalla. Como `<p>` no estorba ahí, y
+                     * `aria-labelledby` le da igual el nombre a la lista que rotula.
+                     */}
+                    <p className="titulo-tramo" id={idRotulo}>
+                      {tramo.titulo}
+                    </p>
+                    <ul className="lista sublista" role="list" aria-labelledby={idRotulo}>
+                      {tramo.destinos.map((destino) => (
+                        <li key={destino.href}>
+                          <EnlaceDestino
+                            destino={destino}
+                            actual={esDestinoActual(camino, destino.href)}
+                          />
+                          {destino.pista !== undefined && (
+                            <span className="pista">{destino.pista}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </nav>
       </div>

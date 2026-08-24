@@ -27,7 +27,10 @@ import {
   type Aportar,
   APORTE_EN_PALABRAS,
   clavesDeAporte,
+  type ConfiguracionDeMetodoHttp,
   ETAPA_EN_PALABRAS,
+  type IdMetodo,
+  METODOS_DISPONIBLES,
 } from '@koinonia/contracts';
 import {
   type Actor,
@@ -74,6 +77,9 @@ import {
   DELEGATION_DISABLED,
   DELEGATION_ENABLED,
   type Delegation,
+  type GradeId,
+  type GradeScale,
+  type StratumKey,
   delegationAt,
   delegationId as toDelegationId,
   type DelegationResolution,
@@ -265,8 +271,14 @@ export interface ServicioDeps {
   readonly ports: Ports;
 }
 
-/** Método soportado por el corte vertical (PRODUCT §9: dos métodos y ninguno más). */
-export type MetodoSoportado = 'simple-majority' | 'sociocratic-consent';
+/**
+ * Método soportado al abrir una decisión. El motor (`@koinonia/domain`) implementa los nueve
+ * métodos de `packages/contracts/src/metodos.ts` desde ADR-0047; hasta este incremento la frontera
+ * HTTP sólo dejaba elegir dos (`simple-majority`, `sociocratic-consent`) porque `construirMetodo`,
+ * `construirQuorum` y `queHaceFaltaParaQuePase` sólo sabían construir esos dos. Alias de `IdMetodo`
+ * —el mismo tipo que ya usa el catálogo— para no tener dos nombres del mismo conjunto de valores.
+ */
+export type MetodoSoportado = IdMetodo;
 
 /** Error de aplicación con código estable. La capa HTTP lo traduce a estado y a palabras. */
 export class ServicioError extends Error {
@@ -595,51 +607,212 @@ async function congelarPadron(at: Instant, registro: readonly MemberRecord[]): P
   });
 }
 
-/** Las reglas del juego de cada método, con los números de GOVERNANCE §4. */
-function construirMetodo(metodo: MetodoSoportado): DecisionConfig['method'] {
-  if (metodo === 'simple-majority') {
-    // Fila 6/8 de GOVERNANCE §4: mayoría simple, más síes que noes, abstenciones fuera del
-    // denominador (B.1.b). El denominador se fija ANTES de votar y se muestra en la papeleta: la
-    // disputa post-electoral de una asamblea es casi siempre sobre el denominador.
-    return {
-      kind: 'simple-majority',
-      abstentionPolicy: 'exclude',
-      base: 'cast',
-      tieBreak: DEFAULT_TIE_BREAK,
-    };
-  }
-  // Fila 2 de GOVERNANCE §4: acuerdo interno de un círculo. La mitad del círculo se manifiesta y
-  // cero objeciones admitidas sin integrar.
-  return {
-    kind: 'sociocratic-consent',
-    maxRounds: 3,
-    admissibility: {
-      panelSize: 3,
-      dismissThreshold: ratio(2, 3),
-      panelSelection: 'sortition',
-      panelDeadline: 72 * HORA_MS,
-    },
-    silenceMeans: 'not-participating',
-    minEngagement: ratio(1, 2),
-  };
+/**
+ * Escala neutra de cinco menciones (Balinski–Laraki), el default institucional de
+ * `majority-judgment` cuando quien abre la votación no manda una propia. Misma escala que usa la
+ * batería de pruebas del motor (`packages/domain/test/tally-helpers.ts`, `FIVE_GRADE_SCALE`): no
+ * es un invento de esta capa, es la que el dominio ya ejercita.
+ */
+const ESCALA_DE_MENCIONES_POR_DEFECTO: GradeScale = {
+  grades: [
+    { id: 'excelente' as GradeId, label: 'Excelente' },
+    { id: 'buena' as GradeId, label: 'Buena' },
+    { id: 'aceptable' as GradeId, label: 'Aceptable' },
+    { id: 'insuficiente' as GradeId, label: 'Insuficiente' },
+    { id: 'rechazar' as GradeId, label: 'Rechazar' },
+  ],
+};
+
+/** Los dos ejes con los que ya se congela el padrón (`congelarPadron`): el sorteo deliberativo se
+ * reparte por los mismos, para que la muestra represente lo mismo que ya representa el censo. */
+const ESTRATOS_DEL_SORTEO_POR_DEFECTO: readonly StratumKey[] = [
+  stratumKey('semestre'),
+  stratumKey('jornada'),
+];
+
+/** `abstenciones` del contrato público → `AbstentionPolicy` del motor. Mismo orden que
+ * `configuracionDeMetodoHttp` en `http.ts`. */
+const ABSTENCIONES_A_POLITICA = {
+  excluir: 'exclude',
+  incluir: 'include',
+  'como-no': 'as-no',
+} as const;
+
+function comoFraccion(f: { readonly numerador: number; readonly denominador: number }): Fraction {
+  return ratio(f.numerador, f.denominador);
 }
 
-function construirQuorum(metodo: MetodoSoportado, circulo: CircleId): DecisionConfig['quorum'] {
-  if (metodo === 'simple-majority') {
-    // 75 de 300 = 1/4 (GOVERNANCE §4, filas 6 y 8).
+/**
+ * Las reglas del juego de cada uno de los nueve métodos (GOVERNANCE §4 para los que tienen fila
+ * propia; el resto, los defaults documentados en `packages/contracts/src/metodos.ts`, que es el
+ * catálogo que la pantalla lee para saber qué preguntar).
+ *
+ * `configuracion`, si viene, ya está comprobada por el llamador como perteneciente a `metodo`
+ * (`configuracion.metodo === metodo`); acá sólo se leen sus campos opcionales para reemplazar el
+ * default correspondiente.
+ */
+function construirMetodo(
+  metodo: IdMetodo,
+  configuracion: ConfiguracionDeMetodoHttp | undefined,
+  contexto: { readonly seedCommitment: Hash },
+): DecisionConfig['method'] {
+  switch (metodo) {
+    case 'simple-majority': {
+      // Fila 6/8 de GOVERNANCE §4: mayoría simple, más síes que noes, abstenciones fuera del
+      // denominador (B.1.b) salvo que se pida otra cosa explícitamente.
+      const cfg = configuracion?.metodo === 'simple-majority' ? configuracion : undefined;
+      return {
+        kind: 'simple-majority',
+        abstentionPolicy: ABSTENCIONES_A_POLITICA[cfg?.abstenciones ?? 'excluir'],
+        base: 'cast',
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'supermajority': {
+      // GOVERNANCE §4 fila 3: dos de cada tres, no estricto, salvo que se configure otra fracción.
+      const cfg = configuracion?.metodo === 'supermajority' ? configuracion : undefined;
+      return {
+        kind: 'supermajority',
+        fraction: cfg?.fraccion === undefined ? ratio(2, 3) : comoFraccion(cfg.fraccion),
+        strict: cfg?.estricto ?? false,
+        base: 'cast',
+        abstentionPolicy: 'exclude',
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'unanimity': {
+      // B.4.a: la regla más fuerte por defecto — cualquier abstención rompe la unanimidad — salvo
+      // que el círculo la haya desactivado explícitamente al abrir.
+      const cfg = configuracion?.metodo === 'unanimity' ? configuracion : undefined;
+      return {
+        kind: 'unanimity',
+        base: 'cast',
+        abstentionBlocks: cfg?.abstencionesBloquean ?? true,
+      };
+    }
+    case 'sociocratic-consent': {
+      // Fila 2 de GOVERNANCE §4: acuerdo interno de un círculo. La mitad del círculo se
+      // manifiesta y cero objeciones admitidas sin integrar.
+      const cfg = configuracion?.metodo === 'sociocratic-consent' ? configuracion : undefined;
+      return {
+        kind: 'sociocratic-consent',
+        maxRounds: cfg?.rondasMaximas ?? 3,
+        admissibility: {
+          panelSize: 3,
+          dismissThreshold: ratio(2, 3),
+          panelSelection: 'sortition',
+          panelDeadline: (cfg?.plazoDelPanelHoras ?? 72) * HORA_MS,
+        },
+        silenceMeans: 'not-participating',
+        minEngagement:
+          cfg?.minimoDeParticipacion === undefined
+            ? ratio(1, 2)
+            : comoFraccion(cfg.minimoDeParticipacion),
+      };
+    }
+    case 'score': {
+      const cfg = configuracion?.metodo === 'score' ? configuracion : undefined;
+      return {
+        kind: 'score',
+        min: 0,
+        max: 5,
+        aggregator: 'median',
+        noOpinionPolicy: 'ignore',
+        minCoverage:
+          cfg?.coberturaMinima === undefined ? ratio(1, 2) : comoFraccion(cfg.coberturaMinima),
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'irv': {
+      const cfg = configuracion?.metodo === 'irv' ? configuracion : undefined;
+      return {
+        kind: 'irv',
+        exhaustedPolicy: 'reduce-quota',
+        eliminationTieBreak: DEFAULT_TIE_BREAK,
+        allowTruncation: cfg?.admiteTruncamiento ?? true,
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'majority-judgment': {
+      // ADR-0028: método por defecto del proyecto para dos o más opciones sustantivas.
+      const cfg = configuracion?.metodo === 'majority-judgment' ? configuracion : undefined;
+      const scale: GradeScale =
+        cfg?.escala === undefined
+          ? ESCALA_DE_MENCIONES_POR_DEFECTO
+          : { grades: cfg.escala.map((g) => ({ id: g.id as GradeId, label: g.etiqueta })) };
+      return {
+        kind: 'majority-judgment',
+        scale,
+        // B.7.b: una papeleta que no menciona alguna opción se descarta entera. Es la regla más
+        // exigente; la alternativa ('worst') la elige quien abre, en `configuracion`.
+        missingGradePolicy: 'reject-ballot',
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'condorcet-schulze': {
+      const cfg = configuracion?.metodo === 'condorcet-schulze' ? configuracion : undefined;
+      return {
+        kind: 'condorcet-schulze',
+        allowTruncation: cfg?.admiteTruncamiento ?? true,
+        // B.8.b: las opciones omitidas empatan en último lugar, nunca se inventa un orden.
+        truncatedMeans: 'tied-last',
+        tieBreak: DEFAULT_TIE_BREAK,
+      };
+    }
+    case 'deliberative-sortition': {
+      // ADR-0031: muestra de 5 por defecto, repartida por los mismos ejes del padrón.
+      const cfg = configuracion?.metodo === 'deliberative-sortition' ? configuracion : undefined;
+      return {
+        kind: 'deliberative-sortition',
+        sampleSize: cfg?.tamanoDeMuestra ?? 5,
+        strata: ESTRATOS_DEL_SORTEO_POR_DEFECTO,
+        allocation: 'proportional',
+        seedCommitment: contexto.seedCommitment,
+      };
+    }
+    default: {
+      // Red de seguridad de tipos: si `IdMetodo` alguna vez gana un décimo valor sin que este
+      // switch se actualice, esto falla en tiempo de compilación (never) y, si algo se saltara el
+      // tipo, en tiempo de ejecución con un 400 claro en vez de una configuración a medio construir.
+      const _exhaustivo: never = metodo;
+      throw new ServicioError('DATOS_INVALIDOS', 400, `método desconocido: ${String(_exhaustivo)}`);
+    }
+  }
+}
+
+/**
+ * El quórum de cada método. Los nueve, salvo dos, comparten la misma exigencia institucional de
+ * GOVERNANCE §4 filas 6/8 —75 de 300, es decir 1/4 del censo— porque ninguna fila de GOVERNANCE.md
+ * define un piso de participación distinto para puntuación, rondas, menciones o comparación por
+ * pares: son formas distintas de contar la MISMA papeleta emitida por el MISMO censo, no votaciones
+ * con una exigencia de participación propia.
+ *
+ * Los dos que sí difieren tienen razones estructurales, no arbitrarias: `sociocratic-consent` mide
+ * participación DENTRO del círculo, no sobre el censo entero (un acuerdo interno de doce personas no
+ * puede exigir que se manifieste medio censo); `deliberative-sortition` no tiene papeleta que contar
+ * — el sorteo en sí es el mecanismo — así que no hay participación que exigir.
+ */
+function construirQuorum(metodo: IdMetodo, circulo: CircleId): DecisionConfig['quorum'] {
+  if (metodo === 'sociocratic-consent') {
     return {
-      participation: ratio(1, 4),
+      participation: ratio(0, 1),
+      perCircle: [{ circleId: circulo, min: ratio(1, 2) }],
       onFailure: 'reject',
       maxExtensions: 0,
       extensionDuration: 0,
     };
   }
-  // En el consentimiento la exigencia es «la mitad del círculo se manifiesta». Se expresa como
-  // quórum por círculo, que es donde el motor sabe medirlo, y NO como participación sobre el censo:
-  // un acuerdo interno de un círculo de 12 personas no puede exigir que se manifieste medio censo.
+  if (metodo === 'deliberative-sortition') {
+    return {
+      participation: ratio(0, 1),
+      onFailure: 'reject',
+      maxExtensions: 0,
+      extensionDuration: 0,
+    };
+  }
+  // 75 de 300 = 1/4 (GOVERNANCE §4, filas 6 y 8).
   return {
-    participation: ratio(0, 1),
-    perCircle: [{ circleId: circulo, min: ratio(1, 2) }],
+    participation: ratio(1, 4),
     onFailure: 'reject',
     maxExtensions: 0,
     extensionDuration: 0,
@@ -647,20 +820,75 @@ function construirQuorum(metodo: MetodoSoportado, circulo: CircleId): DecisionCo
 }
 
 /** Qué hace falta para que esto pase, **en palabras**. Va siempre en la papeleta (PRODUCT §4). */
-export function queHaceFaltaParaQuePase(metodo: MetodoSoportado, podianDecidir: number): string {
-  if (metodo === 'simple-majority') {
-    const minimo = Math.ceil(podianDecidir / 4);
-    return (
-      `Se aprueba si hay más síes que noes. Las abstenciones no cuentan para ese cálculo, pero sí ` +
-      `para la participación mínima: tienen que responder al menos ${String(minimo)} de las ` +
-      `${String(podianDecidir)} personas que podían decidir aquí.`
-    );
+export function queHaceFaltaParaQuePase(metodo: IdMetodo, podianDecidir: number): string {
+  const minimo = Math.ceil(podianDecidir / 4);
+  switch (metodo) {
+    case 'simple-majority':
+      return (
+        `Se aprueba si hay más síes que noes. Las abstenciones no cuentan para ese cálculo, pero ` +
+        `sí para la participación mínima: tienen que responder al menos ${String(minimo)} de las ` +
+        `${String(podianDecidir)} personas que podían decidir aquí.`
+      );
+    case 'supermajority':
+      return (
+        `Se aprueba si al menos dos de cada tres respuestas dicen que sí (salvo que se haya ` +
+        `pedido otra fracción al abrir). Las abstenciones no cuentan para ese cálculo, pero sí ` +
+        `para la participación mínima: tienen que responder al menos ${String(minimo)} de las ` +
+        `${String(podianDecidir)} personas que podían decidir aquí.`
+      );
+    case 'unanimity':
+      return (
+        `Se aprueba únicamente si nadie dice que no. Salvo que el círculo haya decidido lo ` +
+        `contrario al abrir, cualquier abstención también rompe el acuerdo. Tienen que responder ` +
+        `al menos ${String(minimo)} de las ${String(podianDecidir)} personas que podían decidir aquí.`
+      );
+    case 'sociocratic-consent':
+      return (
+        'No hace falta que a todos les guste; hace falta que nadie muestre un daño. Pasa si al ' +
+        'cerrar no queda ninguna objeción en pie y si se manifestó al menos la mitad del grupo. ' +
+        'Una reserva se registra y no bloquea; una objeción bloquea y exige decir qué se daña.'
+      );
+    case 'score':
+      return (
+        `Cada persona pone una nota de 0 a 5 a cada opción. Gana la que tenga la nota de en medio ` +
+        `más alta entre quienes respondieron. Tienen que responder al menos ${String(minimo)} de ` +
+        `las ${String(podianDecidir)} personas que podían decidir aquí.`
+      );
+    case 'irv':
+      return (
+        `Cada persona ordena las opciones de la que más prefiere a la que menos. Si nadie junta ` +
+        `más de la mitad de las primeras preferencias, se descarta la opción con menos apoyo y se ` +
+        `reparten sus votos según la siguiente preferencia, hasta que alguna llegue a la mitad. ` +
+        `Tienen que responder al menos ${String(minimo)} de las ${String(podianDecidir)} personas ` +
+        `que podían decidir aquí.`
+      );
+    case 'majority-judgment':
+      return (
+        `Cada persona pone una mención a cada opción, de la mejor a la peor. Gana la que tenga la ` +
+        `mención de en medio más alta; si dos empatan en esa mención, se desempata quitando de a ` +
+        `una las menciones repetidas hasta que una de las dos quede mejor ubicada. Tienen que ` +
+        `responder al menos ${String(minimo)} de las ${String(podianDecidir)} personas que podían ` +
+        `decidir aquí.`
+      );
+    case 'condorcet-schulze':
+      return (
+        `Cada persona ordena las opciones. Se comparan de a pares y gana la que le gana a todas ` +
+        `las demás una contra una; si ninguna le gana a todas, se resuelve repitiendo la ` +
+        `comparación entre las que van quedando hasta encontrar la que resiste mejor. Tienen que ` +
+        `responder al menos ${String(minimo)} de las ${String(podianDecidir)} personas que podían ` +
+        `decidir aquí.`
+      );
+    case 'deliberative-sortition':
+      return (
+        `No hay papeleta que llenar: se sortea al azar un grupo pequeño de las ` +
+        `${String(podianDecidir)} personas del censo, con sorteo público y verificable, y ese ` +
+        `grupo es el que delibera y decide.`
+      );
+    default: {
+      const _exhaustivo: never = metodo;
+      return `método desconocido: ${String(_exhaustivo)}`;
+    }
   }
-  return (
-    'No hace falta que a todos les guste; hace falta que nadie muestre un daño. Pasa si al cerrar ' +
-    'no queda ninguna objeción en pie y si se manifestó al menos la mitad del grupo. Una reserva ' +
-    'se registra y no bloquea; una objeción bloquea y exige decir qué se daña.'
-  );
 }
 
 export interface DecisionAbierta {
@@ -707,6 +935,14 @@ export async function abrirDecision(
     readonly metodo: MetodoSoportado;
     readonly duracionHoras: number;
     /**
+     * Configuración pública del método elegido (`packages/contracts/src/metodos.ts`). Si se omite,
+     * `construirMetodo` usa los valores por defecto del catálogo. Si viene, su campo `metodo` tiene
+     * que coincidir con `metodo` de aquí arriba — lo comprueba `construirMetodo`, no este tipo,
+     * porque son dos campos hermanos y no hay forma de expresar esa igualdad en el sistema de tipos
+     * sin un genérico que ningún llamador necesita.
+     */
+    readonly configuracion?: ConfiguracionDeMetodoHttp | undefined;
+    /**
      * Si en esta votación se puede prestar el voto.
      *
      * Apagado por defecto, que es el default institucional: delegar es un acto explícito de
@@ -718,6 +954,21 @@ export async function abrirDecision(
     readonly delegacion?: boolean | undefined;
   },
 ): Promise<DecisionAbierta> {
+  if (input.configuracion !== undefined && input.configuracion.metodo !== input.metodo) {
+    throw new ServicioError(
+      'DATOS_INVALIDOS',
+      400,
+      'la configuración que mandaste es de otro método: revisá el campo "metodo" de "configuracion"',
+    );
+  }
+  if (input.delegacion === true && !METODOS_DISPONIBLES[input.metodo].delegacionPermitida) {
+    throw new ServicioError(
+      'DELEGACION_NO_ADMITIDA',
+      409,
+      'el método elegido no admite prestar el voto: abrí esta votación sin préstamo de voto o ' +
+        'elegí otro método.',
+    );
+  }
   return withTransaction(deps.pool, async (client) => {
     await lockLedgerWithin(client);
 
@@ -856,7 +1107,7 @@ export async function abrirDecision(
       topics: [],
       options: [optionId(input.propuestaId)],
       electorate,
-      method: construirMetodo(input.metodo),
+      method: construirMetodo(input.metodo, input.configuracion, { seedCommitment }),
       quorum: construirQuorum(input.metodo, circulo),
       window: {
         opensAt: at,

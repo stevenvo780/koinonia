@@ -164,6 +164,19 @@ function franjaDe(ms: number, ahora: number): FranjaPlazo {
  * «días», así que el cambio de tono siempre viene acompañado de esa lectura—. La frase completa
  * («Cierra en 3 días») se sigue diciendo entera, pero sólo para quien usa lector de pantalla.
  *
+ * ═══ El «atrás», que faltaba ═══
+ *
+ * Un plazo vencido y uno por vencer se dibujaban **idénticos**: los dos decían «3 DÍAS» y la única
+ * diferencia era el color de la cifra (`.plazo.cerrado` la baja a tinta suave). Quien no distingue
+ * ese matiz —o mira la pantalla al sol, o la tiene en escala de grises— leía «3 días» y no tenía
+ * cómo saber si le quedan tres días o si se le pasaron hace tres. Es exactamente lo que prohíbe
+ * WCAG 1.4.1, y en la pieza que decide si alguien llega a tiempo a votar.
+ *
+ * El arreglo es una palabra en la línea de la unidad —«3 / DÍAS ATRÁS»—, no un símbolo: un plazo
+ * que venció no es ni un acierto ni un error, y cualquier ✓ o ✕ ahí estaría diciendo algo que no
+ * pasó. El texto para lector de pantalla no cambia: ya decía «Cerró hace 3 días», que es la frase
+ * completa, y ahora los dos sentidos cuentan lo mismo.
+ *
  * `ahora` es un parámetro y no `Date.now()` interno para que quien ya calculó «ahora» una vez por
  * pantalla (para no desincronizar varios `<Plazo>` entre sí) pueda pasarlo.
  *
@@ -182,7 +195,10 @@ export function Plazo({
     <p className={tono === undefined ? 'plazo' : `plazo ${tono}`}>
       <span aria-hidden="true">
         <span className="plazo-numero">{franja.valor}</span>{' '}
-        <span className="plazo-unidad">{franja.unidad}</span>
+        <span className="plazo-unidad">
+          {franja.unidad}
+          {franja.futuro ? '' : ' atrás'}
+        </span>
       </span>
       <span className="solo-lectores">{plazo(ms, ahora)}</span>
     </p>
