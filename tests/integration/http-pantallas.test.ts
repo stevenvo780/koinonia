@@ -53,9 +53,26 @@ function uuid(semilla: number): string {
 let n = 0;
 const req = (): string => uuid(++n + 0x9000);
 
+/**
+ * Cuánto puede envejecer un testigo antes de que `peticion` lo renueve por las suyas, con margen
+ * bajo el corte real de inactividad de T-06 (60 min, `INACTIVIDAD_VIGENCIA_MS` en `identity.ts`).
+ * No al filo: unos minutos de sobra para el tiempo real que toma la propia petición.
+ */
+const MARGEN_RENOVACION_SESION_MS = 45 * 60 * 1000;
+
 interface Persona {
-  readonly testigo: string;
+  /** Mutable a propósito: `peticion` la renueva in-situ cuando la sesión caducó por inactividad. */
+  testigo: string;
   readonly miembroId: string;
+  readonly correo: string;
+  /**
+   * Reloj de prueba en el que se emitió `testigo` por última vez. Varias rutas de lectura de este
+   * fichero (`/consenso`, `/delegaciones`, `/circulos/…`) no exigen sesión: con un testigo vencido
+   * simplemente responden en modo anónimo, sin 401 que `peticion` pueda detectar y corregir. Por
+   * eso la renovación es PROACTIVA —por edad, antes de cada petición— y el reintento sobre 401 que
+   * hace `peticion` queda sólo como red de seguridad para las rutas que sí exigen sesión.
+   */
+  emitidoEn: number;
 }
 
 describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, () => {
@@ -71,12 +88,71 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
    */
   let gente: Persona[];
 
+  /**
+   * Reparte la autoría de cada propuesta nueva entre gente distinta, gente[11] en adelante: el
+   * cupo semanal de T-12 es 3 propuestas por persona (`REGLA_PROPUESTA`, `rate-limit.ts`), y este
+   * escenario abre bastantes más de tres a lo largo de un solo `describe` — todas dentro de la
+   * misma ventana simulada de una semana, porque el reloj sólo avanza unas horas en total. Repetir
+   * autor chocaría con un cupo real y correctamente exigido, no con un error de la prueba.
+   */
+  let siguienteAutorIndice = 11;
+  function siguienteAutor(): Persona {
+    const persona = gente[siguienteAutorIndice];
+    if (persona === undefined) {
+      throw new Error('se agotaron las personas reservadas para autoría de propuestas de prueba');
+    }
+    siguienteAutorIndice += 1;
+    return persona;
+  }
+
+  /** Pide un testigo nuevo para `p` y lo dejar anotado con la hora (de prueba) de emisión. */
+  async function renovar(p: Persona): Promise<void> {
+    const sesion = await entrar(e, p.correo);
+    p.testigo = sesion.testigo;
+    p.emitidoEn = e.reloj.now();
+  }
+
+  /**
+   * Como `e.app.inject`, pero autenticada como `p` y resiliente a que la sesión haya caducado por
+   * inactividad (T-06, 60 min) — algo que este fichero provoca a propósito cada vez que adelanta el
+   * reloj para dejar transcurrir la ventana de una votación (§ `votacionCerrada`). Renueva PROACTIVO
+   * por edad (`MARGEN_RENOVACION_SESION_MS`), porque varias rutas de lectura de aquí abajo no
+   * exigen sesión y ante un testigo vencido responden en modo anónimo en vez de con un 401 que se
+   * pueda detectar después del hecho. El reintento sobre un 401 «no autenticada» que sí llega queda
+   * como red de seguridad, no como el mecanismo principal.
+   */
+  async function peticion(
+    p: Persona,
+    init: {
+      readonly method: 'GET' | 'POST';
+      readonly url: string;
+      readonly payload?: Record<string, unknown>;
+    },
+  ): Promise<Awaited<ReturnType<typeof e.app.inject>>> {
+    if (e.reloj.now() - p.emitidoEn >= MARGEN_RENOVACION_SESION_MS) {
+      await renovar(p);
+    }
+    const primero = await e.app.inject({ ...init, headers: como(p.testigo) });
+    if (primero.statusCode === 401) {
+      let codigo: string | undefined;
+      try {
+        codigo = primero.json<{ codigo?: string }>().codigo;
+      } catch {
+        codigo = undefined; // cuerpo no-JSON: no es el caso de sesión inactiva, se deja tal cual.
+      }
+      if (codigo === 'UNAUTHORIZED_NOT_AUTHENTICATED') {
+        await renovar(p);
+        return e.app.inject({ ...init, headers: como(p.testigo) });
+      }
+    }
+    return primero;
+  }
+
   /** Abre una propuesta nueva y devuelve su identificador. */
   async function nuevaPropuesta(autor: Persona, titulo: string): Promise<string> {
-    const problema = await e.app.inject({
+    const problema = await peticion(autor, {
       method: 'POST',
       url: '/problemas',
-      headers: como(autor.testigo),
       payload: {
         requestId: req(),
         titulo: `${titulo} (el problema)`,
@@ -88,10 +164,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
     expect(problema.statusCode, problema.body).toBe(201);
 
-    const propuesta = await e.app.inject({
+    const propuesta = await peticion(autor, {
       method: 'POST',
       url: '/propuestas',
-      headers: como(autor.testigo),
       payload: {
         requestId: req(),
         problemaId: problema.json<{ id: string }>().id,
@@ -111,18 +186,19 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
    * `1` a favor, `-1` en contra, `0` abstención explícita.
    *
    * La ventana es de una hora y el reloj avanza sesenta y un minutos por votación. No es un
-   * capricho: la sesión dura doce horas y adelantar dos horas por votación dejaba a todo el mundo
-   * fuera a mitad del escenario, con 401 en sitios que no tenían nada que ver.
+   * capricho: adelantar dos horas por votación dejaba a todo el mundo fuera a mitad del escenario,
+   * con 401 en sitios que no tenían nada que ver. El propio salto de 61 minutos ya excede el corte
+   * por inactividad de sesión (T-06, 60 min): por eso todo pasa por `peticion`, que renueva sola la
+   * sesión de quien la necesite en vez de que cada punto de este fichero tenga que saberlo.
    */
   async function votacionCerrada(
     titulo: string,
     respuestas: readonly (-1 | 0 | 1)[],
   ): Promise<string> {
-    const propuestaId = await nuevaPropuesta(gente[0]!, titulo);
-    const abierta = await e.app.inject({
+    const propuestaId = await nuevaPropuesta(siguienteAutor(), titulo);
+    const abierta = await peticion(lucia, {
       method: 'POST',
       url: '/decisiones',
-      headers: como(lucia.testigo),
       payload: { requestId: req(), propuestaId, metodo: 'simple-majority', duracionHoras: 1 },
     });
     expect(abierta.statusCode, abierta.body).toBe(201);
@@ -130,10 +206,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
 
     for (const [indice, persona] of gente.slice(0, respuestas.length).entries()) {
       const respuesta = respuestas[indice] ?? 0;
-      const papeleta = await e.app.inject({
+      const papeleta = await peticion(persona, {
         method: 'POST',
         url: `/decisiones/${decision.id}/papeletas`,
-        headers: como(persona.testigo),
         payload: {
           requestId: req(),
           huellaVersion: decision.huellaVersion,
@@ -145,10 +220,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     }
 
     e.reloj.avanzar(HORA_MS + 60_000);
-    const cierre = await e.app.inject({
+    const cierre = await peticion(lucia, {
       method: 'POST',
       url: `/decisiones/${decision.id}/cerrar`,
-      headers: como(lucia.testigo),
       payload: { requestId: req() },
     });
     expect(cierre.statusCode, cierre.body).toBe(200);
@@ -160,10 +234,23 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
 
   beforeAll(async () => {
     e = listo(env);
-    lucia = await entrar(e, FACILITADORA);
+    const sesionLucia = await entrar(e, FACILITADORA);
+    lucia = {
+      testigo: sesionLucia.testigo,
+      miembroId: sesionLucia.miembroId,
+      correo: FACILITADORA,
+      emitidoEn: e.reloj.now(),
+    };
     gente = [];
     for (let i = 0; i < 20; i++) {
-      gente.push(await entrar(e, `pantallas.${String(i)}@udea.edu.co`));
+      const correo = `pantallas.${String(i)}@udea.edu.co`;
+      const sesion = await entrar(e, correo);
+      gente.push({
+        testigo: sesion.testigo,
+        miembroId: sesion.miembroId,
+        correo,
+        emitidoEn: e.reloj.now(),
+      });
     }
   });
 
@@ -265,19 +352,11 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
   });
 
   it('a cada quien le dice en qué grupo quedó, y sólo a quien votó', async () => {
-    const mia = await e.app.inject({
-      method: 'GET',
-      url: '/consenso',
-      headers: como(gente[0]!.testigo),
-    });
+    const mia = await peticion(gente[0]!, { method: 'GET', url: '/consenso' });
     expect(mia.json<{ miGrupo?: number }>().miGrupo).toBeGreaterThanOrEqual(1);
 
     // Quien no votó en ninguna no tiene grupo, y no se le inventa uno.
-    const deLucia = await e.app.inject({
-      method: 'GET',
-      url: '/consenso',
-      headers: como(lucia.testigo),
-    });
+    const deLucia = await peticion(lucia, { method: 'GET', url: '/consenso' });
     expect(deLucia.json<{ miGrupo?: number }>().miGrupo).toBeUndefined();
   });
 
@@ -298,11 +377,10 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     let huellaVersion: string;
 
     beforeAll(async () => {
-      const propuestaId = await nuevaPropuesta(gente[0]!, 'Comprar una grecas para la sala');
-      const abierta = await e.app.inject({
+      const propuestaId = await nuevaPropuesta(siguienteAutor(), 'Comprar una grecas para la sala');
+      const abierta = await peticion(lucia, {
         method: 'POST',
         url: '/decisiones',
-        headers: como(lucia.testigo),
         payload: {
           requestId: req(),
           propuestaId,
@@ -318,21 +396,16 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('una votación abierta sin delegación no la ofrece, y dice por qué', async () => {
-      const propuestaId = await nuevaPropuesta(gente[0]!, 'Cambiar el bombillo del pasillo');
-      const abierta = await e.app.inject({
+      const propuestaId = await nuevaPropuesta(siguienteAutor(), 'Cambiar el bombillo del pasillo');
+      const abierta = await peticion(lucia, {
         method: 'POST',
         url: '/decisiones',
-        headers: como(lucia.testigo),
         payload: { requestId: req(), propuestaId, metodo: 'simple-majority', duracionHoras: 48 },
       });
       expect(abierta.statusCode, abierta.body).toBe(201);
       const sinDelegacion = abierta.json<{ id: string }>().id;
 
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[1]!.testigo),
-      });
+      const panel = await peticion(gente[1]!, { method: 'GET', url: '/delegaciones' });
       const votacion = panel
         .json<{
           votaciones: { decisionId: string; sePuedeDelegar: boolean; porQueNo?: string }[];
@@ -343,11 +416,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('el panel explica qué deshace un préstamo ANTES de que alguien lo haga', async () => {
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[1]!.testigo),
-      });
+      const panel = await peticion(gente[1]!, { method: 'GET', url: '/delegaciones' });
       expect(panel.statusCode, panel.body).toBe(200);
       const comoFunciona = panel.json<{ comoFunciona: string[] }>().comoFunciona;
       expect(comoFunciona.some((linea) => /Si votás vos, tu voto manda/u.test(linea))).toBe(true);
@@ -355,11 +424,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('el desplegable de en quién delegar nunca se ofrece a uno mismo', async () => {
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[1]!.testigo),
-      });
+      const panel = await peticion(gente[1]!, { method: 'GET', url: '/delegaciones' });
       const votacion = panel
         .json<{
           votaciones: {
@@ -375,10 +440,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('presta el voto, lo cuenta en el reparto y lo devuelve de un toque', async () => {
-      const prestado = await e.app.inject({
+      const prestado = await peticion(gente[1]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[1]!.testigo),
         payload: { requestId: req(), enQuienId: gente[2]!.miembroId },
       });
       expect(prestado.statusCode, prestado.body).toBe(201);
@@ -396,10 +460,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       // Revocar exige que haya pasado al menos un milisegundo desde la concesión: el dominio
       // rechaza revocar «antes» de conceder y con reloj congelado los dos instantes coinciden.
       e.reloj.avanzar(1000);
-      const devuelto = await e.app.inject({
+      const devuelto = await peticion(gente[1]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones/${tras.miDelegacion!.id}/revocar`,
-        headers: como(gente[1]!.testigo),
         payload: { requestId: req() },
       });
       expect(devuelto.statusCode, devuelto.body).toBe(200);
@@ -413,18 +476,16 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('votar directo anula el préstamo, y se dice sin que haya que deducirlo', async () => {
-      const prestado = await e.app.inject({
+      const prestado = await peticion(gente[3]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[3]!.testigo),
         payload: { requestId: req(), enQuienId: gente[4]!.miembroId },
       });
       expect(prestado.statusCode, prestado.body).toBe(201);
 
-      const papeleta = await e.app.inject({
+      const papeleta = await peticion(gente[3]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/papeletas`,
-        headers: como(gente[3]!.testigo),
         payload: {
           requestId: req(),
           huellaVersion,
@@ -433,11 +494,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       });
       expect(papeleta.statusCode, papeleta.body).toBe(201);
 
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[3]!.testigo),
-      });
+      const panel = await peticion(gente[3]!, { method: 'GET', url: '/delegaciones' });
       const votacion = panel
         .json<{
           votaciones: {
@@ -454,10 +511,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('HORIZONTAL — nadie presta el voto de otra persona, ni mandando el campo por API', async () => {
-      const respuesta = await e.app.inject({
+      const respuesta = await peticion(gente[5]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[5]!.testigo),
         payload: {
           requestId: req(),
           enQuienId: gente[6]!.miembroId,
@@ -471,11 +527,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       // `.strict()` en la frontera: un campo de más no se ignora, se rechaza.
       expect(respuesta.statusCode, respuesta.body).toBe(400);
 
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[7]!.testigo),
-      });
+      const panel = await peticion(gente[7]!, { method: 'GET', url: '/delegaciones' });
       const votacion = panel
         .json<{ votaciones: { decisionId: string; miDelegacion?: unknown }[] }>()
         .votaciones.find((v) => v.decisionId === decisionId);
@@ -483,30 +535,24 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('HORIZONTAL — nadie revoca el préstamo de otra persona', async () => {
-      const prestado = await e.app.inject({
+      const prestado = await peticion(gente[5]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[5]!.testigo),
         payload: { requestId: req(), enQuienId: gente[6]!.miembroId },
       });
       expect(prestado.statusCode, prestado.body).toBe(201);
       const delegacionId = prestado.json<{ miDelegacion: { id: string } }>().miDelegacion.id;
 
       e.reloj.avanzar(1000);
-      const ajeno = await e.app.inject({
+      const ajeno = await peticion(gente[7]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones/${delegacionId}/revocar`,
-        headers: como(gente[7]!.testigo),
         payload: { requestId: req() },
       });
       expect(ajeno.statusCode, ajeno.body).toBe(403);
 
       // Y no se escribió nada: no basta con devolver 403.
-      const panel = await e.app.inject({
-        method: 'GET',
-        url: '/delegaciones',
-        headers: como(gente[5]!.testigo),
-      });
+      const panel = await peticion(gente[5]!, { method: 'GET', url: '/delegaciones' });
       const votacion = panel
         .json<{ votaciones: { decisionId: string; miDelegacion?: { id: string } }[] }>()
         .votaciones.find((v) => v.decisionId === decisionId);
@@ -518,18 +564,16 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       // miembros y el tope de concentración es 2 votos sobre un censo de 22 (C.5)». Es el mensaje
       // correcto para quien depura y el equivocado para quien está mirando la pantalla: lleva la
       // notación del cálculo y una cita de la especificación. Salía tal cual por la API.
-      const primero = await e.app.inject({
+      const primero = await peticion(gente[8]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[8]!.testigo),
         payload: { requestId: req(), enQuienId: gente[9]!.miembroId },
       });
       expect(primero.statusCode, primero.body).toBe(201);
 
-      const segundo = await e.app.inject({
+      const segundo = await peticion(gente[10]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[10]!.testigo),
         payload: { requestId: req(), enQuienId: gente[9]!.miembroId },
       });
       expect(segundo.statusCode, segundo.body).toBe(422);
@@ -554,10 +598,9 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     });
 
     it('delegar en uno mismo se rechaza con un mensaje que se puede leer', async () => {
-      const respuesta = await e.app.inject({
+      const respuesta = await peticion(gente[6]!, {
         method: 'POST',
         url: `/decisiones/${decisionId}/delegaciones`,
-        headers: como(gente[6]!.testigo),
         payload: { requestId: req(), enQuienId: gente[6]!.miembroId },
       });
       expect(respuesta.statusCode, respuesta.body).toBe(422);
@@ -578,17 +621,15 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
   });
 
   it('HORIZONTAL — la lista de integrantes de un grupo ajeno no se entrega', async () => {
-    const propio = await e.app.inject({
+    const propio = await peticion(gente[0]!, {
       method: 'GET',
       url: `/circulos/${CIRCULO_ESPACIOS}/miembros`,
-      headers: como(gente[0]!.testigo),
     });
     expect(propio.statusCode, propio.body).toBe(200);
 
-    const ajeno = await e.app.inject({
+    const ajeno = await peticion(gente[0]!, {
       method: 'GET',
       url: `/circulos/${CIRCULO_ACADEMICO}/miembros`,
-      headers: como(gente[0]!.testigo),
     });
     expect(ajeno.statusCode, ajeno.body).toBe(403);
   });
@@ -664,11 +705,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
   });
 
   it('el historial NO dice quién hizo cada cosa: eso rompería la autoría sellada', async () => {
-    const respuesta = await e.app.inject({
-      method: 'GET',
-      url: '/historial',
-      headers: como(gente[0]!.testigo),
-    });
+    const respuesta = await peticion(gente[0]!, { method: 'GET', url: '/historial' });
     const texto = respuesta.body;
     for (const persona of gente) {
       expect(texto).not.toContain(persona.miembroId);

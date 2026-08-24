@@ -220,6 +220,14 @@ export const versionRespuesta = z
     pregunta: numeroPregunta,
     respuesta: respuestaPregunta,
     origen: origenDeRespuesta,
+    /**
+     * `true` ⟺ `origen === 'sugerencia'` (T-25, `docs/THREAT_MODEL.md`): la marca visible de que
+     * este texto no lo escribió la persona a mano, sino que lo tomó de una sugerencia del
+     * ayudante. Es redundante con `origen` a propósito — no es un segundo dato, es el mismo dato
+     * dicho en la forma que promete el modelo de amenaza, para que ninguna pantalla ni ningún
+     * cliente tenga que conocer la regla `origen === 'sugerencia'` para mostrar la bandera.
+     */
+    assisted: z.boolean(),
     /** Presente sólo si `origen` es `'sugerencia'`. */
     sugerenciaId: opaqueId.optional(),
     escritaEn: instantMs,
@@ -232,6 +240,8 @@ export const procedenciaDeRespuesta = z
   .object({
     pregunta: numeroPregunta,
     origen: origenDeRespuesta,
+    /** Ver la nota de `assisted` en `versionRespuesta`: la misma marca, la misma regla. */
+    assisted: z.boolean(),
     sugerenciaId: opaqueId.optional(),
     escritaEn: instantMs,
     seq: z.number().int().positive(),

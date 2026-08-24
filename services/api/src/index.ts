@@ -294,12 +294,16 @@ export {
 export {
   bucketKey,
   consume,
+  CupoAgotadoError,
   pepperOfDay,
+  pepperOfWindow,
   purgeOldBuckets,
   type RateRule,
   type RateVerdict,
+  REGLA_COMENTARIO,
   REGLA_ENLACE,
   REGLA_ESCRITURA,
+  REGLA_PROPUESTA,
 } from './http/rate-limit.js';
 
 export type {

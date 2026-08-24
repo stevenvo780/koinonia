@@ -141,6 +141,7 @@ import {
   openSession,
   redeemMagicLink,
   resolveSession,
+  revokeAllSessions,
   revokeSession,
   requestOwnErasure,
   upsertMember,
@@ -168,7 +169,15 @@ import {
   propuestaResumenDto,
   resultadoDto,
 } from './presenters.js';
-import { consume, type RateRule, REGLA_ENLACE, REGLA_ESCRITURA } from './rate-limit.js';
+import {
+  consume,
+  CupoAgotadoError,
+  type RateRule,
+  REGLA_COMENTARIO,
+  REGLA_ENLACE,
+  REGLA_ESCRITURA,
+  REGLA_PROPUESTA,
+} from './rate-limit.js';
 import {
   ACTOR_ANONIMO,
   abrirDecision,
@@ -248,7 +257,38 @@ import { registrarRutasDeEvaluacion } from './rutas-evaluacion.js';
 import { registrarRutasDeIniciativas } from './rutas-iniciativas.js';
 import { registrarRutasDeMetricas } from './rutas-metricas.js';
 
+/**
+ * Nombre BASE de la cookie de sesión, sin el prefijo `__Host-`. Se conserva exportado con este
+ * nombre por compatibilidad — nada fuera de este módulo lo consume hoy, pero `index.ts` lo
+ * reexporta y no es de este encargo tocarlo. El nombre EFECTIVO, el que de verdad se envía y se
+ * lee, lo decide `nombreCookieSesion` más abajo.
+ */
 export const COOKIE_SESION = 'koinonia_sesion';
+
+/**
+ * El nombre real de la cookie de sesión (T-06). `__Host-` es la defensa más barata que hay contra
+ * una cookie de sesión plantada por un subdominio hostil: el navegador exige que la cookie lleve
+ * `Secure`, prohíbe el atributo `Domain` y fija `Path=/` — y ninguna de esas tres cosas se puede
+ * declarar distinta, porque el propio nombre lo impone. Un subdominio (`lo-que-sea.koinonia.org`
+ * comprometido, o simplemente mal configurado) no puede escribir una cookie con ese prefijo que el
+ * dominio principal vaya a aceptar como propia.
+ *
+ * El motivo de que el prefijo NO esté siempre puesto: `__Host-` exige `Secure`, y `Secure` exige
+ * que la cookie viaje sólo por HTTPS. En desarrollo (`modoDesarrollo: true`, que es también el modo
+ * en que corren `tests/integration`) la API se sirve por HTTP liso, sin TLS. Un navegador real ante
+ * `Set-Cookie: __Host-koinonia_sesion=…` sin `Secure`, o sobre un origen no seguro, **descarta la
+ * cookie en silencio** — no es un error visible, es un login que simplemente no persiste, y hubiera
+ * costado una tarde de diagnóstico a quien primero levantara el proyecto en local.
+ *
+ * La salida no es relajar el prefijo: es que dependa del MISMO booleano que ya decide `secure` más
+ * abajo, así los dos nunca pueden quedar descoordinados. En producción (`modoDesarrollo: false`,
+ * fijado por el despliegue y nunca por un valor por defecto que alguien olvide cambiar) la cookie
+ * SIEMPRE lleva `__Host-`. En desarrollo se queda con el nombre base, sin `Secure` y sin prefijo,
+ * que es la única combinación que un navegador acepta por HTTP.
+ */
+function nombreCookieSesion(modoDesarrollo: boolean): string {
+  return modoDesarrollo ? COOKIE_SESION : `__Host-${COOKIE_SESION}`;
+}
 
 export interface AppOptions {
   readonly pool: PgPool;
@@ -273,6 +313,8 @@ export interface AppOptions {
   readonly reglas?: {
     readonly enlace?: RateRule;
     readonly escritura?: RateRule;
+    readonly propuesta?: RateRule;
+    readonly comentario?: RateRule;
   };
 }
 
@@ -281,6 +323,40 @@ declare module 'fastify' {
     quien: AuthenticatedMember | undefined;
     sesionToken: string | undefined;
   }
+}
+
+/**
+ * Qué se dice en pantalla cuando se agota un cupo (T-12), por ámbito.
+ *
+ * Un 429 seco es una mala respuesta en una plataforma de participación: quien lo recibe no sabe si
+ * hizo algo mal, si el sistema se rompió o si va a poder volver a escribir alguna vez. Cada frase
+ * dice explícitamente que **no es un castigo ni una avería**, sino un tope igual para todo el
+ * mundo; `cupoAgotadoApiError` completa el resto con el «cuándo» exacto, tomado de `liberaEn`.
+ */
+const MENSAJE_CUPO: Readonly<Record<string, string>> = {
+  propuesta:
+    'Ya presentaste el máximo de propuestas nuevas que se admiten por semana. No es que la tuya ' +
+    'esté mal escrita: es un tope igual para todo el mundo, para que el espacio de propuestas no ' +
+    'se llene y se pueda seguir leyendo.',
+  comentario:
+    'Ya escribiste el máximo de aportes que se admiten por día en una conversación. No es un ' +
+    'castigo: es un tope igual para todo el mundo, para que la conversación se pueda seguir ' +
+    'leyendo.',
+  escritura:
+    'Escribiste muchas cosas seguidas y llegaste al tope de esta hora. No se perdió nada de lo que ' +
+    'ya mandaste: es un tope igual para todo el mundo, no una sanción para vos.',
+};
+
+/** Traduce un `CupoAgotadoError` al cuerpo que ve la persona: qué pasó, y cuándo puede volver. */
+function cupoAgotadoApiError(error: CupoAgotadoError): ApiError {
+  const cuando = new Date(error.liberaEn).toISOString().slice(11, 16);
+  return {
+    codigo: 'DEMASIADOS_INTENTOS',
+    mensaje:
+      MENSAJE_CUPO[error.ambito] ??
+      'Llegaste al tope de esta acción por ahora. No es un castigo ni una avería.',
+    queHacer: `Volvé a intentarlo después de las ${cuando} UTC.`,
+  };
 }
 
 function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
@@ -376,6 +452,9 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
       },
     };
   }
+  if (error instanceof CupoAgotadoError) {
+    return { estado: 429, cuerpo: cupoAgotadoApiError(error) };
+  }
   if (error instanceof ServicioError) {
     return {
       estado: error.estado,
@@ -421,6 +500,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const deps: ServicioDeps = { pool: options.pool, ports: options.ports };
   const reglaEnlace = options.reglas?.enlace ?? REGLA_ENLACE;
   const reglaEscritura = options.reglas?.escritura ?? REGLA_ESCRITURA;
+  const reglaPropuesta = options.reglas?.propuesta ?? REGLA_PROPUESTA;
+  const reglaComentario = options.reglas?.comentario ?? REGLA_COMENTARIO;
 
   const app = Fastify({
     logger: {
@@ -456,6 +537,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   await app.register(cookie);
 
+  // Calculado una sola vez por app: ver el comentario de `nombreCookieSesion` sobre por qué el
+  // prefijo `__Host-` depende del mismo booleano que decide `secure`.
+  const cookieSesion = nombreCookieSesion(options.modoDesarrollo);
+
   app.decorateRequest('quien', undefined);
   app.decorateRequest('sesionToken', undefined);
 
@@ -466,7 +551,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.addHook('onRequest', async (request: FastifyRequest) => {
     const cabecera = request.headers.authorization;
     const bearer = cabecera?.startsWith('Bearer ') === true ? cabecera.slice(7) : undefined;
-    const token = bearer ?? request.cookies[COOKIE_SESION];
+    const token = bearer ?? request.cookies[cookieSesion];
     request.sesionToken = token;
     if (token === undefined || token === '') return;
     const client = await options.pool.connect();
@@ -528,28 +613,57 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return subjectId;
   }
 
-  /** Cupo de escritura por persona. Sin IP: el sujeto es el `MemberId`. */
-  async function cupoDeEscritura(request: FastifyRequest): Promise<void> {
+  /**
+   * Aplica un cupo (T-12) contra el `MemberId` de quien llama y lanza `CupoAgotadoError` si ya lo
+   * agotó. Sin sesión no hay cupo que aplicar: la ruta en sí exige autenticación cuando la exige, y
+   * este chequeo no es el lugar para decidir permisos (ver la nota de cabecera del archivo).
+   *
+   * ═══ Sobre qué se cuenta, y por qué (T-12) ═══
+   *
+   * El sujeto es SIEMPRE `quien.memberId` —nunca un correo suelto, nunca una IP—: es la misma
+   * identidad ya verificada que abrió la sesión, así que dos pestañas, dos teléfonos o dos
+   * navegadores de la misma persona comparten un único cupo, y nadie lo esquiva por el lado del
+   * cliente. `consume` lo pasa por la pimienta rotada de `rate-limit.ts` antes de guardarlo: la
+   * tabla `identity.rate_bucket`, vista sola, no dice quién es nadie. El precio, declarado en la
+   * cabecera de `rate-limit.ts`, es el mismo de siempre: esto asume «cuenta legítima» (T-12,
+   * precondición explícita) y no defiende contra quien tenga varias cuentas @udea.edu.co de verdad;
+   * esa defensa es del padrón, no de un contador.
+   */
+  async function aplicarCupo(request: FastifyRequest, regla: RateRule): Promise<void> {
     const quien = request.quien;
     if (quien === undefined) return;
     const client = await options.pool.connect();
     try {
       const veredicto = await consume(client, {
         secret: options.ratePepper,
-        regla: reglaEscritura,
+        regla,
         sujeto: quien.memberId,
         clock: options.ports.clock,
       });
-      if (!veredicto.permitido) {
-        throw new ServicioError(
-          'DEMASIADOS_INTENTOS',
-          429,
-          'escribiste muchas cosas seguidas; esperá un momento',
-        );
-      }
+      if (!veredicto.permitido) throw new CupoAgotadoError(regla.ambito, veredicto);
     } finally {
       client.release();
     }
+  }
+
+  /** Cupo de escritura por persona: 60/hora, la red genérica bajo todas las rutas de escritura. */
+  async function cupoDeEscritura(request: FastifyRequest): Promise<void> {
+    await aplicarCupo(request, reglaEscritura);
+  }
+
+  /**
+   * Cupo de propuestas nuevas: 3 por persona y por semana (THREAT_MODEL.md T-12). Se aplica ADEMÁS
+   * del cupo genérico de escritura, no en su lugar: éste protege específicamente contra inundar el
+   * espacio con propuestas, que es más barato de hacer y más caro de leer que cualquier otra
+   * escritura del sistema.
+   */
+  async function cupoDePropuesta(request: FastifyRequest): Promise<void> {
+    await aplicarCupo(request, reglaPropuesta);
+  }
+
+  /** Cupo de comentarios y aportes de deliberación: 20 por persona y por día (T-12). */
+  async function cupoDeComentario(request: FastifyRequest): Promise<void> {
+    await aplicarCupo(request, reglaComentario);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -643,7 +757,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         } satisfies ApiError);
       }
       const sesion = await openSession(client, miembro.memberId, options.ports);
-      void reply.setCookie(COOKIE_SESION, sesion.token, {
+      void reply.setCookie(cookieSesion, sesion.token, {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
@@ -729,7 +843,29 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         client.release();
       }
     }
-    void reply.clearCookie(COOKIE_SESION, { path: '/' });
+    void reply.clearCookie(cookieSesion, { path: '/', secure: !options.modoDesarrollo });
+    return { salio: true };
+  });
+
+  /**
+   * Cierre global (T-06): «se me perdió el teléfono» sin tener que esperar a que las 8 h absolutas
+   * de cada sesión abierta por ahí terminen solas. Cierra TODAS las sesiones vivas de quien llama,
+   * no sólo la que trae esta petición — es la diferencia con `/auth/salir` de arriba, y por eso es
+   * una ruta distinta y no una opción de la misma.
+   *
+   * Exige sesión vigente: sin credencial no hay `memberId` de quién cerrar, y esta ruta no acepta
+   * uno por parámetro — igual que `/mi/supresion`, la persona sale de la sesión que trae la
+   * petición, nunca de un identificador que alguien más podría intentar nombrar.
+   */
+  app.post('/auth/salir-todo', async (request, reply) => {
+    const subjectId = sujetoPropioDe(request);
+    const client = await options.pool.connect();
+    try {
+      await revokeAllSessions(client, subjectId, options.ports.clock);
+    } finally {
+      client.release();
+    }
+    void reply.clearCookie(cookieSesion, { path: '/', secure: !options.modoDesarrollo });
     return { salio: true };
   });
 
@@ -936,6 +1072,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.post('/propuestas', async (request, reply) => {
+    // El cupo específico primero: si es el que bloquea, el mensaje habla de «propuestas» y no del
+    // tope genérico de escritura, que casi nunca es el que se agota antes en esta ruta.
+    await cupoDePropuesta(request);
     await cupoDeEscritura(request);
     const cuerpo = parse(crearPropuestaSchema, request.body);
     const creada = await crearPropuesta(deps, actorDe(request), cuerpo);
@@ -1426,6 +1565,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.post('/deliberaciones/:id/aportes', async (request, reply) => {
+    await cupoDeComentario(request);
     await cupoDeEscritura(request);
     const { id } = parse(z.object({ id: z.string() }), request.params);
     const cuerpo = parse(aportarSchema, request.body);

@@ -58,9 +58,11 @@ import {
   type MemberId,
   type NumeroPregunta,
   type Pregunta,
+  type ProcedenciaDeRespuesta,
   type PuertoDeIA,
   type Respuesta,
   type SugerenciaId,
+  type VersionDeRespuesta,
   aplicarSugerencia,
   applyAssistant,
   abrirBorrador,
@@ -513,6 +515,31 @@ function preguntaDto(p: Pregunta) {
   };
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// T-25 (`docs/THREAT_MODEL.md`): la marca visible del contenido asistido
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// El dominio ya distingue, evento a evento, si una respuesta se escribió a mano (`RespuestaEscrita`)
+// o se tomó de una sugerencia (`SugerenciaAplicada`) — es `VersionDeRespuesta.origen` y
+// `ProcedenciaDeRespuesta.origen`, y de ahí se puede reconstruir años después, leyendo el historial,
+// qué escribió una persona y qué le propuso la máquina (ver la cabecera de
+// `packages/domain/src/assistant/types.ts`, sección «Procedencia sin vigilancia»).
+//
+// Lo que falta es la bandera **con el nombre que promete el modelo de amenaza**: `assisted: true`,
+// para que ninguna pantalla ni ningún cliente tenga que conocer la regla `origen === 'sugerencia'`
+// para mostrar la marca. Estos dos mapeos añaden esa bandera al cruzar la frontera HTTP, sin
+// inventar un dato nuevo — es el mismo `origen`, dicho con el nombre correcto.
+
+/** Añade `assisted` a una versión de respuesta. Ver la nota de arriba. */
+function versionRespuestaDto(version: VersionDeRespuesta) {
+  return { ...version, assisted: version.origen === 'sugerencia' };
+}
+
+/** Añade `assisted` a cada entrada de la procedencia. Ver la nota de arriba. */
+function procedenciaDto(lista: readonly ProcedenciaDeRespuesta[]) {
+  return lista.map((p) => ({ ...p, assisted: p.origen === 'sugerencia' }));
+}
+
 function borradorResumenDto(estado: AssistantState) {
   const frase = fraseDeCierre(estado);
   return {
@@ -550,7 +577,7 @@ function borradorDetalleDto(estado: AssistantState, disp: DisponibilidadIA) {
       completa: frase.completa,
       pregunta: frase.pregunta,
     },
-    procedencia: procedenciaDe(estado),
+    procedencia: procedenciaDto(procedenciaDe(estado)),
     sugerencias: estado.sugerencias,
     aplicadas: estado.aplicadas,
     ...(estado.consentimiento === undefined
@@ -580,7 +607,7 @@ function ayudaPreguntaDto(estado: AssistantState, numero: NumeroPregunta, ctx: C
     rotulo: ayuda.rotulo,
     ...(ayuda.loQueYaEscribiste === undefined
       ? {}
-      : { loQueYaEscribiste: ayuda.loQueYaEscribiste }),
+      : { loQueYaEscribiste: versionRespuestaDto(ayuda.loQueYaEscribiste) }),
     muestraMemoria: ayuda.muestraMemoria,
     huecos: ayuda.huecos,
     desajustes: ayuda.desajustes,
