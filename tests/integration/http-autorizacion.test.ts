@@ -311,14 +311,14 @@ describe.skipIf(!env.ok)(`autorización de la API${skipNote(env)}`, () => {
       url: `/decisiones/${decision.id}`,
       headers: como(julian.testigo),
     });
-    expect(comoJulian.json<{ miRespuesta?: string }>().miRespuesta).toBe('Sin objeción');
+    expect(comoJulian.json<{ yaVotaste: boolean }>().yaVotaste).toBe(true);
 
     const comoDaniela = await e.app.inject({
       method: 'GET',
       url: `/decisiones/${decision.id}`,
       headers: como(daniela.testigo),
     });
-    expect(comoDaniela.json<{ miRespuesta?: string }>().miRespuesta).toBeUndefined();
+    expect(comoDaniela.json<{ yaVotaste: boolean }>().yaVotaste).toBe(false);
   });
 
   it('objetar exige argumento: bloquear tiene que costar, como mínimo, explicarse', async () => {

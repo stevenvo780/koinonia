@@ -231,17 +231,18 @@ test('HORIZONTAL — nadie emite una papeleta a nombre de otra persona', async (
   // La papeleta quedó a nombre de Julián.
   const comoJulian = await apiDirecta(julian);
   const vistaJulian = (await (await comoJulian.get(`/decisiones/${decision.id}`)).json()) as {
-    miRespuesta?: string;
+    yaVotaste: boolean;
   };
-  expect(vistaJulian.miRespuesta).toBe('No');
+  // No dice hacia dónde votó Julián (ADR-0010): sólo que él sí, la papeleta no quedó a nadie más.
+  expect(vistaJulian.yaVotaste).toBe(true);
   await comoJulian.dispose();
 
   // Y Daniela no tiene ninguna.
   const comoDaniela = await apiDirecta(daniela);
   const vistaDaniela = (await (await comoDaniela.get(`/decisiones/${decision.id}`)).json()) as {
-    miRespuesta?: string;
+    yaVotaste: boolean;
   };
-  expect(vistaDaniela.miRespuesta).toBeUndefined();
+  expect(vistaDaniela.yaVotaste).toBe(false);
   await comoDaniela.dispose();
 });
 

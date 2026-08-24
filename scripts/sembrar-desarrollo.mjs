@@ -449,7 +449,7 @@ async function aseguraDecision(
 
 async function aseguraVoto(actor, decisionId, respuesta) {
   const detalle = await api('GET', `/decisiones/${decisionId}`, { token: actor.testigo });
-  if (detalle.miRespuesta !== undefined) return;
+  if (detalle.yaVotaste) return;
   if (!detalle.puedoDecidir) {
     console.warn(
       `  ⚠ ${actor.alias} no puede votar esta decisión: ${detalle.motivoNoPuedo ?? 'sin motivo'}`,

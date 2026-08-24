@@ -409,6 +409,11 @@ export * from './evaluation/index.js';
 // ── Flujo de incumplimiento de la tarea viva, los siete peldaños de ADR-0040 ──────────────────────
 export * from './execution/escalones.js';
 
+// ── Ficha de ejecución de la iniciativa: dependencias del borrador, recursos, riesgos, presupuesto ─
+export * from './execution/dependencias.js';
+export * from './execution/recursos-y-riesgos.js';
+export * from './execution/presupuesto.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,

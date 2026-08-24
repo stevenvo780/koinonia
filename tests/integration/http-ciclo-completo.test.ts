@@ -309,7 +309,8 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
       },
     });
     expect(abstencion.statusCode).toBe(201);
-    expect(abstencion.json<{ miRespuesta: string }>().miRespuesta).toBe('Me abstengo');
+    // No dice EN QUÉ SENTIDO respondió Lucía (ADR-0010, secreto del voto): sólo que ya respondió.
+    expect(abstencion.json<{ yaVotaste: boolean }>().yaVotaste).toBe(true);
   });
 
   it('9 · cambiar de opinión es una virtud: manda la última papeleta', async () => {
@@ -324,7 +325,8 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
       },
     });
     expect(cambio.statusCode).toBe(201);
-    expect(cambio.json<{ miRespuesta: string }>().miRespuesta).toBe('No');
+    // Cambió de opinión, pero la respuesta del servidor sigue sin decir hacia dónde cambió.
+    expect(cambio.json<{ yaVotaste: boolean }>().yaVotaste).toBe(true);
   });
 
   it('10 · no se cierra antes de tiempo, y se dice por qué', async () => {

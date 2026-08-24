@@ -589,8 +589,13 @@ export const decisionDetalle = decisionResumen.extend({
   plan: planEjecucion.optional(),
   /** Si vos podías decidir aquí. Falso para quien no estaba en la lista congelada. */
   puedoDecidir: z.boolean(),
-  /** Tu respuesta vigente, si emitiste alguna. Se puede cambiar hasta el cierre. */
-  miRespuesta: z.string().optional(),
+  /**
+   * Si ya emitiste una papeleta en esta ronda. Deliberadamente NO dice cuál: ADR-0010 describe el
+   * recibo del voto sin la opción elegida, y la coerción del votante (T-10) no necesita más que
+   * esta pantalla mostrando la respuesta en texto plano para funcionar. «Ya votaste» sí; «votaste
+   * Sí» no. Se puede cambiar la respuesta hasta el cierre sin que este campo revele en qué sentido.
+   */
+  yaVotaste: z.boolean(),
   motivoNoPuedo: z.string().optional(),
 });
 export type DecisionDetalle = z.infer<typeof decisionDetalle>;

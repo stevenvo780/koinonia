@@ -209,48 +209,51 @@ describe.skipIf(!env.ok)(`exploratoria — decisiones: secreto y límites${skipN
   });
 
   /**
-   * ═══ HALLAZGO S1 — confirmado, no corregido acá (fuera de la propiedad de esta sesión) ═══
+   * ═══ HALLAZGO S1 — corregido ═══
    *
    * ADR-0010 describe el recibo del voto como algo que NO debe traer la opción elegida, para que
    * nadie pueda usar la pantalla de otra persona como prueba de cómo votó (coerción, C6-GATE).
    *
-   * Lo que el servidor hace en realidad: `GET /decisiones/:id` trae `miRespuesta` con la opción
-   * elegida EN TEXTO PLANO («Sí» / «No»), y la trae en CUALQUIER lectura posterior mientras la
-   * votación sigue abierta — no sólo en la confirmación inmediata del envío. Esta prueba lo
-   * reproduce con dos lecturas separadas, la segunda simulando que la persona vuelve a abrir la
-   * pantalla más tarde (o que alguien le pide que la abra delante suyo).
+   * Lo que el servidor hacía: `GET /decisiones/:id` traía `miRespuesta` con la opción elegida EN
+   * TEXTO PLANO («Sí» / «No»), en CUALQUIER lectura posterior mientras la votación seguía abierta —
+   * no sólo en la confirmación inmediata del envío. Esta prueba lo reproduce con dos lecturas
+   * separadas, la segunda simulando que la persona vuelve a abrir la pantalla más tarde (o que
+   * alguien le pide que la abra delante suyo), y confirma que ya no aparece ninguna opción.
    *
-   * Esto NO es cosmético: toca el secreto del voto y la coerción del votante (T-10 del modelo de
-   * amenazas), así que el piso de severidad es S1 aunque el defecto viva en presentación
-   * (`presenters.ts` / `apps/web/app/decisiones/[id]/page.tsx`), no en el ledger. Corregirlo excede
-   * la propiedad de esta sesión (que es sólo `tests/exploratorias/**` y la sección exploratoria de
-   * `docs/TESTING.md`); queda documentado en `docs/TESTING.md` §8 y en el resumen de esta sesión
-   * para quien tenga esos ficheros.
-   *
-   * La prueba queda en rojo A PROPÓSITO (`it.fails`): así el CI se mantiene verde sin fingir que el
-   * problema no existe, y el día que alguien corrija la exposición, esta prueba empieza a fallar
-   * "al revés" (pasó cuando se esperaba que fallara) y eso es la señal exacta de que hay que
-   * quitarle `.fails` y dejarla en verde normal.
+   * El arreglo: `miRespuesta` (el texto de la opción) desaparece del contrato; en su lugar
+   * `yaVotaste` es un booleano que dice si esta persona ya se manifestó en la ronda vigente, sin
+   * decir en qué sentido — «ya votaste» sí, «votaste Sí» no. Ver `services/api/src/http/
+   * presenters.ts` (`yaVotasteEnEstaRonda`) y `apps/web/app/decisiones/[id]/page.tsx`.
    */
-  it.fails(
-    'EXPLORATORIA/S1 — miRespuesta NO debería revelar la opción elegida en lecturas posteriores (ADR-0010)',
-    async () => {
-      const { decisionId, huellaVersion } = await decisionAbierta(e, lucia);
-      await e.app.inject({
-        method: 'POST',
-        url: `/decisiones/${decisionId}/papeletas`,
-        headers: como(julian.testigo),
-        payload: { requestId: req(), huellaVersion, respuesta: { tipo: 'binary', aprueba: false } },
-      });
+  it('EXPLORATORIA/S1 — la respuesta NO revela la opción elegida en lecturas posteriores (ADR-0010)', async () => {
+    const { decisionId, huellaVersion } = await decisionAbierta(e, lucia);
+    await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/papeletas`,
+      headers: como(julian.testigo),
+      payload: { requestId: req(), huellaVersion, respuesta: { tipo: 'binary', aprueba: false } },
+    });
 
-      // Segunda lectura, independiente de la primera: "Julián vuelve a abrir la pantalla más tarde".
-      const segundaLectura = await e.app.inject({
-        method: 'GET',
-        url: `/decisiones/${decisionId}`,
-        headers: como(julian.testigo),
-      });
-      const cuerpo = segundaLectura.json<{ miRespuesta?: string }>();
-      expect(cuerpo.miRespuesta).toBeUndefined();
-    },
-  );
+    // Segunda lectura, independiente de la primera: "Julián vuelve a abrir la pantalla más tarde".
+    const segundaLectura = await e.app.inject({
+      method: 'GET',
+      url: `/decisiones/${decisionId}`,
+      headers: como(julian.testigo),
+    });
+    const cuerpo = segundaLectura.json<{ miRespuesta?: string; yaVotaste?: boolean }>();
+    expect(cuerpo.miRespuesta).toBeUndefined();
+    // Pero "ya te manifestaste" SÍ sobrevive: si no, Julián no sabría si ya respondió y podría
+    // votar dos veces creyendo que es la primera, o quedarse con la duda sin forma de resolverla.
+    expect(cuerpo.yaVotaste).toBe(true);
+  });
+
+  it('EXPLORATORIA — quien nunca votó no tiene "ya votaste" en falso positivo', async () => {
+    const { decisionId } = await decisionAbierta(e, lucia);
+    const lectura = await e.app.inject({
+      method: 'GET',
+      url: `/decisiones/${decisionId}`,
+      headers: como(julian.testigo),
+    });
+    expect(lectura.json<{ yaVotaste: boolean }>().yaVotaste).toBe(false);
+  });
 });

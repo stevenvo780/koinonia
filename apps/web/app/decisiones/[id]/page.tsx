@@ -237,8 +237,10 @@ export default function Decision(): ReactNode {
         <ErrorVisible error={errorEnvio} />
         {enviado && (
           <Aviso tipo="bien" titulo="Quedó registrado">
-            Tu respuesta es «{decision.miRespuesta}». Podés cambiarla hasta que cierre: cambiar de
-            opinión después de leer a los demás es una virtud, no una trampa. Vale la última.
+            Tu respuesta quedó registrada; por tu propio secreto de voto, esta pantalla no repite
+            cuál elegiste, ni ahora ni si volvés más tarde. Podés cambiarla hasta que cierre:
+            cambiar de opinión después de leer a los demás es una virtud, no una trampa. Vale la
+            última.
           </Aviso>
         )}
 
@@ -427,19 +429,19 @@ export default function Decision(): ReactNode {
               </fieldset>
             )}
 
-            {decision.miRespuesta !== undefined && !enviado && (
+            {decision.yaVotaste && !enviado && (
               <p className="suave">
-                Tu respuesta ahora mismo es «{decision.miRespuesta}». Si mandás otra, vale la
-                última.
+                Ya respondiste esta votación. Por tu propio secreto de voto no repetimos acá cuál
+                elegiste; si mandás otra, vale la última.
               </p>
             )}
 
             <button className="boton" type="submit" disabled={enCurso !== undefined}>
               {enCurso === 'papeleta'
                 ? 'Enviando…'
-                : decision.miRespuesta === undefined
-                  ? 'Enviar mi respuesta'
-                  : 'Cambiar mi respuesta'}
+                : decision.yaVotaste
+                  ? 'Cambiar mi respuesta'
+                  : 'Enviar mi respuesta'}
             </button>
           </form>
         )}

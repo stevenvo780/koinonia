@@ -257,29 +257,18 @@ export function decisionResumenDto(
   };
 }
 
-/** Cómo se dice la respuesta que alguien ya emitió, para poder mostrarla y poder cambiarla. */
-function miRespuestaEnPalabras(state: DecisionState, quien: MemberId): string | undefined {
-  const mias = state.ballots.filter((b) => b.voter === quien && b.round === state.round);
-  const ultima = mias.at(-1);
-  if (ultima === undefined) return undefined;
-  switch (ultima.payload.kind) {
-    case 'abstain':
-      return 'Me abstengo';
-    case 'binary':
-      return ultima.payload.approve ? 'Sí' : 'No';
-    case 'consent':
-      return ultima.payload.stance === 'consent'
-        ? 'Sin objeción'
-        : ultima.payload.stance === 'concern'
-          ? 'Tengo una reserva'
-          : 'Objeto';
-    case 'score':
-      return 'Puntué las opciones';
-    case 'ranking':
-      return 'Ordené las opciones por preferencia';
-    case 'grades':
-      return 'Valoré cada opción con una mención';
-  }
+/**
+ * Si esta persona ya emitió una papeleta en la ronda vigente — nunca CUÁL.
+ *
+ * `GET /decisiones/:id` es una lectura que se repite: la primera vez es la confirmación del propio
+ * envío, pero exactamente la misma respuesta sale la próxima vez que alguien abra la pantalla, o
+ * cuando otra persona le pida abrirla delante suyo. Devolver la opción en texto plano en CUALQUIERA
+ * de esas lecturas convierte la pantalla en la prueba que la coerción del votante necesita (T-10);
+ * el booleano evita el problema en la raíz porque no hay opción que extraer de él, ni en el primer
+ * vistazo ni en el último.
+ */
+function yaVotasteEnEstaRonda(state: DecisionState, quien: MemberId): boolean {
+  return state.ballots.some((b) => b.voter === quien && b.round === state.round);
 }
 
 export function decisionDetalleDto(
@@ -293,13 +282,12 @@ export function decisionDetalleDto(
   const config = state.config;
   const enPadron =
     quien !== undefined && (config?.electorate.members.some((m) => m.memberId === quien) ?? false);
-  const respuesta = quien === undefined ? undefined : miRespuestaEnPalabras(state, quien);
   return {
     ...decisionResumenDto(id, state, titulo),
     cuerpoVersion: cuerpo,
     ...(plan === undefined ? {} : { plan: planDto(plan) }),
     puedoDecidir: enPadron && state.status === 'Open',
-    ...(respuesta === undefined ? {} : { miRespuesta: respuesta }),
+    yaVotaste: quien !== undefined && yaVotasteEnEstaRonda(state, quien),
     ...(enPadron
       ? {}
       : {

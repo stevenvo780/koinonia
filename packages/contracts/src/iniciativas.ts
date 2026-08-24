@@ -62,7 +62,29 @@
 
 import { z } from 'zod';
 
-import type { InitiativeState, TaskStatus } from '@koinonia/domain';
+import {
+  CATEGORIAS_RECURSO,
+  MAX_DESCRIPCION_RECURSO_LENGTH,
+  MAX_DESCRIPCION_RIESGO_LENGTH,
+  MAX_MONTO_CENTAVOS,
+  MAX_RECURSOS_POR_INICIATIVA,
+  MAX_RIESGOS_POR_INICIATIVA,
+  MAX_SOPORTE_DESCRIPCION_LENGTH,
+  MAX_SOPORTE_FUENTE_LENGTH,
+  MAX_SOPORTES,
+  MIN_DESCRIPCION_RECURSO_LENGTH,
+  MIN_DESCRIPCION_RIESGO_LENGTH,
+  MIN_MONTO_CENTAVOS,
+  MIN_SOPORTE_DESCRIPCION_LENGTH,
+  MIN_SOPORTE_FUENTE_LENGTH,
+  MIN_SOPORTES,
+  MONEDA_PATTERN,
+  SEVERIDADES_RIESGO,
+  sortIds,
+  type InitiativeState,
+  type MemberId,
+  type TaskStatus,
+} from '@koinonia/domain';
 
 /**
  * Los cuatro estados que el dominio puede demostrar hoy. Ver la cabecera de este fichero para la
@@ -124,3 +146,104 @@ export function derivarAvanceIniciativa(state: InitiativeState): AvanceIniciativ
     tareasCompletas: state.tasks.filter((task) => task.status === 'completada').length,
   };
 }
+
+/**
+ * Quién forma el equipo de una iniciativa: los `MemberId` que en algún momento aceptaron al menos
+ * una tarea (`assigneeId` sólo existe después de `TaskAccepted` — ver `InitiativeTask`). No es una
+ * medida de actividad: es sólo membresía, la misma noción que PRODUCT.md §4 pide para el Kanban
+ * («…con la decisión de origen enlazada, avance, próximo informe y **quién responde**»). Ordenado con
+ * `sortIds` (orden de bytes, no `localeCompare`) para que la lista sea determinista entre servidores.
+ */
+export function derivarEquipoIniciativa(state: InitiativeState): readonly MemberId[] {
+  const asignados = new Set<MemberId>();
+  for (const task of state.tasks) {
+    if (task.assigneeId !== undefined) asignados.add(task.assigneeId);
+  }
+  return sortIds([...asignados]);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Recursos, riesgos y presupuesto: los tres campos de la ficha que la auditoría del encargo B
+// encontró sin modelar. Las reglas de negocio y los invariantes viven en
+// `packages/domain/src/execution/{recursos-y-riesgos,presupuesto}.ts`; aquí sólo está la forma de
+// frontera (Zod) que un formulario o una respuesta HTTP pueden usar para validar antes de llegar al
+// dominio. Ningún nombre de campo cambia entre las dos capas a propósito: son el mismo dato dos veces
+// descrito, nunca dos datos distintos con el mismo nombre.
+//
+// Igual que `estadoTableroIniciativa` más arriba, este bloque es nuevo y `index.ts` de este paquete
+// todavía no lo reexporta (fuera de mi ámbito, ver CLAUDE.md de este encargo); tampoco hay todavía un
+// evento de dominio en `workspace/initiative.ts` que persista estos tres campos en el ledger — eso es
+// integración pendiente, no parte de este encargo.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Espejo Zod de `CategoriaRecurso` (`execution/recursos-y-riesgos.ts`). */
+export const categoriaRecurso = z.enum(CATEGORIAS_RECURSO);
+export type CategoriaRecurso = z.infer<typeof categoriaRecurso>;
+
+/** Cómo se dice cada categoría en pantalla. */
+export const CATEGORIA_RECURSO_EN_PALABRAS: Readonly<Record<CategoriaRecurso, string>> = {
+  economico: 'Económico',
+  espacio: 'Espacio',
+  'equipo-tecnico': 'Equipo técnico',
+  'aval-institucional': 'Aval institucional',
+  'tiempo-experto': 'Tiempo de una persona experta',
+  otro: 'Otro',
+};
+
+/**
+ * Un recurso que la iniciativa necesita y hoy no tiene. Nunca un inventario de lo que ya tiene: ver
+ * la cabecera de `execution/recursos-y-riesgos.ts` para la razón completa.
+ */
+export const recursoNecesario = z.object({
+  categoria: categoriaRecurso,
+  descripcion: z.string().min(MIN_DESCRIPCION_RECURSO_LENGTH).max(MAX_DESCRIPCION_RECURSO_LENGTH),
+});
+export type RecursoNecesario = z.infer<typeof recursoNecesario>;
+
+/** La lista completa de recursos faltantes de una iniciativa. Vacía es válida: no le falta nada. */
+export const recursosNecesarios = z.array(recursoNecesario).max(MAX_RECURSOS_POR_INICIATIVA);
+
+/** Espejo Zod de `SeveridadRiesgo`. Vocabulario cerrado: nunca una probabilidad numérica libre. */
+export const severidadRiesgo = z.enum(SEVERIDADES_RIESGO);
+export type SeveridadRiesgo = z.infer<typeof severidadRiesgo>;
+
+export const SEVERIDAD_RIESGO_EN_PALABRAS: Readonly<Record<SeveridadRiesgo, string>> = {
+  baja: 'Baja',
+  media: 'Media',
+  alta: 'Alta',
+};
+
+/** Un riesgo declarado sobre la iniciativa. Nunca sobre una persona (ADR-0039/ADR-0040). */
+export const riesgoDeclarado = z.object({
+  severidad: severidadRiesgo,
+  descripcion: z.string().min(MIN_DESCRIPCION_RIESGO_LENGTH).max(MAX_DESCRIPCION_RIESGO_LENGTH),
+});
+export type RiesgoDeclarado = z.infer<typeof riesgoDeclarado>;
+
+/** La lista completa de riesgos declarados. Vacía es válida: hoy no hay ninguno que señalar. */
+export const riesgosDeclarados = z.array(riesgoDeclarado).max(MAX_RIESGOS_POR_INICIATIVA);
+
+/** Un soporte del presupuesto: qué evidencia lo respalda y dónde encontrarla. */
+export const soporte = z.object({
+  descripcion: z.string().min(MIN_SOPORTE_DESCRIPCION_LENGTH).max(MAX_SOPORTE_DESCRIPCION_LENGTH),
+  fuente: z.string().min(MIN_SOPORTE_FUENTE_LENGTH).max(MAX_SOPORTE_FUENTE_LENGTH),
+});
+export type Soporte = z.infer<typeof soporte>;
+
+/**
+ * El presupuesto de una iniciativa, **cuando aplica**. La condicionalidad se expresa con
+ * `.optional()` — nunca `.nullable()` — a propósito: `undefined` desaparece de un JSON serializado,
+ * `null` es una clave que sigue ahí con un valor centinela. Un formulario que no maneja dinero nunca
+ * debe enviar `presupuesto: null`; simplemente omite la clave. Ver `execution/presupuesto.ts` para el
+ * razonamiento completo, incluida la regla espejo del lado del dominio que rechaza `null` con su
+ * propio código de error si algo, en algún borde, lo produjera de todos modos.
+ */
+export const presupuesto = z.object({
+  montoCentavos: z.number().int().min(MIN_MONTO_CENTAVOS).max(MAX_MONTO_CENTAVOS),
+  moneda: z.string().regex(MONEDA_PATTERN),
+  soportes: z.array(soporte).min(MIN_SOPORTES).max(MAX_SOPORTES),
+});
+export type Presupuesto = z.infer<typeof presupuesto>;
+
+/** El campo condicional tal como aparece embebido en una ficha: presente, o ausente — nunca `null`. */
+export const presupuestoCondicional = presupuesto.optional();

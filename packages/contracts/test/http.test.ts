@@ -99,6 +99,7 @@ describe('contrato HTTP de propuestas e iniciativas', () => {
         cuerpoVersion:
           'La decisión se conserva tal como ocurrió, sin completar retroactivamente lo que faltaba.',
         puedoDecidir: false,
+        yaVotaste: false,
       }).plan,
     ).toBeUndefined();
   });

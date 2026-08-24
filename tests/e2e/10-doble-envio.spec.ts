@@ -59,7 +59,7 @@ let problemaId: string;
 
 interface Papeletas {
   readonly seManifestaron: number;
-  readonly miRespuesta?: string;
+  readonly yaVotaste: boolean;
 }
 
 /**
@@ -203,7 +203,7 @@ test('dos toques seguidos en «enviar mi respuesta» mandan una sola papeleta', 
   const estado = (await (await api.get(`/decisiones/${decision.id}`)).json()) as Papeletas;
   await api.dispose();
   expect(estado.seManifestaron).toBe(1);
-  expect(estado.miRespuesta).toBeDefined();
+  expect(estado.yaVotaste).toBe(true);
 });
 
 test('si la respuesta se pierde, el reintento lleva la misma clave y no escribe una segunda', async ({
