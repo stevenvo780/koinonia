@@ -78,6 +78,14 @@ const SIMBOLO_FICHA: Readonly<Record<VarianteFicha, string>> = {
  * en medio del JSX.
  *
  * Uso: `<Ficha variante="en-curso">En deliberación</Ficha>`.
+ *
+ * La palabra va en su propio `<span>`, no suelta junto al del símbolo: sin ese borde, el texto
+ * completo de la ficha es «✓Completada» —símbolo y palabra pegados, un único nodo de texto— y nada
+ * en la página tiene *exactamente* «Completada» como contenido, que es precisamente lo que necesita
+ * distinguir «la tarea quedó completada» de cualquier frase más larga que también contenga la
+ * palabra. El `<span>` es anónimo para el diseño —mismo ítem de `inline-flex` que ya era el texto
+ * suelto, mismo `gap`— y sólo le da un borde a la palabra para quien necesita señalarla con
+ * precisión, sea una prueba o el navegador buscando en la página.
  */
 export function Ficha({
   variante,
@@ -89,7 +97,7 @@ export function Ficha({
   return (
     <span className={`ficha ${variante}`}>
       <span aria-hidden="true">{SIMBOLO_FICHA[variante]}</span>
-      {children}
+      <span>{children}</span>
     </span>
   );
 }

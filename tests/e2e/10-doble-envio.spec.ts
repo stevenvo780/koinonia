@@ -138,6 +138,13 @@ async function decisionListaParaCerrar(): Promise<string> {
     await cliente.dispose();
   }
   await avanzarReloj(61 * 60 * 1000);
+  // 61 minutos superan el corte por inactividad de la sesión (60 min): el reloj es del servicio
+  // entero, así que todos los testigos obtenidos antes del salto quedan inválidos por
+  // inactividad. `lucia` cierra la decisión justo después de esta ayuda, y `sara` vuelve a votar
+  // si esta misma ayuda se llama una segunda vez (como en «dos toques… cerrar y publicar») — las
+  // dos se renuevan acá.
+  sara = await entrarPorApi(sara.correo);
+  lucia = await entrarPorApi(CORREO_FACILITADORA);
   return creada.id;
 }
 

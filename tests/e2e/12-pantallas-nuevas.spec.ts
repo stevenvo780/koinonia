@@ -15,8 +15,10 @@
  *
  *  · **axe-core** sin violaciones serias ni críticas en las seis pantallas, y la regla de oro
  *    (ADR-0041) sobre el texto visible de todas.
- *  · **El estado vacío de Consenso dice «No hay grupos claros»**, que es la promesa literal de
- *    `PRODUCT.md` §4, y NO una lista de grupos vacía —que se leería como «no participó nadie»—.
+ *  · **El estado vacío de Consenso dice «Todavía no hay ningún sondeo»**, que es la promesa
+ *    literal de `PRODUCT.md` §4 para ese estado —«no hay grupos claros» es un resultado de un
+ *    sondeo puntual, en `/consenso/[id]`, no el vacío del índice—, y NO una lista de grupos vacía
+ *    —que se leería como «no participó nadie»—.
  *  · **Un permiso, por API y saltándose la interfaz**: esconder un botón no autoriza nada.
  */
 
@@ -142,27 +144,43 @@ test('el detalle de un grupo se alcanza pulsando desde la lista, no a mano', asy
 // Consenso: el estado vacío es un resultado, no un hueco
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-test('sin datos, Consenso dice «No hay grupos claros» y NO una lista de grupos vacía', async ({
+test('sin datos, Consenso dice «Todavía no hay ningún sondeo» y NO una lista de grupos vacía', async ({
   page,
 }) => {
   await llegarPulsando(page, 'En qué coincidimos', 'En qué coincidimos');
 
-  // La promesa literal de PRODUCT §4.
-  await expect(page.getByText('No hay grupos claros')).toBeVisible();
+  /*
+   * Antes esta prueba buscaba «No hay grupos claros» directamente al llegar a Consenso. El
+   * rediseño partió la pantalla en índice + detalle (ver el comentario al principio de
+   * `apps/web/app/consenso/page.tsx`): «no hay grupos claros» es el RESULTADO de un sondeo
+   * puntual sin agrupamientos —vive en `/consenso/[id]`—, no el estado vacío del índice con cero
+   * sondeos en todo el sistema, que es lo que deja sembrado este escenario (sólo `reiniciarHistorial`
+   * en el `beforeAll`, ningún sondeo). Releyendo PRODUCT.md §4: la columna «Estado vacío» de
+   * Consenso no promete esa frase — promete que «un sondeo no puede abrirse» sin doce afirmaciones
+   * sembradas, tres de ellas contrarias —, y «no hay grupos claros» está en la columna «Errores»
+   * como resultado de un sondeo ya en curso. Se comprueba ahora lo que la pantalla dice de verdad.
+   */
+  await expect(page.getByText('Todavía no hay ningún sondeo')).toBeVisible();
+  await expect(
+    page.getByText('un sondeo no puede abrirse a valorar hasta que quien lo convoca siembre doce', {
+      exact: false,
+    }),
+  ).toBeVisible();
 
-  // Y lo que NO puede aparecer: el encabezado del mapa de grupos con nada debajo. Una lista vacía
-  // se lee como «no participó nadie», y lo que pasa es otra cosa.
+  // Lo que sigue sin poder aparecer: el encabezado del mapa de grupos con nada debajo. Una lista
+  // vacía se lee como «no participó nadie», y lo que pasa es otra cosa.
   await expect(page.getByRole('heading', { name: 'Grupos de opinión' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: /^Grupo \d+$/u })).toHaveCount(0);
 
-  // Nunca un callejón: dice qué falta y ofrece por dónde seguir.
-  await expect(page.getByText('Qué falta:')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'mirá los problemas abiertos' })).toBeVisible();
+  // Nunca un callejón: ofrece por dónde seguir. Aparece dos veces —el botón de arriba y la salida
+  // de la pieza `Vacio`—, y basta con que una esté a la vista.
+  await expect(page.getByRole('link', { name: 'Abrir un sondeo' }).first()).toBeVisible();
 });
 
 test('Consenso no promete un mapa antes de tener con qué dibujarlo', async ({ page }) => {
   await llegarPulsando(page, 'En qué coincidimos', 'En qué coincidimos');
-  await expect(page.getByText('No hay grupos claros')).toBeVisible();
+  // Ídem: sin ningún sondeo sembrado, el índice no tiene grupos que inventar.
+  await expect(page.getByText('Todavía no hay ningún sondeo')).toBeVisible();
   const texto = await page.locator('main').innerText();
   // Ni una etiqueta de bando inventada.
   expect(texto).not.toMatch(/moderad|crític|radical|bando/iu);
@@ -189,8 +207,10 @@ test('las Normas enseñan el núcleo intangible como irreformable, y en palabras
   );
 
   // Y el estado honesto: todavía no hay ninguna versión aprobada dentro de la plataforma.
+  // La pieza `Vacio` escribe este texto como título (`<h3>`), sin el punto final que llevaba
+  // cuando era un párrafo — mismo aviso que en `01-gobernanza.spec.ts`.
   await expect(
-    page.getByText('Todavía no hay ninguna versión aprobada dentro de Koinonía.'),
+    page.getByText('Todavía no hay ninguna versión aprobada dentro de Koinonía'),
   ).toBeVisible();
   await expect(page.getByRole('link', { name: 'Ver el historial completo' })).toBeVisible();
 });
@@ -301,7 +321,8 @@ test('la interfaz tampoco ofrece prestar el voto a quien no entró', async ({ pa
   // No es la garantía —la garantía está arriba— pero sí es lo correcto: no se ofrece un botón que
   // va a fallar, y se dice qué hacer en vez de dejar un hueco.
   await llegarPulsando(page, 'Prestar tu voto', 'Prestar tu voto');
-  await expect(page.getByText('Estás mirando sin cuenta.')).toBeVisible();
+  // Mismo aviso que en los otros dos: `Vacio` escribe este texto como título, sin punto final.
+  await expect(page.getByText('Estás mirando sin cuenta')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Prestar mi voto' })).toHaveCount(0);
 });
 

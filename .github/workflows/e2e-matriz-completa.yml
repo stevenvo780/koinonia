@@ -1,0 +1,58 @@
+name: e2e · matriz completa (reutilizable)
+
+# Workflow reutilizable (`workflow_call`): define UNA vez la matriz completa —Chromium, Firefox,
+# WebKit, Chrome móvil, Safari móvil— para que `ci.yml` (al integrar en `main`) y `nocturno.yml` (de
+# noche) la llamen en vez de mantener dos copias que divergirían con el tiempo sin que nadie lo
+# notara. No corre solo: sin más disparador que `workflow_call`, sólo se ejecuta cuando otro workflow
+# lo invoca con `uses: ./.github/workflows/e2e-matriz-completa.yml`.
+#
+# ⚠ Nada de `continue-on-error` en ningún paso ni en la matriz: WebKit no arranca en las máquinas de
+# desarrollo del equipo (Arch/CachyOS —`playwright install --with-deps` usa `apt-get`, y las
+# librerías que pide son versiones que Arch ya no distribuye—), así que esto es el ÚNICO sitio donde
+# se prueba. Un `continue-on-error` aquí lo dejaría sin probar en ninguna parte y nadie se enteraría.
+
+on:
+  workflow_call:
+
+jobs:
+  e2e:
+    name: e2e · ${{ matrix.proyecto }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        proyecto: [chromium, firefox, webkit, chrome-movil, safari-movil]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `--with-deps` instala las librerías del sistema que Firefox y WebKit necesitan
+      # (libicu, libxml2, libflite1, libmanette). Sin ellas WebKit descarga pero no arranca.
+      - name: Navegadores y dependencias del sistema
+        run: pnpm exec playwright install --with-deps
+
+      - name: Comprobar que Docker está disponible
+        run: docker info
+
+      - run: pnpm exec tsc --build packages/contracts services/api
+
+      - run: pnpm exec playwright test --project=${{ matrix.proyecto }}
+        env:
+          CI: 'true'
+          KOINONIA_MATRIZ: completa
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-${{ matrix.proyecto }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

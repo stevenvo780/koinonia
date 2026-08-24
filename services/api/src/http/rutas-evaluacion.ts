@@ -122,7 +122,7 @@ import type {
 import { instantToIso, isoToInstant } from '../decision/codec.js';
 import { resolveSession } from './identity.js';
 import type { AuthenticatedMember, ClockPort, RandomPort } from './ports.js';
-import { consume, REGLA_ESCRITURA, type RateRule } from './rate-limit.js';
+import { consume, REGLA_ESCRITURA, requestIdDeCuerpo, type RateRule } from './rate-limit.js';
 import { loadInitiativeLog, listAggregateIds } from '../workspace/repository.js';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -225,6 +225,7 @@ function actorDe(quien: AuthenticatedMember | undefined): Actor {
 async function cupoDeEscritura(
   ctx: ContextoEvaluacion,
   quien: AuthenticatedMember | undefined,
+  request?: FastifyRequest,
 ): Promise<void> {
   if (quien === undefined) return;
   const client = await ctx.pool.connect();
@@ -234,6 +235,7 @@ async function cupoDeEscritura(
       regla: ctx.reglaEscritura ?? REGLA_ESCRITURA,
       sujeto: quien.memberId,
       clock: ctx.ports.clock,
+      requestId: requestIdDeCuerpo(request?.body),
     });
     if (!veredicto.permitido) {
       throw new EvaluacionRutaError(
@@ -808,7 +810,7 @@ export function registrarRutasDeEvaluacion(app: FastifyInstance, ctx: ContextoEv
     '/iniciativas/:id/evaluacion',
     conTraduccion(async (request, reply) => {
       const quien = await quienLlama(ctx, request);
-      await cupoDeEscritura(ctx, quien);
+      await cupoDeEscritura(ctx, quien, request);
       const { id } = parse(paramsIniciativa, request.params);
       const body = parse(abrirBody, request.body);
 
@@ -875,7 +877,7 @@ export function registrarRutasDeEvaluacion(app: FastifyInstance, ctx: ContextoEv
     '/iniciativas/:id/evaluacion/criterios/:indice/valoracion',
     conTraduccion(async (request, reply) => {
       const quien = await quienLlama(ctx, request);
-      await cupoDeEscritura(ctx, quien);
+      await cupoDeEscritura(ctx, quien, request);
       const { id, indice } = parse(paramsCriterio, request.params);
       const body = parse(valorarBody, request.body);
       const { frozen, log } = await cargarEvaluacionAbierta(ctx, id);
@@ -907,7 +909,7 @@ export function registrarRutasDeEvaluacion(app: FastifyInstance, ctx: ContextoEv
     '/iniciativas/:id/evaluacion/criterios/:indice/escaladas',
     conTraduccion(async (request, reply) => {
       const quien = await quienLlama(ctx, request);
-      await cupoDeEscritura(ctx, quien);
+      await cupoDeEscritura(ctx, quien, request);
       const { id, indice } = parse(paramsCriterio, request.params);
       const body = parse(escalarBody, request.body);
       const { frozen, log } = await cargarEvaluacionAbierta(ctx, id);
@@ -937,7 +939,7 @@ export function registrarRutasDeEvaluacion(app: FastifyInstance, ctx: ContextoEv
     '/iniciativas/:id/evaluacion/aprendizajes',
     conTraduccion(async (request, reply) => {
       const quien = await quienLlama(ctx, request);
-      await cupoDeEscritura(ctx, quien);
+      await cupoDeEscritura(ctx, quien, request);
       const { id } = parse(paramsIniciativa, request.params);
       const body = parse(anotarBody, request.body);
       const { frozen, log } = await cargarEvaluacionAbierta(ctx, id);

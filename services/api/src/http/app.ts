@@ -177,6 +177,7 @@ import {
   REGLA_ENLACE,
   REGLA_ESCRITURA,
   REGLA_PROPUESTA,
+  requestIdDeCuerpo,
 } from './rate-limit.js';
 import {
   ACTOR_ANONIMO,
@@ -639,6 +640,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         regla,
         sujeto: quien.memberId,
         clock: options.ports.clock,
+        requestId: requestIdDeCuerpo(request.body),
       });
       if (!veredicto.permitido) throw new CupoAgotadoError(regla.ambito, veredicto);
     } finally {

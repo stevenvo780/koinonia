@@ -1,0 +1,28 @@
+name: Regresión nocturna
+
+# Tercer escalón del pipeline (`ci.yml` documenta los otros dos: PR → Chromium; `main` → matriz
+# completa). Ésta es la MISMA matriz completa de `e2e-main` —llama al mismo workflow reutilizable,
+# `e2e-matriz-completa.yml`, para no mantener dos copias que divergirían—, pero por horario y no
+# atada a que alguien empuje a `main`. Sirve de red de seguridad independiente del ritmo de
+# integración: agarra la deriva del entorno (imagen de `ubuntu-latest`, versión de los navegadores
+# que instala `playwright install --with-deps`) aunque no haya habido ningún push ese día.
+#
+# ⚠ Igual que en `e2e-matriz-completa.yml`: nada de `continue-on-error`. Un rojo nocturno es la señal
+# de que algo cambió por debajo sin que nadie tocara el código, y el sitio para enterarse es la
+# mañana siguiente, no el próximo push a `main` que dependa de la casualidad de si alguien lo nota.
+
+on:
+  schedule:
+    # 07:00 UTC = 02:00 en Bogotá. Después de la mutación (`mutacion.yml`, 06:30 UTC), para no
+    # competir por los runners compartidos del repositorio.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nocturno-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-nocturno:
+    name: e2e · matriz completa (nocturno)
+    uses: ./.github/workflows/e2e-matriz-completa.yml

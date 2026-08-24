@@ -1,14 +1,15 @@
 # Estrategia de pruebas de Koinonía
 
 > **Estado:** normativo. Documenta una estrategia **en marcha**, no un plan. Hoy el repositorio tiene
-> **798 pruebas en verde repartidas en 61 ficheros** —108 en `packages/crypto`, 338 en
-> `packages/domain`, 80 en `packages/anchor`, 34 en `packages/verifier-cli`, 24 en
-> `packages/contracts`, 53 en `services/api` y 161 de integración contra PostgreSQL real—, entre ellas
-> las **propiedades de fast-check** mapeadas a un invariante de la PARTE E de la spec 30. A eso se suman
-> los escenarios de extremo a extremo en Playwright, cuyo contador vigente se registra en el handoff.
+> **2 495 pruebas en verde repartidas en 151 ficheros** (`pnpm exec vitest run`, 2026-08-23) —el
+> desglose exacto por paquete varía con cada PR; `pnpm run test:coverage` deja el conteo y el
+> porcentaje vigentes en `coverage/coverage-summary.json` en vez de fijarlo aquí, donde envejece sin
+> que nadie lo note—, entre ellas las **propiedades de fast-check** mapeadas a un invariante de la
+> PARTE E de la spec 30. A eso se suman los 14 ficheros de especificación de extremo a extremo en
+> `tests/e2e/` (Playwright, §6-§7).
 >
-> **Fecha:** 2026-08-21 · Lo exigido a `packages/*`, a `services/api` y al corte vertical ya se
-> cumple; `apps/web` se cubre por extremo a extremo y no tiene suite unitaria propia.
+> **Fecha:** 2026-08-23 · Lo exigido a `packages/*`, a `services/api` y al corte vertical ya se
+> cumple; `apps/web` se cubre por extremo a extremo y no tiene suite unitaria propia (§3).
 
 ## Principio rector
 
@@ -100,24 +101,51 @@ dominio numérico se ejercita en `0`, `1`, el máximo y el máximo + 1.**
 
 ### Umbrales por paquete
 
-Configurados en `coverage.thresholds`. Fallar el umbral **falla el build**.
+Configurados de verdad en `vitest.config.ts` (`test.coverage.thresholds`, una entrada por *glob* de
+paquete) desde el 2026-08-23. Fallar el umbral **falla el build**: lo ejecuta `pnpm run test:coverage`,
+que reemplaza a `pnpm run test` en el job `verificar` de `.github/workflows/ci.yml`.
 
-| Paquete | Líneas | **Ramas** | Funciones | Sentencias | Notas |
+**Cada piso es la cobertura REAL medida ese día** (`pnpm exec vitest run --coverage`, sobre los
+2 495 tests en verde), **redondeada hacia abajo al entero** — nunca un número aspiracional puesto de
+antemano. Dos razones, las dos aprendidas por las malas en otros proyectos: un piso más alto que lo
+real bloquea el primer PR después de escribirlo por algo que nadie rompió; y un piso puesto «a ojo»
+sin medir esconde exactamente lo que este mecanismo existe para mostrar — qué paquete está peor
+probado. El umbral es **por paquete**, no global, por la misma razón: un número único promedia
+`packages/contracts` (99 %) con `services/api` (79 %) y el promedio no dice cuál de los dos hay que
+mirar. Es un **trinquete**: sólo sube cuando alguien escribe pruebas de verdad, y sólo baja en un PR
+que lo declare y justifique por qué (§14).
+
+La medición cubre **sólo `src/**`** de cada paquete — `coverage.exclude` saca `**/test/**`, donde
+viven los ayudantes (`arbitraries.ts`, `fabrica.ts`, `matrices.ts`, `datos.ts`, `testigos.ts`,
+`tally-helpers.ts`): no son código de producción, y contarlos infla el número sin proteger nada.
+
+| Paquete | Sentencias | Ramas | Funciones | Líneas | Notas |
 |---|---|---|---|---|---|
-| `packages/crypto` | **100 %** | **100 %** | **100 %** | **100 %** | `perFile: true`, sin excepciones |
-| `packages/domain` | **95 %** | **95 %** | **98 %** | **95 %** | `perFile: true` en `src/tally/**`, `quorum.ts`, `window.ts`, `state-machine.ts` |
-| `packages/contracts` | 80 % | 70 % | 85 % | 80 % | casi todo son tipos; se cubren los mapeadores |
-| `services/api` | 85 % | 78 % | 90 % | 85 % | **100 % de ramas** en autorización y validación |
-| `apps/web` | 70 % | 60 % | 75 % | 70 % | la UI se verifica por E2E; subirlo empujaría a tests de render sin valor |
+| `packages/crypto` | 94 % | 89 % | 100 % | 96 % | congelado para décadas; ver más abajo |
+| `packages/domain` | 90 % | 83 % | 96 % | 91 % | el motor de la gobernanza; ver más abajo |
+| `packages/contracts` | 99 % | 95 % | 97 % | 99 % | casi todo son tipos; ya cubierto de sobra |
+| `packages/anchor` | 88 % | 78 % | 96 % | 91 % | anclaje externo (Git, OpenTimestamps, correo testigo) |
+| `packages/consensus` | 97 % | 72 % | 94 % | 97 % | análisis de consenso (factorización, k-means, PCA) |
+| `packages/metrics` | 97 % | 92 % | 100 % | 97 % | métricas colectivas (ADR-0039/0040: nunca por persona) |
+| `packages/verifier-cli` | 87 % | 76 % | 95 % | 87 % | el verificador independiente de línea de comandos |
+| `services/api` | 79 % | 67 % | 82 % | 81 % | el paquete peor cubierto: ver nota abajo |
+| `apps/web` | — | — | — | — | **no tiene umbral de Vitest**: no hay ninguna suite unitaria que lo instrumente (ninguna prueba bajo `apps/web/` corre con Vitest — `vitest.config.ts` no lo incluye), y su cobertura real es E2E (§6), que Vitest no mide. Ponerle un número aquí sería inventarlo. |
 
-**Por qué 100 % de ramas en `crypto`.** Son ~600 líneas que deben quedar congeladas durante décadas
-—cambiarlas invalida toda la historia anclada— y son lo que se publica como verificador independiente.
-Una rama sin cubrir ahí nadie la volverá a mirar en años.
+**Por qué ramas altas en `crypto` y `domain` importan aunque el piso no sea 100 %.** `crypto` son
+~600 líneas que deben quedar congeladas durante décadas —cambiarlas invalida toda la historia
+anclada— y son lo que se publica como verificador independiente; `domain` está lleno de decisiones
+binarias que **son** la gobernanza: `strict ? '>' : '≥'`, `abstentionBlocks`, `silenceMeans`,
+`onFailure`. Cada rama sin cubrir en cualquiera de los dos es una regla que nadie ejecutó nunca, y la
+cobertura de líneas no las ve: un `return strict ? c > 0 : c >= 0` se cubre entero con un solo caso.
+El piso de hoy (89 % y 83 % de ramas respectivamente) no es el objetivo final — es de dónde no se
+puede bajar sin decirlo.
 
-**Por qué ramas altas en `domain`.** El motor está lleno de decisiones binarias que **son** la
-gobernanza: `strict ? '>' : '≥'`, `abstentionBlocks`, `silenceMeans`, `onFailure`. Cada rama sin cubrir
-es una regla del reglamento que nadie ejecutó nunca, y la cobertura de líneas no las ve: un
-`return strict ? c > 0 : c >= 0` se cubre entero con un solo caso.
+**Por qué `services/api` está más bajo que el resto.** No es indiferencia: `server.ts` (60 % de
+líneas) es el `bin` que arranca el proceso —listeners, señales de apagado— y se ejerce por E2E, no
+por unidad; `db/client.ts` y varios adaptadores de anclaje (`socket.ts`, `tarea.ts`) tienen ramas de
+reconexión y reintento de red que sólo se disparan bajo fallos de infraestructura reales. Subir el
+piso ahí a la fuerza sería exactamente la trampa que §14 prohíbe: cobertura fabricada con `as any`
+sobre estados que no ocurren en una prueba honesta.
 
 ### Contra la cobertura artificial
 
@@ -330,15 +358,41 @@ prefijo único por ejecución. Cualquier escenario debe poder correr solo, lo qu
 
 ## 7. Matriz de navegadores
 
-| Navegador | Viewport | Cuándo | Qué corre |
-|---|---|---|---|
-| **Chromium** | escritorio 1440×900 | cada PR | los 9 escenarios |
-| **Firefox** | escritorio 1440×900 | cada PR | 1, 3, 5, 6 |
-| **WebKit** | escritorio 1440×900 | cada PR | 1, 3, 5, 6 |
-| **Mobile Chrome** (Pixel 7) | 412×915 táctil | nightly + release | 1, 5, 6, 7 |
-| **Mobile Safari** (iPhone 14) | 390×844 táctil | nightly + release | 1, 5, 6, 7 |
-| Chromium | tableta 820×1180 | nightly | 1, 4 |
-| Chromium | móvil pequeño 360×640 | nightly | 1 |
+**Lo que corre hoy, verificado contra `playwright.config.ts` y contra los tres flujos de trabajo de
+`.github/workflows/` (`ci.yml`, `e2e-matriz-completa.yml`, `nocturno.yml`).** Los cinco proyectos de
+la tabla son los ÚNICOS que existen — no hay proyecto de tableta ni de móvil-pequeño-con-Chromium:
+esa fila, que este documento tuvo en versiones anteriores, describía algo que nunca se implementó.
+
+| Proyecto (`--project=`) | Motor · dispositivo | En cada PR (`e2e-pr`) | Al integrar en `main` (`e2e-main`) | De noche (`nocturno.yml`) |
+|---|---|---|---|---|
+| `chromium` | Chromium escritorio | ✅ toda `tests/e2e/*.spec.ts` | ✅ | ✅ |
+| `firefox` | Firefox escritorio | — | ✅ | ✅ |
+| `webkit` | WebKit escritorio | — | ✅ | ✅ |
+| `chrome-movil` | Chromium · Pixel 7 (`devices['Pixel 7']`) | — | ✅ | ✅ |
+| `safari-movil` | WebKit · iPhone 14 (`devices['iPhone 14']`) | — | ✅ | ✅ |
+
+**Por qué el PR corre sólo Chromium.** El ciclo de revisión tiene que caber en el tiempo que alguien
+está dispuesto a esperar mirando la pestaña, y la mayoría de las regresiones aparecen en el primer
+navegador. `firefox`/`webkit`/`chrome-movil`/`safari-movil` sólo existen como proyectos de Playwright
+cuando `KOINONIA_MATRIZ=completa` (`playwright.config.ts:26-41`); `e2e-pr` no fija esa variable, así
+que en un PR esos cuatro proyectos **ni siquiera se crean** — no es que se salten, es que no existen
+para esa corrida.
+
+**Qué NO se ejecuta, y por qué.**
+
+- **WebKit fuera de CI, nunca.** `playwright install --with-deps` en las máquinas del equipo
+  (Arch/CachyOS) usa `apt-get` para las dependencias del sistema que WebKit necesita
+  (`libicu`, `libxml2`, `libflite1`, `libmanette`, entre otras), y Arch dejó de distribuir las
+  versiones exactas que pide. El navegador se descarga pero no arranca. CI (`ubuntu-latest`) es el
+  único sitio donde WebKit corre, y por eso ningún paso de `e2e-matriz-completa.yml` lleva
+  `continue-on-error`: si el único lugar donde se prueba además perdona sus fallos, deja de estar
+  probado y nadie se entera.
+- **Firefox, Chrome móvil y Safari móvil, fuera de `main` y de la corrida nocturna.** Misma
+  limitación de `--with-deps` que WebKit (Firefox además necesita las librerías del sistema), y
+  duplicar la matriz completa en cada PR no cabe en el tiempo de revisión.
+- **Viewports de tableta y de móvil pequeño con Chromium.** No existen como proyecto de Playwright
+  — sólo los cinco de la tabla. Si hace falta cubrir esos anchos, se prueban dentro de un escenario
+  existente con `page.setViewportSize`, no como proyecto nuevo, salvo que se decida lo contrario.
 
 **Condiciones adicionales.** *Red lenta*: Slow 3G (400 kbps, 400 ms RTT) sobre el escenario 1; la
 papeleta debe poder emitirse y el estado de «enviando» debe ser inequívoco. No es hipotético: el
@@ -537,46 +591,61 @@ requisito de accesibilidad cognitiva y se verifica leyéndolo.
 
 ## 13. Pipeline escalonado
 
-**Durante la implementación** (local, segundos): `vitest --watch` sobre el paquete tocado con
-`FC_RUNS=100`. Este nivel **no autoriza a dar nada por terminado**.
+**Verificado el 2026-08-23 leyendo `.github/workflows/` entero**, no reconstruido de memoria. Tres
+tramos, cada uno más caro y más completo que el anterior:
 
-**Antes del commit** (local, < 60 s), sobre los ficheros *staged*: `prettier --check` y `eslint`;
-`tsc -p tsconfig.check.json` completo —rápido, y ataja el 80 % de lo que rompería CI—;
-`node scripts/check-domain-purity.mjs` (ADR-0001); y las suites de los paquetes tocados con
-`FC_RUNS=200`. El hook **no se salta con `--no-verify`**: si hay que saltárselo es que el hook está mal,
-y se arregla el hook.
+### En cada propuesta de cambio (`pull_request` → `ci.yml`)
 
-**En el PR** (< 10 min): lo que ya hace `.github/workflows/ci.yml` (pureza → typecheck → lint → test →
-build) más unitarias y propiedades con `FC_RUNS=1000` y los umbrales de §3; integración con
-Testcontainers; E2E en Chromium (los 9) y Firefox/WebKit (1, 3, 5, 6); axe-core en cada pantalla;
-mutación **si el diff toca `packages/crypto` o `packages/domain/src/tally/`**; y microbenchmarks si toca
-`domain` o `crypto`.
+- **`verificar`:** pureza del dominio (`scripts/check-domain-purity.mjs`, ADR-0001) → `typecheck` →
+  `lint` → **`test:coverage`** (los 2 495 tests con Docker real vía Testcontainers,
+  `KOINONIA_REQUIRE_DOCKER=1`, contra los pisos de cobertura por paquete de §3) → `build` →
+  `build:web`.
+- **`e2e-pr`:** toda `tests/e2e/*.spec.ts` en **un solo navegador, Chromium** (§7).
 
-**En `main`:** todo lo del PR sin recortes, más despliegue a *staging* y el escenario 9 contra el
-backup nocturno real. **Nightly:** `FC_RUNS=10000`; mutación completa; E2E en la matriz móvil y de
-viewports; k6; verificación de ledger a escala con ciclo `pg_dump`/`pg_restore`; y la suite E2E en
-**orden aleatorio** para detectar acoplamientos.
+Nada de esto corre condicionado al diff: **todo el mono-repo se verifica en cada PR**, toque lo que
+toque. Más abajo se explica por qué esto es deliberado y no un descuido.
 
-**Paralelización, caché y sharding.** Vitest en *threads*, un *worker* por núcleo; Playwright con
-`fullyParallel` y base efímera por *worker*; E2E en 4 *shards* repartidos por duración histórica. Caché
-de `pnpm`, `.tsbuildinfo`, imágenes de Testcontainers por dígest y navegadores por versión; la clave
-incluye `pnpm-lock.yaml` y `.nvmrc`.
+### Al integrar en `main` (`push` a `main` → `ci.yml`)
 
-**Cómo se determina que un cambio no puede afectar a una suite.** Por el **grafo de dependencias del
-workspace**, nunca por intuición ni por nombre de carpeta: `pnpm --filter '...[origin/main]'` incluye
-cada paquete tocado y todo lo que depende de él. Sobre eso, cuatro reglas duras:
+Los mismos dos jobs de arriba (`verificar` corre igual, sin condición de rama), **más** `e2e-main`,
+que llama al flujo de trabajo reutilizable `e2e-matriz-completa.yml`: los cinco proyectos de §7
+—Chromium, Firefox, WebKit, Chrome móvil, Safari móvil— completos, con `playwright install
+--with-deps` para traer las librerías del sistema que Firefox y WebKit necesitan.
 
-1. **Un cambio en `packages/crypto` invalida todo.** Es la hoja del grafo (ADR-0001, `E8`): todo depende
-   de él. No se salta ninguna suite, nunca.
-2. **Si el diff toca `packages/domain/src/`, las propiedades corren completas**, sin selección.
-3. **Cambios sólo en `docs/`, `*.md` o `reportes/`:** lint de formato y **verificador de citas del
-   corpus** —toda cita entre documentos debe existir literalmente en el documento citado, lección de
-   `C4`—. No corre la suite de código.
-4. **Cambios sólo en `apps/web/`:** no corren las propiedades ni `crypto`; sí E2E, axe y bundle size.
-   Si el diff toca además cualquier `packages/`, la excepción se anula.
+### De noche (`schedule` → `nocturno.yml`)
 
-Regla de cierre: **ante la duda, corre todo.** Una suite de más cuesta minutos; una de menos, un `E1`
-en producción.
+07:00 UTC (02:00 en Bogotá), independiente de que haya habido push: la MISMA matriz completa que
+`e2e-main`, llamando al mismo `e2e-matriz-completa.yml` — no una copia que pudiera divergir. Es la
+red de seguridad contra la deriva del entorno (una imagen `ubuntu-latest` nueva, una versión de
+navegador distinta) que ningún push dispararía por sí sola. Por separado, `mutacion.yml` corre a las
+06:30 UTC la mutación de `crypto` + `tally` + reglas (§10) — **no engancha a los PR todavía**, y su
+propia cabecera explica por qué: con la puntuación de `domain` (resto) y `services/api` todavía por
+debajo del 85 %, un guardián en el PR bloquearía cambios sin relación con el motivo del rojo.
+
+### Lo que este documento describía en versiones anteriores y NO está implementado
+
+Cuatro ideas de diseño que valen la pena pero que ningún fichero de `.github/workflows/` ejecuta hoy
+— dejarlas escritas en presente, como si corrieran, es precisamente el problema que este documento ya
+tuvo una vez (cita de fichero inexistente) en otra forma: afirmar un mecanismo que no existe.
+
+- **Selección de suites por el grafo de dependencias del *workspace*** (`pnpm --filter
+  '...[origin/main]'`), para no correr todo en cada PR. Hoy `ci.yml` corre el mono-repo entero
+  siempre, sin condicionar nada al diff — más lento, pero no hay una regla de selección a medias que
+  alguien pueda confiar en que existe y que en realidad no filtra nada.
+- **Escalado de `FC_RUNS`** (100 en `--watch`, 200 en un *hook* de pre-commit, 1000 en PR, 10000 de
+  noche). Sólo la variable existe (`packages/domain/test/arbitraries.ts` y los ficheros de
+  `test/props/`, con default 1000); ningún flujo de trabajo la fija, así que **toda corrida usa
+  siempre el default, 1000** — PR, `main` y nocturno por igual.
+- **Un *hook* de pre-commit local.** No hay `.husky/`, ni `simple-git-hooks`, ni ningún script
+  `prepare` en `package.json` que instale uno. Lo único que corre antes del PR es lo que cada quien
+  ejecute a mano.
+- **Despliegue a *staging*, k6 nocturno y orden aleatorio de E2E de noche.** Ninguno de los tres
+  tiene un paso en ningún flujo de trabajo; no hay proyecto de *staging* configurado, ni script `k6`
+  en `package.json`, ni flag `--shuffle` en `nocturno.yml`.
+
+Quien retome cualquiera de estos cuatro puntos: conviértalo primero en un paso real de
+`.github/workflows/` y **después** vuelva este apartado a describirlo en presente. Mientras tanto,
+queda aquí como lo que es — trabajo pendiente, no comportamiento vigente.
 
 ---
 
@@ -627,5 +696,9 @@ gente a reintentar, y reintentar es la forma más eficiente de ignorar un bug re
 
 - `docs/research/30-decision-engine-spec.md` — PARTE E: 60 invariantes y 7 anti-invariantes.
 - `docs/research/00-contradicciones-resueltas.md` — parte 3: los ~20 errores de la implementación.
-- `docs/MODEL_CONTEXT.md` · `docs/adr/0001-...md` · `scripts/check-domain-purity.mjs`
-- `.github/workflows/ci.yml` — el pipeline vigente, que §13 extiende.
+- `docs/MODEL_CONTEXT.md` · `docs/adr/0001-monorepo-typescript-con-dominio-puro.md` ·
+  `scripts/check-domain-purity.mjs`
+- `.github/workflows/ci.yml`, `.github/workflows/e2e-matriz-completa.yml`,
+  `.github/workflows/nocturno.yml`, `.github/workflows/mutacion.yml` — el pipeline escalonado
+  vigente que §13 documenta (PR → main → nocturno), y la mutación nocturna aparte (§10).
+- `vitest.config.ts` (`test.coverage.thresholds`) — los pisos de cobertura por paquete de §3.

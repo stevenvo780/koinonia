@@ -134,6 +134,12 @@ test.beforeAll(async () => {
     await cliente.dispose();
   }
   await avanzarReloj(61 * 60 * 1000);
+  // 61 minutos superan el corte por inactividad de la sesión (60 min): el reloj es del servicio
+  // entero, así que **todos** los testigos obtenidos antes del salto quedan inválidos por
+  // inactividad, no sólo el de quien cierra —incluida `sara`, que todas las pruebas de este
+  // fichero corren después de este único `beforeAll`—. Se renuevan los dos.
+  sara = await entrarPorApi(sara.correo);
+  lucia = await entrarPorApi(CORREO_FACILITADORA);
   const cierreApi = await apiDirecta(lucia);
   const cierre = await cierreApi.post(`/decisiones/${decisionCerrada.id}/cerrar`, {
     data: { requestId: requestId() },

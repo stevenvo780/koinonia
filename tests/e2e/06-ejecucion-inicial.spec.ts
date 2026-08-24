@@ -177,6 +177,14 @@ test.beforeAll(async () => {
   }
 
   await avanzarReloj(61 * 60 * 1000);
+  // 61 minutos superan el corte por inactividad de la sesión (60 min): el reloj es del servicio
+  // entero, así que **todos** los testigos obtenidos antes del salto quedan inválidos por
+  // inactividad, no sólo el de quien cierra. Se renuevan los cuatro, como más abajo con el salto
+  // de 72 h — si no, el próximo test ve 401 donde espera 403 al usar `responsable`.
+  responsable = await entrarPorApi(responsable.correo);
+  destinataria = await entrarPorApi(destinataria.correo);
+  reemplazo = await entrarPorApi(reemplazo.correo);
+  facilitadora = await entrarPorApi(CORREO_FACILITADORA);
   const apiCierre = await apiDirecta(facilitadora);
   const cierre = await apiCierre.post(`/decisiones/${decisionId}/cerrar`, {
     data: { requestId: requestId() },
@@ -584,7 +592,7 @@ test('una sesión expirada conserva formulario y requestId hasta reingresar en o
     await page.bringToFront();
 
     const sesionRecargada = page.waitForResponse(
-      (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.status() === 200,
+      (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.status() === 200,
     );
     await page.evaluate(() => {
       window.dispatchEvent(new Event('focus'));

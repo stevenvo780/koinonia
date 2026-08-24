@@ -37,7 +37,12 @@ jobs:
       - name: Comprobar que Docker está disponible
         run: docker info
 
-      - run: pnpm run test
+      # `test:coverage` (no `test`) corre la MISMA suite una sola vez, instrumentada, y hace fallar
+      # el build si algún paquete cae por debajo de su piso de `vitest.config.ts`
+      # (`test.coverage.thresholds`, uno por paquete — docs/TESTING.md §3). No es un paso aparte: es
+      # el mismo `pnpm run test` con `--coverage`, así que no hay una segunda corrida completa de
+      # 2 495 pruebas sumando minutos por nada.
+      - run: pnpm run test:coverage
         env:
           KOINONIA_REQUIRE_DOCKER: '1'
 
@@ -45,20 +50,25 @@ jobs:
       - run: pnpm run build:web
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════
-  # Extremo a extremo.
+  # Extremo a extremo — pipeline ESCALONADO en tres tramos.
   #
-  # En un pull request corre SÓLO Chromium: el ciclo de revisión tiene que caber en el tiempo que
-  # alguien está dispuesto a esperar mirando la pestaña, y la mayoría de las regresiones aparecen en
-  # el primer navegador. En `main` corre la matriz entera —Chromium, Firefox, WebKit, Chrome móvil y
-  # Safari móvil—, porque esto se usa en un teléfono y Safari móvil es donde fallan las cosas que en
-  # el escritorio funcionan.
+  # 1. En un pull request corre SÓLO Chromium (`e2e-pr`, abajo): el ciclo de revisión tiene que
+  #    caber en el tiempo que alguien está dispuesto a esperar mirando la pestaña, y la mayoría de
+  #    las regresiones aparecen en el primer navegador.
+  # 2. Al integrar en `main` corre la matriz entera —Chromium, Firefox, WebKit, Chrome móvil y
+  #    Safari móvil— (`e2e-main`, abajo, que llama a `e2e-matriz-completa.yml`), porque esto se usa
+  #    en un teléfono y Safari móvil es donde fallan las cosas que en el escritorio funcionan.
+  # 3. De noche corre la MISMA matriz completa otra vez (`nocturno.yml`), sin depender de que
+  #    alguien empuje a `main`: es la red de seguridad que agarra la deriva del entorno —una imagen
+  #    de `ubuntu-latest` nueva, una versión de navegador que `playwright install` empezó a traer
+  #    distinta— aunque no haya habido ningún push ese día.
   #
   # ⚠ CI es el ÚNICO sitio donde la matriz corre entera, y no por comodidad. WebKit no arranca en
   # las máquinas de desarrollo del equipo (Arch/CachyOS: `playwright install --with-deps` usa
   # `apt-get`, y las librerías que WebKit pide son versiones que Arch ya no distribuye — HANDOFF §2.4).
-  # Por eso NADA de esta matriz lleva `continue-on-error`: si el único sitio donde WebKit se prueba
-  # además perdona sus fallos, WebKit deja de estar probado y nadie se entera. Un rojo aquí es
-  # información; un verde comprado no vale nada.
+  # Por eso NADA de esta matriz lleva `continue-on-error`, ni aquí ni en `e2e-matriz-completa.yml`: si
+  # el único sitio donde WebKit se prueba además perdona sus fallos, WebKit deja de estar probado y
+  # nadie se entera. Un rojo aquí es información; un verde comprado no vale nada.
   # ═══════════════════════════════════════════════════════════════════════════════════════════
 
   e2e-pr:
@@ -100,44 +110,6 @@ jobs:
           retention-days: 7
 
   e2e-main:
-    name: e2e · ${{ matrix.proyecto }} (main)
+    name: e2e · matriz completa (main)
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        proyecto: [chromium, firefox, webkit, chrome-movil, safari-movil]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # `--with-deps` instala las librerías del sistema que Firefox y WebKit necesitan
-      # (libicu, libxml2, libflite1, libmanette). Sin ellas WebKit descarga pero no arranca.
-      - name: Navegadores y dependencias del sistema
-        run: pnpm exec playwright install --with-deps
-
-      - name: Comprobar que Docker está disponible
-        run: docker info
-
-      - run: pnpm exec tsc --build packages/contracts services/api
-
-      - run: pnpm exec playwright test --project=${{ matrix.proyecto }}
-        env:
-          CI: 'true'
-          KOINONIA_MATRIZ: completa
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: playwright-report-${{ matrix.proyecto }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
+    uses: ./.github/workflows/e2e-matriz-completa.yml

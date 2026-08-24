@@ -68,7 +68,9 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
   expect(problemaId).toMatch(/^[0-9a-f]{32}$/u);
 
   // ── 2. Aportar evidencia ───────────────────────────────────────────────────────────────────
-  await expect(page.getByText('Todavía nadie aportó nada.')).toBeVisible();
+  // El rediseño movió este mensaje a la pieza `Vacio`, que lo escribe como título (`<h3>`) y sin
+  // punto final — antes era un párrafo con punto. El texto sigue siendo el mismo aviso.
+  await expect(page.getByText('Todavía nadie aportó nada')).toBeVisible();
   await page
     .getByLabel('¿Qué sabés?')
     .fill('De los 300 matriculados del Instituto, 86 están en la jornada nocturna.');
@@ -176,7 +178,9 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
 
   // La papeleta se ve reflejada en la pantalla de la decisión.
   await page.reload();
-  await expect(page.getByText(/Se manifestaron 2/u).first()).toBeVisible();
+  // El componente `Medidor` compartido (ver `components/piezas.tsx`) escribe la etiqueta con dos
+  // puntos — «Se manifestaron: 2 de 3» — donde antes decía «Se manifestaron 2» sin ellos.
+  await expect(page.getByText(/Se manifestaron:\s*2 de 3/u).first()).toBeVisible();
 
   // ── 8. La votación cierra cuando dice que cierra, no antes ─────────────────────────────────
   const apiLucia2 = await apiDirecta(lucia);
@@ -189,6 +193,10 @@ test('el ciclo completo, de punta a punta', async ({ page }) => {
   // ── 9. Vencida la ventana, se cierra y sale el resultado con su traza ──────────────────────
   await avanzarReloj(61 * 60 * 1000);
   await apiLucia2.dispose();
+  // El salto de reloj supera el corte por inactividad de la sesión (60 min, ADR del modelo de
+  // amenazas): la cookie que ya tiene el navegador quedó vencida por inactividad, no por el techo
+  // absoluto. Se vuelve a entrar, como haría lucía si volviera a la pestaña después de esperar.
+  lucia = await entrarPorApi(CORREO_FACILITADORA);
   await ponerSesionEnNavegador(page, lucia);
   await page.goto(`/decisiones/${decisionId}`);
   await page.getByRole('button', { name: 'Cerrar y publicar el resultado' }).click();

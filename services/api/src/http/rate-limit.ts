@@ -145,6 +145,18 @@ export function bucketKey(
     .digest('hex');
 }
 
+/**
+ * Extrae `requestId` del cuerpo de una petición sin recurrir a `any`: el cuerpo de Fastify
+ * llega tipado `unknown`, y acá solo nos interesa el caso feliz (objeto con esa clave en
+ * texto). Cualquier otra forma —cuerpo ausente, no-objeto, clave no-string— resulta en
+ * `undefined`, que es exactamente lo que `consume` ya trata como «sin idempotencia» (ADR-0055).
+ */
+export function requestIdDeCuerpo(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null || !('requestId' in body)) return undefined;
+  const { requestId } = body as { requestId?: unknown };
+  return typeof requestId === 'string' ? requestId : undefined;
+}
+
 export interface RateVerdict {
   readonly permitido: boolean;
   readonly usados: number;
@@ -154,11 +166,23 @@ export interface RateVerdict {
 }
 
 /**
- * Cuenta y decide, en una sola sentencia atómica.
+ * Cuenta y decide, con idempotencia por `requestId`.
  *
- * El `INSERT … ON CONFLICT DO UPDATE SET hits = rate_bucket.hits + 1 RETURNING hits` no tiene hueco
- * entre leer y escribir, así que diez peticiones simultáneas cuentan diez y no una: el mismo motivo
- * por el que el canje del enlace es una comparación-y-cambio.
+ * ═══ Idempotencia del cupo (ADR-0055) ═══
+ *
+ * Un reintento tras error de red debe ser seguro. Hoy el `requestId` (clave de idempotencia)
+ * protege contra escribir dos veces el evento; pero si el cupo se consumía ANTES de chequear
+ * idempotencia, un reintento gastaba cupo aunque no creaba nada nuevo. Esto castiga a quien
+ * tiene conexión móvil inestable, que es exactamente quién MÁS usa el mecanismo.
+ *
+ * Solución (c): Hacer que el CONSUMO DEL CUPO sea idempotente. Si el mismo `requestId`
+ * llega dos veces, solo la primera consume. Usamos INSERT ... ON CONFLICT en
+ * `identity.rate_consumption` para garantizar atomicidad.
+ *
+ * El `INSERT … ON CONFLICT DO NOTHING` no tiene hueco entre leer y escribir, así que:
+ *  - Dos peticiones con DISTINTO requestId cuentan dos veces (correcto)
+ *  - Dos peticiones con MISMO requestId cuentan una sola vez (correcto, idempotente)
+ *  - Peticiones sin requestId siguen contando en rate_bucket normalmente
  */
 export async function consume(
   client: PgClient,
@@ -167,10 +191,37 @@ export async function consume(
     readonly regla: RateRule;
     readonly sujeto: string;
     readonly clock: ClockPort;
+    readonly requestId?: string | undefined;
   },
 ): Promise<RateVerdict> {
   const now = options.clock.now();
   const windowStart = Math.floor(now / options.regla.ventanaMs) * options.regla.ventanaMs;
+
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (typeof options.requestId === 'string' && UUID_REGEX.test(options.requestId)) {
+    // Intenta registrar este consumo en la tabla de dedup idempotente.
+    // Si la misma (requestId, ambito, sujeto, window_start) ya existe, el INSERT falla
+    // porque viola la llave UNIQUE. Eso es lo que queremos: la segunda petición NO
+    // incrementa cupo.
+    const { rowCount } = await client.query(
+      `INSERT INTO identity.rate_consumption (request_id, ambito, sujeto, window_start, consumed_at)
+       VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000), NOW())
+       ON CONFLICT DO NOTHING
+       RETURNING 1`,
+      [options.requestId, options.regla.ambito, options.sujeto, windowStart],
+    );
+    if (!rowCount || rowCount === 0) {
+      // Ya existe: esta es una petición idempotente repetida, no consume cupo.
+      // Devolvemos con usados=0 para que la capa HTTP sepa que fue un reintento.
+      return {
+        permitido: true,
+        usados: 0,
+        maximo: options.regla.maximo,
+        liberaEn: windowStart + options.regla.ventanaMs,
+      };
+    }
+  }
+
   const key = bucketKey(
     options.secret,
     options.regla.ambito,
@@ -214,6 +265,21 @@ export async function purgeOldBuckets(client: PgClient, clock: ClockPort): Promi
   const result = await client.query(
     `DELETE FROM identity.rate_bucket
       WHERE window_start < to_timestamp($1::double precision / 1000)`,
+    [clock.now() - VENTANA_MAXIMA_MS],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Barre los registros de consumo idempotente viejos (ADR-0055).
+ * No pueden guardarse indefinidamente porque son una fuente de identidad débil:
+ * un `requestId` reutilizado años después sería indistinguible de uno nuevo.
+ * Se barren con la misma ventana máxima que rate_bucket.
+ */
+export async function purgeOldConsumptions(client: PgClient, clock: ClockPort): Promise<number> {
+  const result = await client.query(
+    `DELETE FROM identity.rate_consumption
+      WHERE consumed_at < to_timestamp($1::double precision / 1000)`,
     [clock.now() - VENTANA_MAXIMA_MS],
   );
   return result.rowCount ?? 0;

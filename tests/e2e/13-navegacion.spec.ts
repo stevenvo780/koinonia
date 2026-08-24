@@ -186,6 +186,15 @@ test('una pantalla de dentro de una sección sigue marcando su sección', async 
 
 test('en el grupo de consulta también se marca', async ({ page }) => {
   await page.goto('/normas');
+  // Este test corre también en los proyectos móviles de la matriz (viewport por defecto angosto),
+  // donde el grupo «Consultar» llega plegado: el enlace existe pero no está en el árbol de
+  // accesibilidad hasta desplegarlo. En pantalla ancha el botón no se renderiza, así que sólo se
+  // pulsa cuando hace falta — ver la prueba dedicada más abajo, que ya comprueba que el `aria-current`
+  // sobrevive plegado y se lee «al lado» del botón.
+  const abridor = navegacion(page).getByRole('button', { name: 'Consultar' });
+  if (await abridor.isVisible()) {
+    await abridor.click();
+  }
   await expect(
     navegacion(page).getByRole('link', { name: 'Las reglas del juego' }),
   ).toHaveAttribute('aria-current', 'page');

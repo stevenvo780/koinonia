@@ -150,7 +150,18 @@ export default function Decision(): ReactNode {
             : `Cierra el ${cuando(decision.cierraEn)}`}
         </Meta>
 
-        <p>{decision.queHaceFaltaParaQuePase}</p>
+        {/*
+         * Este `<h2>` se perdió al mover «qué hace falta para que esto pase» al carril de estado
+         * durante el rediseño (dc6095d): quedó un párrafo suelto sin nada que diga de qué habla.
+         * Es la regla que decide la votación —PRODUCT.md §4 exige que vaya SIEMPRE en la
+         * papeleta— y sin título es un párrafo cualquiera en un carril lleno de párrafos cortos.
+         * `problemas/[id]` ya usa el mismo patrón —`<section aria-labelledby><h2>`— dentro del
+         * mismo `.carril-estado`, así que no es una pieza nueva.
+         */}
+        <section aria-labelledby="regla-titulo">
+          <h2 id="regla-titulo">Qué hace falta para que esto pase</h2>
+          <p>{decision.queHaceFaltaParaQuePase}</p>
+        </section>
         <Medidor
           etiqueta="Se manifestaron"
           valor={decision.seManifestaron}

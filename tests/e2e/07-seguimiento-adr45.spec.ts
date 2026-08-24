@@ -94,6 +94,10 @@ async function sembrarIniciativa(): Promise<void> {
   }
 
   await avanzarReloj(61 * 60 * 1000);
+  // 61 minutos superan el corte por inactividad de la sesión (60 min): el testigo de facilitadora
+  // ya no vale por inactividad, aunque el techo absoluto (8 h) esté lejos. Se renueva, como más
+  // abajo con el salto de 72 h.
+  facilitadora = await entrarPorApi(CORREO_FACILITADORA);
   const apiCierre = await apiDirecta(facilitadora);
   const cierre = await apiCierre.post(`/decisiones/${decision.id}/cerrar`, {
     data: { requestId: requestId() },
@@ -286,7 +290,7 @@ test('un cambio de cuenta invalida datos privados y una respuesta tardía no los
   const otraPestana = await context.newPage();
   await ponerSesionEnNavegador(otraPestana, observadora);
   const sesionObservadora = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -303,7 +307,7 @@ test('un cambio de cuenta invalida datos privados y una respuesta tardía no los
   await otraPestana.bringToFront();
   await ponerSesionEnNavegador(otraPestana, destinataria);
   let sesionDestinataria = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -316,7 +320,7 @@ test('un cambio de cuenta invalida datos privados y una respuesta tardía no los
   await otraPestana.bringToFront();
   await ponerSesionEnNavegador(otraPestana, observadora);
   const capacidadObservadora = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -330,7 +334,7 @@ test('un cambio de cuenta invalida datos privados y una respuesta tardía no los
   await otraPestana.bringToFront();
   await ponerSesionEnNavegador(otraPestana, destinataria);
   sesionDestinataria = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -390,14 +394,14 @@ test('una recarga vieja de la misma cuenta no reemplaza la vista más reciente',
   });
 
   let revalidada = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await revalidada;
   await primeraLista;
 
   revalidada = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await revalidada;
@@ -445,13 +449,13 @@ test('una recarga vieja de la misma cuenta no reemplaza la vista más reciente',
   });
 
   revalidada = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await revalidada;
   await capacidadLista;
   revalidada = page.waitForResponse(
-    (respuesta) => respuesta.url().endsWith('/api/auth/yo') && respuesta.ok(),
+    (respuesta) => respuesta.url().endsWith('/api/auth/estado') && respuesta.ok(),
   );
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await revalidada;
