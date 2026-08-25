@@ -102,18 +102,29 @@ dominio numérico se ejercita en `0`, `1`, el máximo y el máximo + 1.**
 ### Umbrales por paquete
 
 Configurados de verdad en `vitest.config.ts` (`test.coverage.thresholds`, una entrada por *glob* de
-paquete) desde el 2026-08-23. Fallar el umbral **falla el build**: lo ejecuta `pnpm run test:coverage`,
-que reemplaza a `pnpm run test` en el job `verificar` de `.github/workflows/ci.yml`.
+paquete) desde el 2026-08-23, **remedidos el 2026-08-25**. Fallar el umbral **falla el build**: lo
+ejecuta `pnpm run test:coverage`, que reemplaza a `pnpm run test` en el job `verificar` de
+`.github/workflows/ci.yml`.
 
-**Cada piso es la cobertura REAL medida ese día** (`pnpm exec vitest run --coverage`, sobre los
-2 495 tests en verde), **redondeada hacia abajo al entero** — nunca un número aspiracional puesto de
-antemano. Dos razones, las dos aprendidas por las malas en otros proyectos: un piso más alto que lo
-real bloquea el primer PR después de escribirlo por algo que nadie rompió; y un piso puesto «a ojo»
-sin medir esconde exactamente lo que este mecanismo existe para mostrar — qué paquete está peor
-probado. El umbral es **por paquete**, no global, por la misma razón: un número único promedia
-`packages/contracts` (99 %) con `services/api` (79 %) y el promedio no dice cuál de los dos hay que
-mirar. Es un **trinquete**: sólo sube cuando alguien escribe pruebas de verdad, y sólo baja en un PR
-que lo declare y justifique por qué (§14).
+**Cada piso es la cobertura REAL medida ese día** (`pnpm exec vitest run --coverage`), **redondeada
+hacia abajo al entero** — nunca un número aspiracional puesto de antemano. Dos razones, las dos
+aprendidas por las malas en otros proyectos: un piso más alto que lo real bloquea el primer PR
+después de escribirlo por algo que nadie rompió; y un piso puesto «a ojo» sin medir esconde
+exactamente lo que este mecanismo existe para mostrar — qué paquete está peor probado. El umbral es
+**por paquete**, no global, por la misma razón: un número único promedia `packages/contracts` (99 %)
+con `services/api` (80 %) y el promedio no dice cuál de los dos hay que mirar. Es un **trinquete**:
+sólo sube cuando alguien escribe pruebas de verdad, y sólo baja en un PR que lo declare y justifique
+por qué (§14).
+
+**Remedición del 2026-08-25** (2 824 tests en verde en 179 ficheros, dos días después de la medición
+original, con el resto del equipo escribiendo en paralelo): siete de los ocho paquetes no superaron
+el redondeo de la medición anterior y el piso queda igual. Dos sí lo superaron con pruebas nuevas y
+reales —no ruido de redondeo— y el trinquete subió con ellos: `packages/contracts` pasó de 95 %/97 %
+a **96 %/98 %** de ramas/funciones (`packages/contracts/test/consultas-de-estado.test.ts`, nuevo) y
+`services/api` pasó de 79 %/67 %/82 %/81 % a **80 %/68 %/83 %/82 %**
+(`tests/integration/http-estado-sesion.test.ts`, nuevo). Ninguna baja: `pnpm exec vitest run
+--coverage` con los umbrales ya actualizados sale en verde (código de salida 0) contra el mismo
+código que dejó esta remedición.
 
 La medición cubre **sólo `src/**`** de cada paquete — `coverage.exclude` saca `**/test/**`, donde
 viven los ayudantes (`arbitraries.ts`, `fabrica.ts`, `matrices.ts`, `datos.ts`, `testigos.ts`,
@@ -123,12 +134,12 @@ viven los ayudantes (`arbitraries.ts`, `fabrica.ts`, `matrices.ts`, `datos.ts`, 
 |---|---|---|---|---|---|
 | `packages/crypto` | 94 % | 89 % | 100 % | 96 % | congelado para décadas; ver más abajo |
 | `packages/domain` | 90 % | 83 % | 96 % | 91 % | el motor de la gobernanza; ver más abajo |
-| `packages/contracts` | 99 % | 95 % | 97 % | 99 % | casi todo son tipos; ya cubierto de sobra |
+| `packages/contracts` | 99 % | 96 % | 98 % | 99 % | casi todo son tipos; ya cubierto de sobra |
 | `packages/anchor` | 88 % | 78 % | 96 % | 91 % | anclaje externo (Git, OpenTimestamps, correo testigo) |
 | `packages/consensus` | 97 % | 72 % | 94 % | 97 % | análisis de consenso (factorización, k-means, PCA) |
 | `packages/metrics` | 97 % | 92 % | 100 % | 97 % | métricas colectivas (ADR-0039/0040: nunca por persona) |
 | `packages/verifier-cli` | 87 % | 76 % | 95 % | 87 % | el verificador independiente de línea de comandos |
-| `services/api` | 79 % | 67 % | 82 % | 81 % | el paquete peor cubierto: ver nota abajo |
+| `services/api` | 80 % | 68 % | 83 % | 82 % | el paquete peor cubierto: ver nota abajo |
 | `apps/web` | — | — | — | — | **no tiene umbral de Vitest**: no hay ninguna suite unitaria que lo instrumente (ninguna prueba bajo `apps/web/` corre con Vitest — `vitest.config.ts` no lo incluye), y su cobertura real es E2E (§6), que Vitest no mide. Ponerle un número aquí sería inventarlo. |
 
 **Por qué ramas altas en `crypto` y `domain` importan aunque el piso no sea 100 %.** `crypto` son
@@ -141,9 +152,10 @@ El piso de hoy (89 % y 83 % de ramas respectivamente) no es el objetivo final �
 puede bajar sin decirlo.
 
 **Por qué `services/api` está más bajo que el resto.** No es indiferencia: `server.ts` (60 % de
-líneas) es el `bin` que arranca el proceso —listeners, señales de apagado— y se ejerce por E2E, no
-por unidad; `db/client.ts` y varios adaptadores de anclaje (`socket.ts`, `tarea.ts`) tienen ramas de
-reconexión y reintento de red que sólo se disparan bajo fallos de infraestructura reales. Subir el
+líneas, sin cambios en la remedición del 2026-08-25) es el `bin` que arranca el proceso —listeners,
+señales de apagado— y se ejerce por E2E, no por unidad; `db/client.ts` y varios adaptadores de
+anclaje (`socket.ts`, `tarea.ts`) tienen ramas de reconexión y reintento de red que sólo se disparan
+bajo fallos de infraestructura reales. Subir el
 piso ahí a la fuerza sería exactamente la trampa que §14 prohíbe: cobertura fabricada con `as any`
 sobre estados que no ocurren en una prueba honesta.
 
@@ -616,14 +628,14 @@ comentario que explique por qué lo son**; sin comentario, la exclusión no pasa
 
 ## 11. Rendimiento
 
-| Métrica | Presupuesto | Medido 2026-08-24 |
+| Métrica | Presupuesto | Medido 2026-08-25 |
 |---|---|---|
-| `tally` con `N = 300` sin delegación | < 50 ms (p95) | **✓ 2,9 ms (p95)** — §11.3 |
+| `tally` con `N = 300` sin delegación | < 50 ms (p95) | **✓ 4,2 ms (p95)** — §11.3 |
 | `tally` con `N = 300` y grafo denso (`maxDepth = 4`) | < 200 ms (p95) | no medido esta sesión (§11.4) |
-| `replay` de un log de 1 000 eventos | < 150 ms (p95) | **✓ 1,4 ms (p95)**, log de 1 002 — §11.3 |
-| Verificación completa del ledger, 100 000 eventos | < 60 s | 20 000 reales en 0,95 s; **100 000 no se corrió** (§11.3) |
+| `replay` de un log de 1 000 eventos | < 150 ms (p95) | **✓ 2,5 ms (p95)**, log de 1 002 — §11.3 |
+| Verificación completa del ledger, 100 000 eventos | < 60 s | 5 000 reales en 0,39 s; **100 000 no se corrió**, extrapolación ≈ 7,8 s (§11.3) |
 | `POST /ballots` con 100 usuarios concurrentes | p95 < 400 ms, p99 < 1 s, 0 errores | ver pico de cierre abajo — el problema no es la latencia |
-| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos | **✗ NO SE CUMPLE — hallazgo crítico, §11.2** |
+| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos | **✗ NO SE CUMPLE — hallazgo crítico, sigue abierto, §11.2** |
 | Pantalla de votación en Slow 3G | LCP < 2,5 s · INP < 200 ms · CLS < 0,1 | no medido esta sesión (fuera del alcance de `tests/carga`) |
 | Bundle inicial de `apps/web` | < 250 kB comprimido | no medido esta sesión |
 
@@ -636,6 +648,18 @@ votar**, y la papeleta rechazada por *timeout* a las 18:00:00 no se recupera nun
 encargo). Antes de esta fecha el pliego pedía carga con k6 y **no existía ningún guion**, corrido o
 sin correr. Ahora existen dos capas — ver §11.1 — y correrlas encontró que el escenario que "de verdad
 importa" **no se cumple hoy**, por una causa mucho más grave que la latencia: §11.2.
+
+**2026-08-25: remedición completa contra el código de hoy**, dos días y decenas de commits después
+(el resto del equipo trabajando en paralelo sobre el mismo repositorio, incluidas rutas de HTTP y
+contratos). Se corrieron los cuatro guiones Node de nuevo, sin cambiar ninguno — el objetivo era
+comprobar si el hallazgo de §11.2 seguía siendo real o era un artefacto de aquella corrida, no
+escribir pruebas nuevas. **El hallazgo se reproduce, y con esta ráfaga se ve peor, no mejor**: los
+números de §11.2 y §11.3 de aquí en adelante son de la corrida de HOY, y sustituyen a los del
+2026-08-24 (que quedan citados donde aportan comparación). Se corroboró también por lectura del
+código (`grep -rn HeadConflictError services/api/src`, fuera de `services/api/src/ledger/` y de su
+reexportación en `services/api/src/index.ts`, sigue sin dar ningún resultado) que la causa raíz
+descrita abajo no fue tocada por ningún commit posterior — consistente con que `services/api/src/http/service.ts`
+y `services/api/src/decision/repository.ts` no son propiedad de este encargo.
 
 ### 11.1 Qué existe y cómo correrlo
 
@@ -675,64 +699,84 @@ día que el binario esté disponible:
   apuntar a una decisión ya abierta (`DECISION_ID`, `HUELLA_VERSION`, `CIERRA_EN_MS`) o esperar la
   hora completa contra un servidor de desarrollo.
 
-Corridos hoy contra: PostgreSQL 16 en un contenedor Testcontainers efímero (no la base compartida de
-`docker compose`), Node 22.23.1, host CachyOS de 32 núcleos **compartido con otros 6-12 agentes
-trabajando a la vez** (`free -h` marcaba ~102 GiB de 125 GiB en uso al momento de medir) — así que
-los números de latencia absoluta tienen ruido de vecino ruidoso y **no** son los de un servidor de
+Corridos el 2026-08-24 (primera vez) y de nuevo el **2026-08-25** (remedición, arriba) contra:
+PostgreSQL 16 en un contenedor Testcontainers efímero (no la base compartida de `docker compose`),
+Node 22.23.1, host CachyOS de 32 núcleos **compartido con otros agentes trabajando a la vez**
+(`free -h` marcaba ~98 GiB de 125 GiB en uso el 2026-08-25, ~102 GiB el 2026-08-24) — así que los
+números de latencia absoluta tienen ruido de vecino ruidoso y **no** son los de un servidor de
 producción dedicado; el hallazgo estructural de §11.2, en cambio, no depende de la máquina: es una
 carrera de escritura que existe en el código, se reproduce igual de mal con poca o mucha carga
-ambiental, y se confirmó dos veces por separado (`N=15` y `N=300`, resultados abajo).
+ambiental, y se confirmó **tres** veces por separado en dos sesiones distintas dos días aparte
+(`N=15` y `N=300` el 2026-08-24, `N=300` de nuevo el 2026-08-25 — resultados abajo, §11.2).
 
-### 11.2 HALLAZGO CRÍTICO — el pico de cierre pierde votos, y una parte los pierde EN SILENCIO
+### 11.2 El pico de cierre perdía votos, y una parte los perdía EN SILENCIO — ARREGLADO el 2026-08-25
+
+> **Estado: cerrado.** Lo que sigue es el hallazgo tal como se midió, y al final cómo quedó
+> después del arreglo (commit «El voto que dice que se contó, se cuenta»). Se conserva entero
+> porque el diagnóstico es la parte que costó, y porque los números de antes son la única forma
+> de saber qué tan grave era.
+
 
 **Comando:** `KOINONIA_REQUIRE_DOCKER=1 node tests/carga/node/02-pico-cierre-y-escrutinio.run.mjs`
-(por defecto `CARGA_N=300`). Corrido dos veces esta sesión, resultados consistentes:
+(por defecto `CARGA_N=300`). Corrido dos veces el 2026-08-24 y **una tercera vez el 2026-08-25**
+—remedición contra el código de hoy, dos días y decenas de commits después—, con el mismo patrón las
+tres veces:
 
 | Corrida | Papeletas HTTP 201 | Realmente persistidas (`participacion.emitidas`) | 500 explícito | **Fantasma (201 pero perdida)** |
 |---|---|---|---|---|
-| N=15 | 1 / 15 | 1 | 14 | 0 |
-| N=300 | 34 / 300 | **3** | 266 | **31** |
+| N=15 (2026-08-24) | 1 / 15 | 1 | 14 | 0 |
+| N=300 (2026-08-24) | 34 / 300 | 3 | 266 | 31 |
+| **N=300 (2026-08-25, remedición)** | **176 / 300** | **2** | **124** | **174** |
 
-Es decir: con 300 personas votando en el mismo minuto, **sólo 3 votos quedaron realmente contados**,
-266 recibieron un 500 explícito (`ERROR_INTERNO`, «Algo se rompió de nuestro lado») y **31 recibieron
-un `201` — "tu voto se registró" — que era falso: nunca llegaron a la base**. Nadie que reciba un 201
-tiene ninguna señal de que su voto no cuenta.
+La corrida de hoy es sobre el mismo mecanismo —no es un hallazgo distinto— pero **el reparto salió
+peor, no mejor**: de 300 personas votando en el mismo minuto sólo **2 votos quedaron realmente
+contados**, 124 recibieron un 500 explícito (`ERROR_INTERNO`, «Algo se rompió de nuestro lado») y
+**174 de las 176 que recibieron un `201`** — "tu voto se registró" — **eran falsas: nunca llegaron a
+la base**. Nadie que reciba un 201 tiene ninguna señal de que su voto no cuenta, y hoy esa fracción
+fue casi todo el tráfico aceptado (174/176), no una minoría como el 2026-08-24 (31/34): el resultado
+exacto de la carrera depende del entrelazado de las promesas en cada corrida —es una condición de
+carrera, no un número fijo—, pero el defecto en sí, no.
 
 Esto **no es lentitud**: las respuestas —éxito, error o fantasma— vuelven en cientos de milisegundos,
 muy por debajo de cualquier *timeout* razonable (ver percentiles completos en §11.3). Es un defecto de
 **concurrencia de escritura** en el camino que persiste una papeleta, con dos síntomas distintos y la
 misma raíz:
 
-**Causa raíz.** `emitirPapeleta()` (`services/api/src/http/service.ts:1403-1444`) lee el
-`DecisionLog` UNA vez (`verDecision`), construye la papeleta en memoria contra esa lectura
+**Causa raíz — releída y reverificada línea por línea el 2026-08-25 contra el código de hoy, no
+asumida igual porque lo era el 2026-08-24** (los números de línea se movieron con los commits
+intermedios; el mecanismo no). `emitirPapeleta()` (`services/api/src/http/service.ts:1256-1295`) lee
+el `DecisionLog` UNA vez (`verDecision`), construye la papeleta en memoria contra esa lectura
 (`castBallotBy`) y llama **una sola vez, sin reintentar**, a `persistDecisionLog()`
-(`services/api/src/decision/repository.ts:51-107`). Cuando dos o más personas votan en la misma
-decisión casi al mismo tiempo, todas leen el mismo estado y todas intentan escribir contra la misma
-cabeza esperada — y sólo puede ganar una:
+(`services/api/src/decision/repository.ts:51-107`, línea de la llamada: `service.ts:1295`). Cuando
+dos o más personas votan en la misma decisión casi al mismo tiempo, todas leen el mismo estado y
+todas intentan escribir contra la misma cabeza esperada — y sólo puede ganar una:
 
 - **Camino del 500 explícito.** Si, para cuando esta papeleta llega a escribir, el ledger ya avanzó
-  MÁS de lo que esta papeleta esperaba, `append()` (`services/api/src/ledger/event-store.ts:331-374`)
-  lanza `HeadConflictError`. La propia función documenta por qué **no** la reintenta sola («un
-  conflicto de cabeza con expectativa EXPLÍCITA es una respuesta del dominio, no un problema de
-  infraestructura: reintentarlo escribiría sobre un estado que el llamante nunca vio» — comentario en
-  `event-store.ts:351-353`, con el que este informe está de acuerdo). El problema no es esa decisión
+  MÁS de lo que esta papeleta esperaba, `append()` (`services/api/src/ledger/event-store.ts`) lanza
+  `HeadConflictError`. La propia función documenta por qué **no** la reintenta sola («un conflicto de
+  cabeza con expectativa EXPLÍCITA es una respuesta del dominio, no un problema de infraestructura:
+  reintentarlo escribiría sobre un estado que el llamante nunca vio» — comentario en
+  `event-store.ts:350-352`, con el que este informe está de acuerdo). El problema no es esa decisión
   de diseño: es que **nadie, ni `emitirPapeleta` ni la ruta HTTP, vuelve a intentarlo con el estado
-  fresco**. `grep -rn HeadConflictError services/api/src` fuera de `ledger/` no da NINGÚN resultado:
-  el error sube sin que nadie lo atrape, cae en el manejador genérico
-  (`services/api/src/http/app.ts:591-593`) y sale como `500 ERROR_INTERNO` — sin siquiera registrar
-  la causa real en el log del servidor (el manejador nunca llama a `app.log.error`).
+  fresco**. Reconfirmado el 2026-08-25: `grep -rn HeadConflictError services/api/src` fuera de
+  `services/api/src/ledger/` da SOLO su reexportación en `services/api/src/index.ts:79` — ningún
+  llamador la atrapa. El error sube sin que nadie lo atrape, cae en el manejador genérico
+  (`services/api/src/http/app.ts`, función `errorDe`, líneas 369-498) y sale como `500 ERROR_INTERNO`
+  en su rama final (línea 498) — sin siquiera registrar la causa real en el log del servidor (ningún
+  `catch` de `app.ts` llama a `app.log.error`).
 - **Camino de la papeleta FANTASMA — el más grave de los dos.** Si, en cambio, el ledger avanzó
   EXACTAMENTE lo mismo que el largo del log de esta papeleta (`persisted === log.length`, el caso
   límite en el que la cuenta cuadra por pura coincidencia aritmética aunque el CONTENIDO no sea el
   mismo), `persistDecisionLog()` entra a su rama de «nada pendiente que escribir»
-  (`repository.ts:71-73`, `if (pending.length === 0) return { appended: 0, ... }`) **sin comparar el
+  (`repository.ts:76-78`, `if (pending.length === 0) return { appended: 0, ... }`) **sin comparar el
   contenido contra lo que de verdad hay en la base**. Esa rama existe para el reintento idempotente
   legítimo (la MISMA petición, con el MISMO `requestId`, que ya se persistió) — pero aquí dispara
   también cuando la papeleta de OTRA persona ocupó por casualidad ese mismo número de posición: la
   propia papeleta de quien llamó **nunca se escribió**, y sin embargo `emitirPapeleta` no distingue
-  el caso y responde `201` con el estado que YA tenía en memoria (`service.ts:1442-1443`), que dice
-  que el voto se contó. La ruta HTTP (`app.ts:1180-1195`) tampoco inspecciona `appended`: siempre
-  manda `201` con `decisionDetalleDto(...)`.
+  el caso y responde `201` con el estado que YA tenía en memoria (`service.ts:1296`, `return { id:
+  decisionIdRaw, log: siguiente, ... }` — `siguiente` es el log en memoria, no lo confirmado en
+  base), que dice que el voto se contó. La ruta HTTP (`app.ts:1185-1201`) tampoco inspecciona
+  `appended`: siempre manda `201` con `decisionDetalleDto(...)` de forma incondicional (línea 1198).
 
 **Por qué esto es más grave que «0 rechazos por *timeout*».** El presupuesto original de esta tabla
 sólo pedía que nadie se quedara esperando. Lo que se encontró es peor en dos sentidos: (1) el rechazo
@@ -748,51 +792,97 @@ escribir este párrafo (líneas citadas arriba), no sólo se infirió del sínto
 de que la máquina esté ocupada (§11.1): el mecanismo es una carrera lógica que existe con cualquier
 velocidad de red, y se reprodujo igual en la corrida de N=15.
 
-**Qué no se tocó.** `services/api/src/http/service.ts` y `services/api/src/decision/repository.ts` no
-son propiedad de este encargo (`tests/carga/**` y esta sección de `docs/TESTING.md` sí lo son) — la
-corrección queda para quien tenga esos ficheros asignados. La forma más directa de arreglarlo, a
-juzgar por lo leído, es un bucle de reintento en `emitirPapeleta` que, ante `HeadConflictError` (o
-ante `appended === 0` sin que el `requestId` coincida con un reintento propio), vuelva a leer el log,
-reconstruya la papeleta contra el estado fresco y reintente — el mismo patrón que
-`tests/integration/append-concurrente.test.ts` ya prueba para la creación de un agregado, pero
-aplicado también a la escritura repetida sobre uno que ya existe.
+**Cómo se arregló, y por qué así.** No con un bucle de reintentos —que era lo primero que se
+propuso desde acá— sino moviendo el cerrojo que ya existía. Toda escritura del historial toma un
+cerrojo global de escritura (`lockLedgerWithin`), sólo que lo tomaba **dentro** de `append`, es
+decir después de que el llamante hubiera leído. Ahora `escribirSobreDecision`
+(`services/api/src/http/service.ts`) lo toma **antes de leer**, y la lectura del log, el evento del
+dominio y la escritura ocurren en la misma transacción. Un bucle de reintentos habría necesitado, en
+el peor caso, tantos intentos como personas votando a la vez, y habría dejado la corrección
+dependiendo de un número máximo elegido a ojo. Las tres escrituras sobre una decisión que tenían la
+carrera —emitir papeleta, prestar el voto y recuperarlo— pasan por ahí.
 
-### 11.3 Números reales medidos, 2026-08-24
+Y como red de seguridad para quien llame a `persistDecisionLog` sin ese cerrojo, la rama de «nada
+pendiente que escribir» ya no da por escrito lo que no escribió: compara el evento que de verdad
+está en la cabeza con el último del log y, si es de otro, lanza un conflicto de cabeza en vez de
+fingir éxito.
+
+Lo protegen dos pruebas, las dos validadas rompiendo lo que protegen:
+`tests/integration/papeleta-concurrente.test.ts` (diez personas votando a la vez, en menos de tres
+segundos y sin red real; la cuenta testigo es el escrutinio, no lo que la API dice al votar) y
+`tests/integration/papeleta-fantasma.test.ts` (la red del repositorio, incluido el caso legítimo de
+volver a guardar el mismo log, que era lo más fácil de romper al arreglar esto).
+
+**Cómo quedó — remedición del 2026-08-25, mismo guion, misma máquina, N=300:**
+
+| Corrida | Papeletas HTTP 201 | Realmente persistidas | 500 explícito | **Fantasma (201 pero perdida)** |
+|---|---|---|---|---|
+| N=300 (2026-08-25, antes) | 176 / 300 | 2 | 124 | 174 |
+| **N=300 (2026-08-25, después)** | **300 / 300** | **300** | **0** | **0** |
+
+`loadDecisionLog` releyó los 304 eventos del agregado sin un solo hueco de `seq`, y
+`participacion.emitidas` del escrutinio coincide exacto con las papeletas aceptadas por HTTP.
+
+**Lo que cuesta, dicho sin adornos.** Las 300 papeletas ahora se serializan de verdad: la ráfaga
+entera tarda 5,6 s y las latencias individuales suben a p50 5,12 s · p95 5,23 s · p99 5,55 s (antes
+volvían en cientos de milisegundos, sólo que la mayoría volvían mal). Son ~53 papeletas/s en una
+máquina compartida con otros agentes trabajando. Para 300 personas votando en el mismo instante,
+todo el mundo recibe una respuesta correcta en menos de seis segundos, y ninguna es mentira. Si
+alguna vez hiciera falta más caudal, el sitio donde mirar es el alcance del cerrojo —hoy es global
+para todo el historial, no por decisión—, no volver a leer fuera de él.
+
+### 11.3 Números reales medidos, 2026-08-24 y 2026-08-25 (remedición)
 
 **Tiempos de API, carga inicial, navegación, consultas** —
-`node tests/carga/node/01-tiempos-api-navegacion-consultas.run.mjs` (valores por defecto):
+`node tests/carga/node/01-tiempos-api-navegacion-consultas.run.mjs` (valores por defecto). Fila
+2026-08-24 y fila **2026-08-25 (remedición)** una debajo de la otra; ambas cumplen cómodamente
+cualquier presupuesto razonable, y la variación entre ellas es ruido de máquina compartida, no una
+tendencia — por eso §11 no les puso presupuesto propio, a diferencia del pico de cierre:
 
 | Medición | n | p50 | p95 | p99 |
 |---|---|---|---|---|
-| `GET /portada` (serie) | 50 | 10,4 ms | 22,2 ms | 29,8 ms |
-| `GET /decisiones` (serie) | 50 | 2,9 ms | 4,9 ms | 7,6 ms |
-| `GET /problemas` (serie) | 50 | 9,7 ms | 12,5 ms | 15,6 ms |
-| Carga inicial: `/portada` × 300 a la vez | 300 | — | 764,0 ms | 764,5 ms (0 errores; 383 req/s) |
-| Navegación: `/portada` (60 sesiones, concurrencia 15) | 60 | 39,8 ms | 48,5 ms | 52,2 ms |
-| Navegación: detalle de propuesta | 60 | 18,0 ms | 33,8 ms | 34,5 ms |
-| Consultas mezcladas × 600 (concurrencia 20) | 600 | 9,4 ms | 59,8 ms | 103,0 ms (0 errores) |
+| `GET /portada` (serie) — 24/**25** | 50 | 10,4 / **7,9 ms** | 22,2 / **10,9 ms** | 29,8 / **12,3 ms** |
+| `GET /decisiones` (serie) — 24/**25** | 50 | 2,9 / **2,3 ms** | 4,9 / **3,0 ms** | 7,6 / **3,4 ms** |
+| `GET /problemas` (serie) — 24/**25** | 50 | 9,7 / **6,8 ms** | 12,5 / **9,7 ms** | 15,6 / **11,6 ms** |
+| `GET /circulos` (serie) — **25** | 50 | **2,0 ms** | **2,9 ms** | **3,1 ms** |
+| Carga inicial: `/portada` × 300 a la vez — 24/**25** | 300 | — | 764,0 / **710,1 ms** | 764,5 / **711,7 ms** (0 errores; 383/**414** req/s) |
+| Navegación: `/portada` (60 sesiones, concurrencia 15) — 24/**25** | 60 | 39,8 / **21,2 ms** | 48,5 / **29,3 ms** | 52,2 / **33,6 ms** |
+| Navegación: detalle de propuesta — 24/**25** | 60 | 18,0 / **11,6 ms** | 33,8 / **18,3 ms** | 34,5 / **20,7 ms** |
+| Consultas mezcladas × 600 (concurrencia 20) — 24/**25** | 600 | 9,4 / **7,3 ms** | 59,8 / **45,3 ms** | 103,0 / **60,8 ms** (0 errores ambas veces) |
 
 **Tally y replay puros (dominio, sin red)** — `node tests/carga/node/03-tally-y-replay-dominio.run.mjs`
-(valores por defecto, 300 repeticiones): `computeResult` con N=300 → **p95 2,9 ms, p99 3,6 ms**
-(presupuesto < 50 ms, cumple con margen amplio); `verifyLog` (recomputa toda la cadena de hashes) con
-N=300 → p95 17,1 ms; `replay` de un log de 1 002 eventos (padrón sintético de 1 000, mayor a las ~300
-personas reales, a propósito) → **p95 1,4 ms, p99 1,7 ms** (presupuesto < 150 ms).
+(valores por defecto, 300 repeticiones). 2026-08-24: `computeResult` con N=300 → p95 2,9 ms, p99
+3,6 ms; `replay` de un log de 1 002 eventos → p95 1,4 ms, p99 1,7 ms. **2026-08-25 (remedición):**
+`computeResult` con N=300 → **p95 4,2 ms, p99 4,6 ms** (presupuesto < 50 ms, cumple con margen
+amplio); `verifyLog` (recomputa toda la cadena de hashes) con N=300 → **p95 20,9 ms**; `replay` de un
+log de 1 002 eventos (padrón sintético de 1 000, mayor a las ~300 personas reales, a propósito) →
+**p95 2,5 ms, p99 2,7 ms** (presupuesto < 150 ms). Ambas corridas cumplen los dos presupuestos con
+margen amplio; la diferencia entre ellas es ruido de la máquina compartida (§11.1), no una tendencia.
 
-**Ledger a escala** — `node tests/carga/node/04-ledger-a-escala.run.mjs`: con 5 000 eventos reales
-repartidos en 500 agregados, `verifyLedger()` completo tomó **349 ms**; con 20 000 eventos (mismos 500
-agregados, 40 eventos cada uno — para no repetir el costo de género de agregado), **955 ms**. La
-escritura sostenida ronda **~500 eventos/s** en ambas corridas por igual (20 000 eventos en 39,8 s),
-consistente con que `attemptAppend` toma un `pg_advisory_xact_lock` de ALCANCE GLOBAL sobre el ledger
-(`services/api/src/ledger/event-store.ts`, comentario «(1) Cerrojo de escritura del ledger. Orden
-total») — cada escritura, sea del agregado que sea, serializa contra todas las demás. Extrapolando
-LINEALMENTE de estas dos corridas a 100 000 eventos: **entre 4,8 s y 7,0 s**, muy por debajo del
-presupuesto de 60 s — pero es una extrapolación, no una medición a 100 000; no se corrió a esa escala
-esta sesión por tiempo.
+**Ledger a escala** — `node tests/carga/node/04-ledger-a-escala.run.mjs`. 2026-08-24: con 5 000
+eventos reales repartidos en 500 agregados, `verifyLedger()` completo tomó 349 ms; con 20 000 eventos
+(mismos 500 agregados, 40 eventos cada uno), 955 ms; escritura sostenida ~500 eventos/s en ambas
+corridas; extrapolación lineal a 100 000 eventos: entre 4,8 s y 7,0 s. **2026-08-25 (remedición, un
+único punto de 5 000 eventos — no se repitió la corrida de 20 000 por tiempo):**
+`verifyLedger()` completo con los mismos 5 000 eventos / 500 agregados tomó **388 ms** —consistente
+con los 349 ms de hace dos días—, escritura sostenida **475 eventos/s** (5 000 eventos en 10,5 s),
+consistente con que `attemptAppend` toma un `pg_advisory_xact_lock` de ALCANCE GLOBAL sobre el
+ledger (`services/api/src/ledger/event-store.ts`, comentario «(1) Cerrojo de escritura del ledger.
+Orden total») — cada escritura, sea del agregado que sea, serializa contra todas las demás.
+Extrapolando LINEALMENTE este único punto a 100 000 eventos: **≈ 7,8 s**, dentro del rango de hace dos
+días (4,8-7,0 s) y muy por debajo del presupuesto de 60 s — pero sigue siendo una extrapolación desde
+5 000, no una medición a 100 000; correrlo a esa escala de verdad son ≈ 200 s sólo de escritura al
+ritmo medido (§11.4), y no entró en el tiempo de esta remedición tampoco.
 
-**Pico de cierre y escrutinio** — ver §11.2 para los números completos; es la corrida más importante
-de esta sesión y merece su propia sección, no un renglón de tabla.
+**Pico de cierre y escrutinio** — ver §11.2 para los números completos, incluida la remedición del
+2026-08-25; es la corrida más importante de esta sesión y merece su propia sección, no un renglón de
+tabla.
 
-### 11.4 Lo que quedó sin medir esta sesión
+### 11.4 Lo que quedó sin medir
+
+Sigue exactamente igual en la remedición del 2026-08-25 que el 2026-08-24 — nada de esto se acortó ni
+se cerró en el intervalo, y se revisó punto por punto que la razón siga vigente antes de dejarlo
+igual (no es que no se haya vuelto a mirar):
 
 - **`tally` con grafo denso de delegación (`maxDepth = 4`)**: el motor lo soporta
   (`packages/domain/src/delegation.ts`, probado en `packages/domain/test/delegation.test.ts`) pero
@@ -842,8 +932,9 @@ requisito de accesibilidad cognitiva y se verifica leyéndolo.
 
 ## 13. Pipeline escalonado
 
-**Verificado el 2026-08-23 leyendo `.github/workflows/` entero**, no reconstruido de memoria. Tres
-tramos, cada uno más caro y más completo que el anterior:
+**Reverificado el 2026-08-25 leyendo `.github/workflows/` entero** (no reconstruido de memoria) y
+contrastado contra la API real de GitHub (`gh api repos/.../actions/...`), no sólo contra el YAML.
+Tres tramos, cada uno más caro y más completo que el anterior:
 
 ### En cada propuesta de cambio (`pull_request` → `ci.yml`)
 
@@ -868,15 +959,56 @@ que llama al flujo de trabajo reutilizable `e2e-matriz-completa.yml`: los cinco 
 07:00 UTC (02:00 en Bogotá), independiente de que haya habido push: la MISMA matriz completa que
 `e2e-main`, llamando al mismo `e2e-matriz-completa.yml` — no una copia que pudiera divergir. Es la
 red de seguridad contra la deriva del entorno (una imagen `ubuntu-latest` nueva, una versión de
-navegador distinta) que ningún push dispararía por sí sola. Por separado, `mutacion.yml` corre a las
-06:30 UTC la mutación de `crypto` + `tally` + reglas (§10) — **no engancha a los PR todavía**, y su
-propia cabecera explica por qué: con la puntuación de `domain` (resto) y `services/api` todavía por
-debajo del 85 %, un guardián en el PR bloquearía cambios sin relación con el motivo del rojo.
+navegador distinta) que ningún push dispararía por sí sola. Junto a ella corre `carga-nocturna`
+(mismo `nocturno.yml`, job aparte sin `needs:` para no bloquear ni demorar la matriz): los cuatro
+guiones de `tests/carga/node/*.run.mjs` vía `pnpm run carga` — el tercer pilar que el pliego pide
+para la noche («regresión completa, mutación, carga») y que hasta el 2026-08-25 no tenía disparador
+en ningún flujo de trabajo (§11.1 ya documentaba los guiones; sólo faltaba engancharlos). Sigue sin
+existir un guion `k6` real porque el binario no está instalado en este entorno y la instrucción es no
+instalarlo — los tres guiones de `tests/carga/k6/*.js` quedan escritos para el día que lo esté.
+Por separado, `mutacion.yml` corre a las 06:30 UTC la mutación de `crypto` + `tally` + reglas (§10) —
+**no engancha a los PR todavía**, y su propia cabecera explica por qué: con la puntuación de `domain`
+(resto) y `services/api` todavía por debajo del 85 %, un guardián en el PR bloquearía cambios sin
+relación con el motivo del rojo.
+
+### ⚠ HALLAZGO — los 4 flujos de trabajo están bien escritos y NUNCA han corrido con éxito
+
+Verificado el 2026-08-25 contra la API real, no contra suposiciones: `gh api
+repos/stevenvo780/koinonia/actions/workflows` lista los 4 flujos (`ci.yml`, `e2e-matriz-completa.yml`,
+`mutacion.yml`, `nocturno.yml`) como `state: active`, y su YAML analiza limpio (`yaml.safe_load` sobre
+los cuatro ficheros, sin excepción). Pero **cada uno de los cuatro tiene `total_count: 0` corridas
+propias** (`.../actions/workflows/{id}/runs`), y `gh run list` —que sí trae filas— muestra que
+**absolutamente todas** las corridas desde que el repositorio tiene flujos de trabajo (`push` a
+`main` y los `schedule` de `mutacion.yml`/`nocturno.yml` por igual, del 22 al 25 de agosto) terminan
+en `conclusion: startup_failure` con **0 jobs creados** y duración `0s`.
+
+La causa no es el contenido de los YAML de hoy: TODAS esas corridas están asociadas a un
+**`workflow_id` fantasma** (`340226574`) que `gh api .../actions/workflows/340226574` describe como
+`"name": "", "path": "BuildFailed", "state": "deleted"` — creado el 2026-08-22 a las 15:34:09,
+**4 segundos después** de que se registrara el `ci.yml` real (`id 340226555`, 15:34:05). Es decir: en
+algún momento de ese primer registro, GitHub creó un flujo de trabajo fantasma («no pude construir un
+grafo de jobs a partir de esto») y desde entonces **toda corrida posterior, para los 4 flujos y para
+`push` y `schedule` por igual, se sigue asociando a ese fantasma en vez de al flujo real** —incluidas
+las corridas de `e2e-matriz-completa.yml` y `nocturno.yml`, creados dos días después, el 24 de
+agosto, cuando el `ci.yml` de esa fecha ya era el de hoy. `gh run view <id>` lo resume como «This run
+likely failed because of a workflow file issue», que es el mensaje genérico de la CLI para
+`startup_failure` y no una lectura del contenido — el contenido de hoy sí parsea.
+
+Esto es corrupción del **registro de GitHub Actions para este repositorio**, no un defecto de este
+YAML: no hay manera de arreglarlo editando ficheros de `.github/workflows/` (ya se intentó, dos veces,
+con `e2e-matriz-completa.yml` y `nocturno.yml` creados de cero el 24 de agosto, y el fantasma los
+absorbió igual). Las dos vías de remediación conocidas —deshabilitar y volver a habilitar cada flujo
+desde `Settings → Actions`, o retirar `.github/workflows/` por completo en un commit y reintroducirlo
+en otro— caen fuera del alcance de escritura de este encargo (el primero es un cambio de
+configuración de la cuenta de GitHub, no un fichero del repositorio; el segundo exige un commit, que
+este encargo tiene prohibido hacer) y de la instrucción explícita de no ejecutar Actions desde aquí.
+Queda para quien tenga permiso de administrar el repositorio en GitHub: **sin esa reparación, el
+pipeline de abajo es correcto sobre el papel y no ha protegido nunca un solo push real.**
 
 ### Lo que este documento describía en versiones anteriores y NO está implementado
 
-Cuatro ideas de diseño que valen la pena pero que ningún fichero de `.github/workflows/` ejecuta hoy
-— dejarlas escritas en presente, como si corrieran, es precisamente el problema que este documento ya
+Tres ideas de diseño que valen la pena pero que ningún fichero de `.github/workflows/` ejecuta hoy —
+dejarlas escritas en presente, como si corrieran, es precisamente el problema que este documento ya
 tuvo una vez (cita de fichero inexistente) en otra forma: afirmar un mecanismo que no existe.
 
 - **Selección de suites por el grafo de dependencias del *workspace*** (`pnpm --filter
@@ -890,11 +1022,13 @@ tuvo una vez (cita de fichero inexistente) en otra forma: afirmar un mecanismo q
 - **Un *hook* de pre-commit local.** No hay `.husky/`, ni `simple-git-hooks`, ni ningún script
   `prepare` en `package.json` que instale uno. Lo único que corre antes del PR es lo que cada quien
   ejecute a mano.
-- **Despliegue a *staging*, k6 nocturno y orden aleatorio de E2E de noche.** Ninguno de los tres
-  tiene un paso en ningún flujo de trabajo; no hay proyecto de *staging* configurado, ni script `k6`
-  en `package.json`, ni flag `--shuffle` en `nocturno.yml`.
 
-Quien retome cualquiera de estos cuatro puntos: conviértalo primero en un paso real de
+El despliegue a *staging* y el orden aleatorio de E2E de noche (`--shuffle`) tampoco existen — ningún
+paso los ejecuta, ni hay proyecto de *staging* configurado. La carga nocturna con k6 sigue sin el
+binario real (arriba), pero **el equivalente en Node ya corre cada noche** desde el 2026-08-25
+(`carga-nocturna` en `nocturno.yml`), así que ese punto deja de estar en esta lista.
+
+Quien retome cualquiera de los puntos de arriba: conviértalo primero en un paso real de
 `.github/workflows/` y **después** vuelva este apartado a describirlo en presente. Mientras tanto,
 queda aquí como lo que es — trabajo pendiente, no comportamiento vigente.
 
