@@ -23,7 +23,8 @@
     "dev": "node scripts/dev.mjs",
     "e2e": "tsc --build packages/contracts services/api && playwright test",
     "e2e:matriz": "tsc --build packages/contracts services/api && KOINONIA_MATRIZ=completa playwright test",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "carga": "tsc --build packages/contracts services/api && node tests/carga/node/01-tiempos-api-navegacion-consultas.run.mjs && node tests/carga/node/02-pico-cierre-y-escrutinio.run.mjs && node tests/carga/node/03-tally-y-replay-dominio.run.mjs && node tests/carga/node/04-ledger-a-escala.run.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

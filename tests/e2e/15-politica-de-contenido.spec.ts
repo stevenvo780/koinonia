@@ -79,18 +79,37 @@ test.describe('la política de contenido', () => {
   });
 
   test('el número de la cabecera es el que llevan los guiones de cada pantalla', async ({
-    page,
+    request,
   }) => {
     const sinSellar: string[] = [];
     for (const ruta of MUESTRA) {
-      const respuesta = await page.goto(ruta);
-      const politica = respuesta?.headers()['content-security-policy'] ?? '';
+      /*
+       * Se pide por HTTP directo y no navegando con `page`, por dos motivos distintos y los dos
+       * medidos:
+       *
+       *  · **`page.content()` no sirve.** Los navegadores esconden a propósito el valor del número
+       *    una vez usado —si se pudiera leer del árbol, un selector de CSS lo filtraría y la
+       *    protección no valdría nada—, así que desde el árbol siempre se ve vacío.
+       *  · **`respuesta.text()` de una navegación tampoco.** En Chromium funciona; en Firefox
+       *    revienta con `NS_ERROR_INVALID_CONTENT_ENCODING` al leer el cuerpo comprimido de un
+       *    documento. Se descubrió en la matriz completa, después de haber dado esto por bueno
+       *    mirando sólo Chromium.
+       *
+       * Acá no hace falta navegador: lo que se comprueba es qué manda el servidor, y la cabecera y
+       * el cuerpo salen de la MISMA respuesta, que es justo lo que la comparación necesita.
+       *
+       * `accept-encoding: identity` de más: el cambio de arriba (navegación → `request.get`) redujo
+       * el fallo pero no lo cerró — comprobado el 2026-08-25, la misma excepción reaparecía **con
+       * `request.get` también**, en la misma ruta de Firefox al leer un cuerpo `gzip` +
+       * `Transfer-Encoding: chunked` (confirmado con `curl` que la respuesta del servidor es
+       * perfectamente válida: el defecto es de la descompresión de Firefox, no del servidor). Pedir
+       * el cuerpo sin comprimir no cambia qué se compara —cabecera y cuerpo siguen viniendo de la
+       * MISMA respuesta—, sólo evita la ruta de código de Firefox que revienta.
+       */
+      const respuesta = await request.get(ruta, { headers: { 'accept-encoding': 'identity' } });
+      const politica = respuesta.headers()['content-security-policy'] ?? '';
       const deLaCabecera = /'nonce-([A-Za-z0-9+/=]+)'/u.exec(politica)?.[1];
-      // El HTML **tal como llegó**, no `page.content()`. Los navegadores esconden a propósito el
-      // valor del número una vez usado —si se pudiera leer del árbol, un selector de CSS lo
-      // filtraría y la protección no valdría nada—, así que desde el árbol siempre se ve vacío y la
-      // comprobación diría que falla incluso cuando todo está bien.
-      const servido = respuesta === null ? '' : await respuesta.text();
+      const servido = await respuesta.text();
       const delCuerpo = new Set([...servido.matchAll(/nonce="([^"]+)"/gu)].map((m) => m[1]));
       // Un solo número, y el mismo que anunció la cabecera. Si la pantalla vuelve a prehornearse
       // el conjunto queda vacío; si algo sellara con otro número, tendría más de uno.

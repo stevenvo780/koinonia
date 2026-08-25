@@ -45,10 +45,24 @@ const ATRIBUTOS_VISIBLES = new Set([
   'placeholder',
 ]);
 
+/**
+ * Ficheros que nunca escriben una pantalla, aunque vivan bajo `apps/web` y terminen en `.ts`.
+ *
+ * `middleware.ts` arma la cabecera HTTP `Content-Security-Policy` (`script-src 'self'
+ * 'nonce-${nonce}' …`) — la palabra «nonce» ahí es sintaxis obligatoria de la especificación CSP3,
+ * nunca se renderiza en el DOM ni la lee una persona, y sin ella la cabecera sería inválida. Colarla
+ * en el barrido de jerga de pantalla confundiría infraestructura HTTP con prosa de interfaz —
+ * exactamente la distinción que la cabecera del fichero dice defender («el texto que la interfaz
+ * puede llegar a escribir»—. Comprobado 2026-08-25: sin esta exclusión, el analizador marca
+ * `middleware.ts:43` con [nonce] y el barrido entero falla por una cabecera que ningún usuario ve.
+ */
+const NUNCA_PANTALLA = new Set(['middleware.ts']);
+
 function ficherosDe(raiz: string): string[] {
   const salida: string[] = [];
   for (const entrada of readdirSync(raiz, { withFileTypes: true })) {
     if (entrada.name === 'node_modules' || entrada.name === '.next') continue;
+    if (NUNCA_PANTALLA.has(entrada.name)) continue;
     const ruta = join(raiz, entrada.name);
     if (entrada.isDirectory()) salida.push(...ficherosDe(ruta));
     else if (ruta.endsWith('.tsx') || ruta.endsWith('.ts')) salida.push(ruta);

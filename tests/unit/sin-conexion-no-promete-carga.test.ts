@@ -44,6 +44,10 @@ function funcionesDelServiceWorker(): {
   readonly sinPromesaDeCarga: (html: string) => string;
 } {
   const fuente = readFileSync(join(WEB, 'public', 'sw.js'), 'utf8');
+  // No es eval sobre texto dinámico ni dependiente de entrada externa: es la única forma de
+  // ejecutar un guion de navegador sin exportaciones (sw.js) dentro de un módulo de prueba, con
+  // una fuente fija leída del propio repositorio en tiempo de prueba.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fabricar = new Function('self', `${fuente}\nreturn { sinPromesaDeCarga };`) as (
     self: unknown,
   ) => { readonly sinPromesaDeCarga: (html: string) => string };

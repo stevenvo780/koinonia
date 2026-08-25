@@ -1,15 +1,32 @@
 name: Regresión nocturna
 
 # Tercer escalón del pipeline (`ci.yml` documenta los otros dos: PR → Chromium; `main` → matriz
-# completa). Ésta es la MISMA matriz completa de `e2e-main` —llama al mismo workflow reutilizable,
-# `e2e-matriz-completa.yml`, para no mantener dos copias que divergirían—, pero por horario y no
-# atada a que alguien empuje a `main`. Sirve de red de seguridad independiente del ritmo de
-# integración: agarra la deriva del entorno (imagen de `ubuntu-latest`, versión de los navegadores
-# que instala `playwright install --with-deps`) aunque no haya habido ningún push ese día.
+# completa). El job `e2e-nocturno` corre la MISMA matriz completa de `e2e-main` —llama al mismo
+# workflow reutilizable, `e2e-matriz-completa.yml`, para no mantener dos copias que divergirían—,
+# pero por horario y no atada a que alguien empuje a `main`. Sirve de red de seguridad independiente
+# del ritmo de integración: agarra la deriva del entorno (imagen de `ubuntu-latest`, versión de los
+# navegadores que instala `playwright install --with-deps`) aunque no haya habido ningún push ese día.
 #
 # ⚠ Igual que en `e2e-matriz-completa.yml`: nada de `continue-on-error`. Un rojo nocturno es la señal
 # de que algo cambió por debajo sin que nadie tocara el código, y el sitio para enterarse es la
 # mañana siguiente, no el próximo push a `main` que dependa de la casualidad de si alguien lo nota.
+#
+# El job `carga-nocturna` es el tercer pilar que el pliego pide para la noche —junto con la
+# regresión de arriba y la mutación de `mutacion.yml`—: `docs/TESTING.md` §11 documenta que el
+# pliego pide carga con **k6**, pero k6 no está instalado en ningún runner de este repositorio ni
+# hay instrucción de instalarlo, así que lo que corre aquí son los CUATRO guiones equivalentes de
+# `tests/carga/node/*.run.mjs` (Node puro + `fetch()` + `perf_hooks`, sin más dependencia que Docker
+# para levantar su propio PostgreSQL efímero vía Testcontainers y su propia API real por socket TCP
+# — nadie tiene que tener nada corriendo de antemano). Los tres guiones de `tests/carga/k6/*.js`
+# quedan escritos para el día que el binario esté disponible (§11.1), no enganchados aquí.
+#
+# Es un job APARTE de `e2e-nocturno`, no encadenado con `needs:`: corren en runners distintos y no
+# comparten nada, así que una regresión de carga no debe bloquear ni demorar la matriz de
+# navegadores, ni viceversa. Tampoco lleva `continue-on-error`: los guiones de carga MIDEN y no
+# afirman sobre el defecto de concurrencia ya documentado (§11.2, ajeno a este encargo) — devuelven
+# `exit 0` aunque lo reporten —, así que un rojo aquí es siempre una señal real (un guion que no
+# terminó, Docker no disponible, un cambio de contrato que rompió el guion) y no el hallazgo ya
+# conocido.
 
 on:
   schedule:
@@ -26,3 +43,39 @@ jobs:
   e2e-nocturno:
     name: e2e · matriz completa (nocturno)
     uses: ./.github/workflows/e2e-matriz-completa.yml
+
+  carga-nocturna:
+    name: carga · tests/carga/node (nocturno)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Comprobar que Docker está disponible
+        run: docker info
+
+      # `pnpm run carga` (package.json) compila `packages/contracts` + `services/api` —que arrastra
+      # a `packages/domain` por referencia de proyecto, igual que hace `e2e:matriz`— y corre los
+      # cuatro guiones en orden: tiempos de API y navegación, el pico de cierre de una votación (el
+      # escenario que más importa, docs/TESTING.md §11.2), tally/replay puros de dominio y el
+      # ledger a escala. Cada uno imprime al final un bloque JSON con los números de esa corrida —
+      # los guiones no escriben fichero propio (`docs/TESTING.md` §11.1), así que `tee` es lo que
+      # deja ese JSON como artefacto en vez de perderse en el log de la corrida.
+      - run: mkdir -p carga-nocturna-salida
+      - run: pnpm run carga | tee carga-nocturna-salida/salida.txt
+        env:
+          KOINONIA_REQUIRE_DOCKER: '1'
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: carga-nocturna-salida
+          path: carga-nocturna-salida/
+          retention-days: 30
