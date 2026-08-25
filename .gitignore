@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Arnés de mutantes equivalentes (tarea 23): trabajo local, no forma parte del árbol.
 .harness/
+
+# Ajustes personales de Claude Code: rutas y permisos de esta máquina, no del proyecto.
+.claude/settings.local.json
