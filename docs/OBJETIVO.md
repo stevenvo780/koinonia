@@ -33,6 +33,14 @@ hicieron.
 \* *el total «de entonces» ya no cuadraba con 183 en el propio documento original (sobraba 1); se
 deja la cifra tal como estaba, con esta aclaración, en vez de corregirla con retroactividad.*
 
+**Movimiento adicional el mismo 2026-08-25, en la sesión de integración REMATE que corre después de
+esta reauditoría** (ver «Sesión de integración — 2026-08-25 (REMATE, verificación e integración)»
+más abajo): 3 filas más pasan a `PARCIAL` con evidencia de código nueva (rutas HTTP y dominio que no
+existían cuando los seis auditores pasaron) — Objeciones (`NO ALCANZABLE`→`PARCIAL`), notificación de
+dependencia destrabada y Escalón 7 (las dos `NO CUMPLE`→`PARCIAL`). Sobre el recuento de arriba, eso
+deja `NO ALCANZABLE` en **0**, `NO CUMPLE` en **14** y `PARCIAL` en **49** — no se tocó el resto de la
+tabla, así que estos tres son los únicos veredictos que cambiaron desde la columna «2026-08-25 (hoy)».
+
 **Los 27 `NO VERIFICADO` ya no existen.** Verificar reveló pendientes reales que estaban escondidos
 bajo esa etiqueta cómoda — y eso es información buena aunque incomode:
 
@@ -306,6 +314,121 @@ No se tocó código en ninguno de los seis reportes: sólo lectura y comandos de
 
 ---
 
+## Sesión de integración — 2026-08-25 (REMATE, verificación e integración)
+
+Después de diez frentes trabajando en paralelo sobre este árbol (objeciones, seguimiento de
+iniciativas, kanban/recursos, CI/CD, S3/jobs, huecos de deliberación, huecos de ejecución, pantalla
+de constitución, ADR de voto secreto, navegación/a11y) más un agente integrador que cableó las rutas
+nuevas en `app.ts` y el reexport en `packages/contracts/src/index.ts`, esta pasada corrió los ocho
+pasos de verificación del encargo sobre el árbol completo, sin tocar `services/api/src/http/app.ts`,
+`packages/contracts/src/index.ts` ni `services/api/src/index.ts`.
+
+**1. `pnpm exec prettier --write .`** — sin cambios de fondo; el árbol ya estaba formateado.
+
+**2. `pnpm run typecheck`** — **0 errores.** El `TS6133` que la sesión de `ejecucion-huecos` había
+señalado en `packages/domain/test/objecion-desestimada.test.ts` ya no aparece: alguien lo corrigió
+antes de que esta pasada llegara al árbol.
+
+**3. `pnpm run lint`** — **0 errores**, pero no de entrada: se encontraron y corrigieron dos.
+`@typescript-eslint/no-implied-eval` en `tests/unit/sin-conexion-no-promete-carga.test.ts` (el `new
+Function` que carga el service worker sin exportaciones es deliberado y está documentado en el
+propio fichero desde antes; se agregó un `eslint-disable-next-line` puntual con la justificación al
+lado, en vez de bajar la regla). El otro «error» (`csp6.mjs` con `document`/`setTimeout` sin definir)
+resultó ser un fichero transitorio de otra sesión concurrente que ya no existía en la segunda corrida
+— confirmado, no descartado a ciegas.
+
+**4. `KOINONIA_REQUIRE_DOCKER=1 pnpm exec vitest run --reporter=dot`** — **192 ficheros, 2 944
+pruebas, todas verdes.** La primera corrida (hookTimeout por defecto, 10 s) tuvo 11 ficheros con
+`afterAll` colgado parando contenedores Docker — diagnosticado como saturación real del host
+compartido (44 contenedores Docker activos, 101/125 GiB de RAM en uso por los diez frentes a la vez
+en ese instante), no como fallo de producto ni de prueba: repetida con `--hookTimeout=60000`, los 192
+ficheros y las 2 944 pruebas pasan limpio, sin que cambiara una sola línea de código. Cero pruebas
+individuales fallaron en ningún intento.
+
+**5. `pnpm run build` y `pnpm run build:web`** — **ambos en verde**; Next.js 15.5.23, 34 rutas
+generadas (25 estáticas + 9 dinámicas). `build:web` necesitó una segunda corrida limpia una vez —
+`.next/server/next-font-manifest.json` faltaba tras una corrida de Playwright de otra sesión
+concurrente que dejó el directorio de construcción a medio escribir; reconstruir sin borrar nada lo
+resolvió, y `build:web` volvió a salir verde.
+
+**6. `KOINONIA_MATRIZ=completa pnpm exec playwright test --project=chromium --project=firefox`** —
+ver el resultado final más abajo. El camino hasta ahí encontró y cerró **tres defectos reales**,
+ninguno anticipado por ningún reporte anterior:
+
+- **`tests/e2e/09-glosario.spec.ts` fallaba en los dos navegadores** con un hallazgo nuevo y legítimo:
+  `apps/web/middleware.ts:43` arma la cabecera `Content-Security-Policy` con
+  `` `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'` ``, y la palabra «nonce» —sintaxis
+  obligatoria de la especificación CSP3, nunca renderizada en el DOM, nunca leída por una persona—
+  disparaba `FORBIDDEN_UI_TERMS`. El analizador de `09-glosario.spec.ts` barre TODO `.ts`/`.tsx` bajo
+  `apps/web`, sin distinguir infraestructura HTTP de texto de pantalla; `middleware.ts` es lo primero
+  de esa clase que existe en el árbol. **No se bajó la aserción**: se agregó una exclusión puntual y
+  documentada (`NUNCA_PANTALLA`, un fichero nombrado, con la razón escrita al lado) al barrido de
+  ficheros, verificada por falsación en las dos direcciones (con la exclusión, cero hallazgos; sin
+  ella, reaparece el mismo hallazgo de `middleware.ts:43`).
+- **`tests/e2e/15-politica-de-contenido.spec.ts:81` fallaba sólo en Firefox**, reproducido dos veces
+  seguidas de forma idéntica: `NS_ERROR_INVALID_CONTENT_ENCODING` al leer `respuesta.text()`. El
+  propio fichero ya documentaba haber sufrido esta clase de fallo antes —con `page.goto()`— y haberlo
+  «resuelto» cambiando a `request.get()`; resultó que el cambio no cerró el defecto, sólo lo movió: el
+  mismo error reaparecía leyendo un cuerpo `gzip`+`chunked` también por `request.get()`. Confirmado con
+  `curl` que la respuesta del servidor es perfectamente válida (cabecera y cuerpo correctos, nonce
+  presente) — el defecto es de la descompresión de Firefox, no del servidor. Arreglado pidiendo
+  `accept-encoding: identity` (no cambia qué se compara, sólo evita la ruta de Firefox que revienta);
+  verificado en aislamiento, verde.
+- **`tests/e2e/07-seguimiento-adr45.spec.ts:490` falló una vez en Firefox** (`toBeFocused` con
+  timeout) dentro de la corrida completa, y **pasó limpio en aislamiento** con el host menos cargado
+  (682 ms, sin tocar una línea) — mismo patrón de flake por saturación del host ya documentado en las
+  dos pasadas REMATE anteriores para este mismo fichero, reconfirmado, no sólo supuesto.
+
+La corrida en sí compitió repetidamente por los puertos fijos `3100`/`3101` con otra sesión
+concurrente trabajando la misma política de contenido — se resolvió con reintentos que esperan a que
+el puerto quede libre, sin tocar la configuración de puertos (fuera del alcance de este encargo).
+
+**7. Glosario ADR-0041** — el propio hallazgo de arriba (`middleware.ts`) fue la validación por
+falsación que pedía el encargo: el analizador replicado a mano encontró el mismo `[nonce]` en
+`middleware.ts:43` que encontró la prueba real, confirmando que detecta jerga de verdad y no sólo
+cuando se lo dice. Con la exclusión aplicada, tanto el analizador replicado (86→85 ficheros) como la
+prueba real dan **cero apariciones de jerga prohibida** en `apps/web`. `FORBIDDEN_UI_TERMS` se
+recontó línea por línea: **26**, no 31 (precedente ya citado arriba).
+
+**8. `docs/OBJETIVO.md`** — esta sección, más las filas actualizadas con evidencia nueva: Objeciones
+(`NO ALCANZABLE`→`PARCIAL`), notificación de dependencia destrabada y Escalón 7 (las dos
+`NO CUMPLE`→`PARCIAL`) en `ejecucion`/`flujo-principal`; evidencia renovada (sin cambio de veredicto)
+en Seguimiento-informe y en la pantalla de constitución; CI/CD con la causa raíz del `workflow_id`
+fantasma y el job `carga-nocturna` ya integrado (`seguridad-y-tecnologia`); y una colisión de
+numeración de ADR encontrada y cerrada (ver abajo). Ninguna fila llegó a `CUMPLE` en esta pasada: los
+tres movimientos son huecos de integración que se acortaron (dominio + ruta ya reales), no
+funcionalidad de punta a punta nueva.
+
+**Hallazgo fuera de los ocho pasos, encontrado al escribir este documento: colisión de numeración de
+ADR.** `docs/adr/0055-voto-secreto-verificable.md` (nuevo, sin comitear, de la sesión
+`voto-secreto-adr`) chocaba con `ADR-0055` ya citado —sin fichero— en código y pruebas **ya
+committeados antes de esta ronda**: `services/api/src/http/rate-limit.ts` (comentarios en las líneas
+152, 171, 274) y `tests/integration/http-cupo-idempotencia-adr55.test.ts`, ambos sobre la idempotencia
+del consumo de cupo, no sobre voto secreto. Se renumeró el fichero nuevo a **ADR-0056** —seguro porque
+nunca había sido comiteado, nunca tuvo estado de decisión publicada— y se corrigieron sus referencias
+cruzadas en `docs/THREAT_MODEL.md` (líneas 397, 405, 681, 682) y se agregó su fila en
+`docs/adr/README.md`, con una fila explícita documentando que ADR-0055 (idempotencia del cupo) sigue
+sin fichero. `README.md` y `docs/HANDOFF.md`, que ya citaban `ADR-0055` correctamente para la
+idempotencia del cupo, no se tocaron.
+
+**Resultado final de playwright (paso 6), corrida limpia y completa tras los tres arreglos:**
+**`236 passed (3.0m)`, exit 0, cero fallos.** Subió de la base de 230 por los 6 casos nuevos de
+`15-politica-de-contenido.spec.ts` (3 casos × 2 navegadores) que trajo la CSP obligatoria. El flake de
+`07-seguimiento-adr45.spec.ts:490` que había aparecido una vez en Firefox durante un intento anterior
+—con el host más cargado por la contención de puertos con otra sesión— no se reprodujo en esta
+corrida final, consistente con las dos pasadas REMATE previas que documentaron el mismo patrón para
+el mismo fichero.
+
+**Nota de transparencia sobre los diez frentes concurrentes**: dos commits de otras sesiones
+(`dc52d23`, `f1f0fc3`) aterrizaron en `main` mientras esta pasada corría, y uno de ellos
+(`f1f0fc3`, sobre `docs/THREAT_MODEL.md`) capturó de paso la edición de esta misma pasada —el
+renumerado de `ADR-0055`→`0056` en ese fichero— porque quien comiteó hizo `git add` amplio sobre un
+árbol compartido. El contenido quedó correcto (verificado línea por línea arriba), pero la atribución
+del commit no lo dice; se deja anotado acá porque el propio encargo prohíbe comitear desde esta
+pasada, y omitir esto sería ocultar cómo llegó igual. No se hizo ningún commit desde esta sesión.
+
+---
+
 ## Los 63 pendientes, por área
 
 **Nota 2026-08-25**: de las 91 filas evaluadas, **28 llegaron a `CUMPLE`** (23 esta ronda, 5 que ya
@@ -329,7 +452,7 @@ Sin cambios de veredicto esta ronda.
 
 | Estado | Requisito |
 | --- | --- |
-| `PARCIAL` | Existe pantalla que muestre constitución, núcleo y vías de reforma. `apps/web/app/normas/page.tsx` consume `GET /normas` y renderiza núcleo intangible y vías de reforma. **Falta**: un acto fundacional real en producción (`POST /normas/fundacion`, ejecutado por una persona con autoridad) para que la pantalla muestre una constitución vigente en vez del estado pre-fundación. |
+| `PARCIAL` | Existe pantalla que muestre constitución, núcleo y vías de reforma. `apps/web/app/normas/page.tsx` consume `GET /normas` y renderiza núcleo intangible y vías de reforma. **Nuevo esta ronda**: `apps/web/app/normas/fundar/page.tsx` — un formulario gateado a facilitación/garantías que ejecuta el acto fundacional (o la refundación tras caducidad) contra `POST /normas/fundacion`, con el núcleo prellenado desde el propio contrato — ya existe la pantalla que faltaba. **Falta**: que una persona con autoridad la ejecute de verdad en producción; hoy sigue en el estado pre-fundación porque nadie la usó todavía, no porque falte la pantalla. |
 | `PARCIAL` | Las garantías superiores (deliberación, quórum, supermayoría, ratificación, M-de-N) son CONFIGURABLES. `ReformRequirements` (`packages/domain/src/constitution/types.ts:116-138`) modela los 5 parámetros como datos versionados, probado en dominio y API. **Falta**: una pantalla en `apps/web` que permita proponer una reforma tocando `requisitos` — hoy sólo es alcanzable desde dominio y API, no desde la interfaz — y, antes que eso, el acto fundacional de la fila de arriba. |
 
 ### deliberacion — 1 pendiente
@@ -354,8 +477,8 @@ en `packages/domain/src/execution/escalones.ts`, ruta `GET /iniciativas/:id/esca
 
 | Estado | Requisito |
 | --- | --- |
-| `NO CUMPLE` | Notificación a quien tiene tarea B cuando tarea A se destraba (dependencia resuelta). `grep -rln "DependencyResolved\|dependencia.*resuelta\|notifica.*dependenc"` en dominio, contratos y API: sin resultados. **Falta**: el evento de dominio (p. ej. `TaskUnblockedByDependency`) que dispare cuando la tarea A se complete y exista una tarea B con `dependsOn=A`, más el canal que se lo entregue a quien tiene B — hoy no existe ni el disparador ni el transporte. |
-| `NO CUMPLE` | Escalón 7 (encargo retirado): excepcional, nunca automático, requiere consentimiento del círculo y apelable. `puedeSuspenderDominio()` en `escalones.ts` es una función pura que sólo devuelve `true`/`false` — no emite ningún evento. **Falta**: el evento de dominio real en `workspace/initiative.ts` que retire el encargo (con el consentimiento del círculo como precondición dura) y la ruta/pantalla que lo dispare y lo haga apelable; hoy sólo existe el predicado de elegibilidad, aislado. |
+| `PARCIAL` | Notificación a quien tiene tarea B cuando tarea A se destraba (dependencia resuelta). **Sube de `NO CUMPLE` esta ronda**: `destrabesDeConjunto`/`destrabeDeTarea` (`packages/domain/src/execution/destrabe-de-dependencia.ts:73,120`) calculan el hecho puro, y `GET /iniciativas/:id/seguimiento/destrabes` (`services/api/src/http/rutas-seguimiento.ts:201`) lo expone con datos 100% reales del agregado (`InitiativeTask.dependsOn`/`completedAt`, sin ningún hueco de persistencia). **Falta**: sigue siendo una ruta de lectura (quien tiene la tarea B tiene que ir a mirar), no una notificación empujada — no hay evento `TaskUnblockedByDependency` ni canal que avise sin que alguien consulte. |
+| `PARCIAL` | Escalón 7 (encargo retirado): excepcional, nunca automático, requiere consentimiento del círculo y apelable. **Sube de `NO CUMPLE` esta ronda**: `puedeRetirarEncargo`/`registrarRetiroDeEncargo` (`packages/domain/src/execution/retiro-de-encargo.ts:96,116`) exigen las tres condiciones del pliego a la vez (techo de la escalera + consentimiento explícito del círculo + motivo real de 20-2000 caracteres, nunca automático), y `POST /iniciativas/:id/tareas/:tareaId/retiro-de-encargo` (`services/api/src/http/rutas-seguimiento.ts:244`) ya evalúa la regla contra la tarea real. **Falta**: la ruta sólo evalúa y devuelve el registro — no existe todavía el evento en `workspace/initiative.ts` que lo aplique al ledger, así que un retiro «decidido» hoy no queda escrito en ningún lado. |
 | `NO CUMPLE` | Retrospectivas: 5 preguntas contrastadas contra lo declarado al inicio, generan aprendizajes. No existe: lo más cercano es el módulo de aprendizajes de ADR-0053, con 4 categorías libres, no 5 preguntas contrastadas contra lo declarado al inicio del encargo. **Falta**: construir el formulario de 5 preguntas estructuradas que el pliego pide, distinto del formulario libre actual. |
 | `PARCIAL` | Recursos: cada iniciativa declara qué recursos necesita que hoy no tiene. Dominio PURO en `packages/domain/src/execution/recursos-y-riesgos.ts` con schema Zod espejo en `packages/contracts/src/iniciativas.ts`, probado. **Falta**: ningún evento del ledger real (`workspace/initiative.ts`) persiste esto todavía, y ni el presenter de la API ni `IniciativaDetalle` lo exponen — falta conectar el dominio puro ya probado con el agregado y con la respuesta HTTP. |
 | `PARCIAL` | Presupuesto cuando aplique (con soportes): no aparece si no aplica. Dominio PURO en `packages/domain/src/execution/presupuesto.ts` (`Presupuesto \| undefined`, nunca `null`, exige ≥1 soporte), con schema Zod espejo. **Falta**: mismo hueco que «Recursos» — no hay evento del ledger que lo escriba ni presenter que lo exponga en `IniciativaDetalle`. |
@@ -373,11 +496,11 @@ tareas con dependencias y aceptar/rechazar/reasignar con UI completa.
 
 | Estado | Requisito |
 | --- | --- |
-| `NO ALCANZABLE` | Objeciones: ronda con panel sorteado, admisión 2/3, veto bloqueante. El motor SÍ valida de verdad (`packages/domain/src/engine.ts:480-514`, caso `ObjectionDismissed`): tamaño de panel exacto, excluye a quien objeta, exige 2/3 y motivación no vacía. **Falta**: una ruta HTTP (p. ej. `POST /decisiones/:id/objeciones/:objectionId/desestimar`) que emita `ObjectionDismissed`, un algoritmo real de sorteo del círculo (hoy `panelSelection:'sortition'` es sólo una etiqueta), y la pantalla donde el panel sorteado vote y publique la motivación. |
+| `PARCIAL` | Objeciones: ronda con panel sorteado, admisión 2/3, veto bloqueante. **Sube de `NO ALCANZABLE` esta ronda**: el motor SÍ valida de verdad (`packages/domain/src/engine.ts:480-514`, caso `ObjectionDismissed`) y ahora hay ruta real — `POST /decisiones/:decisionId/objeciones/:objectionId/desestimar` (`services/api/src/http/rutas-objeciones.ts:174`, registrada en `app.ts`) — más un algoritmo real de sorteo (`sortObjectionPanel`, `packages/domain/src/sortition-panel.ts:97`), verificado con pruebas de integración HTTP reales (`tests/integration/http-objeciones.test.ts`). **Falta**: (1) la pantalla donde el panel sorteado vote y publique la motivación — hoy sólo existe la ruta, sin UI; (2) el sorteo usa `config.seedCommitment` en vez de `state.seed` porque la máquina de estados no abre `SeedRevealed` durante `Open` (documentado en la cabecera de `sortition-panel.ts`) — reproducible y verificable, pero pierde la propiedad de «faro imposible de conocer de antemano» del compromiso completo; (3) el sorteo hoy sólo excluye a quien objeta, no a «quien propuso» ni a vínculos declarados que pide ADR-0032, porque el dominio no modela esos campos. |
 | `PARCIAL` | Flujo entero de punta a punta: problema → solución en ejecución → evaluación → aprendizajes reutilizables. La UI recorre casi toda la cadena (`apps/web/app/decisiones/[id]/page.tsx` → `POST /decisiones/:id/cerrar` → cierre e iniciativa en la misma transacción). **Falta**: dos eslabones del pliego que **no existen en absoluto**, no que sean inalcanzables: (1) el informe cada N días que bloquea avance de estado (grep vacío en `execution` y `app.ts`); (2) la extracción automática de aprendizajes al cerrar una evaluación — hoy se escribe a mano en un formulario. |
 | `PARCIAL` | Alternativas: listado separado con costo y supuesto, fase en deliberación antes de propuesta. `AlternativeBody` (`packages/domain/src/deliberation/types.ts:179-186`) sólo tiene `problemId`, `sourcePositionIds`, `text` — sin campo de costo. **Falta**: agregar un campo de costo a `AlternativeBody` (dominio + contrato Zod + UI), y una regla de dominio o de servicio que impida crear una propuesta sin una deliberación en `listo_para_decidir` que la origine. |
 | `PARCIAL` | Deliberación con fases (Preguntas, Perspectivas): escritura por etapa, revelación diferida de autoría. `STAGE_TRANSITIONS`/`STAGE_RULES` regulan bien qué se escribe en cada etapa. La ocultación de autoría (`access.ts:383`) sólo aplica `deniedDuringStage: 'perspectivas'`. **Falta**: decidir si el pliego pide ocultar la autoría también en `preguntas_aclaratorias` (la etapa donde se hacen las preguntas) y no sólo en `perspectivas`; si sí, ampliar `deniedDuringStage` a ambas etapas. |
-| `PARCIAL` | Seguimiento: informe cada N días, sin él no avanza de estado, bloqueo/ayuda/reasignación. Sólo existe la escalada temporal de tareas individuales (`packages/domain/src/execution/escalones.ts`). **Falta**: el «informe cada N días» como requisito de avance de estado de la iniciativa (evento + ruta + regla de dominio que bloquee la transición si no se rindió), distinto de la escalada de tareas individuales que ya existe. |
+| `PARCIAL` | Seguimiento: informe cada N días, sin él no avanza de estado, bloqueo/ayuda/reasignación. **Evidencia actualizada esta ronda**: `packages/domain/src/execution/informe-periodico.ts` modela la regla completa (informe cada 15 días — `INTERVALO_INFORME_DIAS`, línea 49 —, `informeVencido`/`puedeAvanzarDeEstado`, líneas 107/133), y `GET /iniciativas/:id/seguimiento/informe` (`services/api/src/http/rutas-seguimiento.ts:224`) la expone. **Falta**: la ruta lee `activatedAt` real del agregado pero acepta `ultimoInformeEn` como parámetro de consulta del llamador, no un dato del ledger — no existe todavía ningún evento que persista «se rindió un informe», así que hoy nada bloquea de verdad el avance de estado por sí solo. |
 | `PARCIAL` | Aprendizajes: extraídos de evaluación, reutilizables en siguiente problema similar. La reutilización SÍ es real: `GET /aprendizajes/parecidos` usa un algoritmo léxico genuino (normaliza texto, quita tildes y palabras vacías). **Falta**: que al cerrar una evaluación el sistema proponga o derive un aprendizaje automáticamente a partir del `evaluationReport`, en vez de depender enteramente de que una persona lo redacte a mano. |
 | `PARCIAL` | 13 campos de iniciativa si decisión requiere ejecución: objetivo, responsable, evaluación, criterios, hitos, tareas, dependencias, esfuerzo, recursos, riesgos, presupuesto, equipo, plazo. Sin cambios esta ronda respecto a la fila `recursos`/`presupuesto` de `ejecucion`: 9 de 13 ya están integrados de punta a punta (varios subieron a `CUMPLE` esta ronda como filas propias), 4 siguen modelados en dominio puro sin escribir al ledger real. |
 
@@ -444,7 +567,7 @@ una sola vez — verificado en vivo con `gh api`, 0 ejecuciones en cada uno de l
 
 | Estado | Requisito |
 | --- | --- |
-| `NO CUMPLE` | TECNOLOGÍA: CI/CD (qué corre en cada push). `gh api repos/stevenvallejo780/koinonia/actions/workflows` lista 4 workflows activos (`ci.yml`, `e2e-matriz-completa.yml`, `mutacion.yml`, `nocturno.yml`) con **0 ejecuciones registradas cada uno**; las corridas que aparecen en `gh run list` son todas `startup_failure` (`BuildFailed`) de IDs de workflow huérfanos de commits anteriores. **Falta**: diagnosticar por qué GitHub rechaza el arranque de los 4 workflows vigentes (revisar el run más reciente en la UI de Actions, posible límite de minutos/gasto de la cuenta) y lograr al menos una corrida real y verde antes de afirmar que la CI corre nada en cada push — hoy literalmente no corre. |
+| `NO CUMPLE` | TECNOLOGÍA: CI/CD (qué corre en cada push). **Causa raíz identificada esta ronda** (antes sólo se sabía «0 corridas»): `gh api .../actions/...` muestra los 4 workflows en `state: active` con YAML que analiza limpio, pero el 100% de las corridas desde que existen (22–25 de agosto, push y schedule por igual) terminan en `startup_failure` con 0 jobs creados, todas asociadas a un `workflow_id` **fantasma** (340226574, path `"BuildFailed"`, `state: "deleted"`, creado 4 segundos después del `ci.yml` real) — corrupción del registro de GitHub Actions para este repositorio, no un defecto del YAML. También se cerró el hueco de contenido que sí era del repo: el pliego pide un tercer pilar nocturno de carga y no existía ningún disparador — se agregó el job `carga-nocturna` a `nocturno.yml` (los 4 guiones de `tests/carga/node`, verificados corriendo de verdad, exit 0). **Falta**: reparar el registro fantasma requiere permiso de administración del repositorio en GitHub (deshabilitar/rehabilitar los 4 flujos desde Settings→Actions, o retirar y reintroducir `.github/workflows/` en commits separados) — ninguna de las dos cabe en escritura de ficheros ni en la prohibición de no ejecutar Actions ni comitear desde un agente. |
 | `NO CUMPLE` | TECNOLOGÍA: Almacenamiento compatible S3. `services/api/src/almacen/s3.ts` sigue lanzando `AlmacenS3NoDisponibleError` a propósito; `disco.ts` es la implementación real sobre disco local. **Falta**: autorizar `@aws-sdk/client-s3` e implementar `s3.ts` de verdad — la forma ya está lista, falta la implementación (y la autorización de la dependencia nueva). |
 | `PARCIAL` | T-01 (Reescritura de historia por administrador) — checkpoint Merkle, triple anclaje 2de3, verificador público. Código y tests SÍ existen (`services/api/src/ledger/checkpoint.ts`, `packages/anchor/src/quorum.ts:47` con `MIN_INDEPENDENCE_CLASSES = 2`, `packages/verifier-cli/src/verificar.ts`). **Falta**: activar padrón de veeduría y/o testigos de correo para tener ≥2 clases de anclaje simultáneas en producción; hoy el mecanismo está probado pero no operando con quórum real. |
 | `PARCIAL` | T-04 (Sybil) — padrón congelado, hash sobre `MemberId` ordenados, prueba de inclusión Merkle. `freezeElectorate`/`computeRollHash` existen y están probados. **Falta**: conectar una prueba de inclusión Merkle real del padrón congelado — hoy sólo existe el hash global, no una prueba por miembro. |
@@ -455,7 +578,7 @@ una sola vez — verificado en vivo con `gh api`, 0 ejecuciones en cada uno de l
 | `PARCIAL` | T-20 (Correlación votante↔voto por temporización) — sin timestamps en urna, lotes k≥10 barajados, sin IP en app. Verificado: NO hay lotes barajados — `emitirPapeleta` persiste síncrono e inmediato evento a evento. **Falta**: implementar el lote de tamaño k≥10 barajado antes de persistir, y quitar/no exponer el timestamp de emisión por papeleta — hoy la mitigación real es sólo la ausencia de IP, no la anonimización temporal. |
 | `PARCIAL` | TECNOLOGÍA: Colas/Jobs (BullMQ, RabbitMQ, etc.). Sin cambios: `services/api/src/jobs/cola.ts` es una cola casera sobre PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`), no la tecnología nombrada. **Falta**: sigue sin ser BullMQ/RabbitMQ; funciona pero no es lo que pide la fila literalmente. |
 | `PARCIAL` | T-18 (Manipulación del padrón) — procedencia no verificable PRE-congelado. `grep -n "procedencia\|origen\|source\|provenance"` en `electorate.ts` no encontró ningún campo de procedencia en el padrón; el commit `c89e3b9` registra el hueco pero no lo cierra. **Falta**: añadir procedencia verificable de altas del padrón antes de congelarlo — sigue sin existir en `electorate.ts`. |
-| `PARCIAL` | ADRs: total 54, estado (Propuesto\|Aprobado\|Depreciado), bloqueadores. Confirmado por `ls docs/adr/`: **no existe `0055-*.md` ni `0056-*.md`**, mismo hueco de trazabilidad que antes (el commit más reciente, `c89e3b9`, es ADR-0054, no 0055). **Falta**: escribir el ADR-0055 que documente la decisión de idempotencia del cupo ya aplicada en código — sigue sin existir el fichero. |
+| `PARCIAL` | ADRs: total 54, estado (Propuesto\|Aprobado\|Depreciado), bloqueadores. **Esta ronda escribió ADR-0056** (voto secreto verificable, evalúa Helios/Belenios) — y encontró una colisión real al hacerlo: una sesión escribió `docs/adr/0055-voto-secreto-verificable.md` sin saber que `services/api/src/http/rate-limit.ts` y `tests/integration/http-cupo-idempotencia-adr55.test.ts` (ya committeados antes de esta ronda) ya citaban «ADR-0055» para la idempotencia del cupo. Se renumeró el fichero nuevo a 0056 (era work-in-progress sin commitear, no una decisión ya publicada) y se corrigieron sus referencias cruzadas en `docs/THREAT_MODEL.md` y `docs/adr/README.md`. **Falta**: el ADR-0055 de idempotencia del cupo — el número sigue reservado por el código, pero el fichero **todavía no existe**; ese hueco de trazabilidad sigue exactamente igual que antes. |
 
 ### testing — 10 pendientes
 
@@ -581,10 +704,12 @@ persona decida, autorice o designe algo fuera del código.
    votación, 266/300 papeletas caen con `500` y 31/300 responden `201` sin haberse guardado —falla
    de integridad electoral, no de rendimiento (`services/api/src/http/service.ts`,
    `services/api/src/decision/repository.ts`).
-2. Diagnosticar y arreglar la CI de GitHub Actions — 0 corridas exitosas jamás en los 4 workflows
-   vigentes; hoy no hay ninguna prueba automática corriendo en ningún push.
-3. Construir la ruta HTTP y el botón de UI para **desestimar** una objeción (el motor ya valida
-   panel/2-3/motivación), más un sorteo real del panel — cierra el `NO ALCANZABLE` nuevo.
+2. **Causa raíz ya identificada** (ver `seguridad-y-tecnologia` arriba): `workflow_id` fantasma
+   340226574 causando `startup_failure` en el 100% de las corridas — arreglarlo requiere permiso de
+   administración del repositorio en GitHub (fuera de escritura de ficheros), no más diagnóstico.
+3. Construir el **botón de UI** para **desestimar** una objeción — la ruta HTTP y el sorteo real del
+   panel ya existen (`POST /decisiones/:id/objeciones/:objectionId/desestimar`,
+   `sortObjectionPanel`); sólo falta la pantalla.
 4. Subir el mutation score real (77,67%) hasta el piso de ruptura configurado (85%), o hacer que el
    build efectivamente falle mientras esté por debajo — hoy no falla y debería.
 5. Cablear `window-guard.ts` (alerta de concentración temporal, piso de 72h) a una ruta HTTP real —
@@ -594,14 +719,18 @@ persona decida, autorice o designe algo fuera del código.
    (cadena de dos saltos) y recuperación (restaurar backup, verificar cadena íntegra).
 8. Agregar axe a `/concentracion`, `/aprendizajes` y `/asistente`; actualizar
    `13-navegacion.spec.ts` para incluir las dos rutas nuevas de la barra.
-9. Implementar la notificación de dependencia destrabada (`TaskUnblockedByDependency`).
-10. Implementar el evento de retiro de encargo del Escalón 7 (consentimiento del círculo como
-    precondición dura) y su ruta apelable.
+9. Convertir la lectura de dependencia destrabada (`GET .../seguimiento/destrabes`, ya real) en
+   notificación empujada — falta el evento `TaskUnblockedByDependency` y el canal, no el cálculo.
+10. Escribir en el ledger el evento de retiro de encargo del Escalón 7 — la regla de las tres
+    condiciones y la ruta que la evalúa ya existen (`retiro-de-encargo.ts`,
+    `POST .../retiro-de-encargo`); falta que la ruta aplique el resultado a
+    `workspace/initiative.ts`, y hacerlo apelable.
 11. Conectar recursos y presupuesto (dominio ya probado con 68 pruebas) al ledger real
     (`workspace/initiative.ts`) y exponerlos en el presenter/DTO de la API.
 12. Endpoint para que un miembro del círculo se registre como voluntario en una tarea en-apoyo.
-13. Implementar el informe periódico que bloquea avance de estado de la iniciativa (distinto de la
-    escalada de tareas individuales, que ya existe).
+13. Hacer que el informe periódico bloquee de verdad el avance de estado — la regla y la ruta de
+    lectura ya existen (`informe-periodico.ts`, `GET .../seguimiento/informe`); falta el evento del
+    ledger que registre «se rindió un informe» en vez de recibirlo como parámetro de consulta.
 14. Implementar la extracción automática (o propuesta) de un aprendizaje al cerrar una evaluación.
 15. Agregar campo de costo a `AlternativeBody` y una fase de alternativas separada antes de la
     propuesta.
@@ -609,14 +738,17 @@ persona decida, autorice o designe algo fuera del código.
     categorías libres).
 17. Implementar lógica de bloqueo real cuando vence la fecha de revisión (`proximaRevisionEn`) — hoy
     sólo existe el campo, no la consecuencia.
-18. Escribir el ADR-0055 que documente la decisión de idempotencia del cupo ya aplicada en código.
+18. Escribir el ADR-0055 que documente la decisión de idempotencia del cupo ya aplicada en código —
+    el número quedó reservado (código y pruebas ya lo citan); el fichero sigue sin existir.
 19. Prueba de inclusión Merkle por miembro del padrón (T-04) — hoy sólo hay hash global.
 20. Programar VACUUM/VACUUM FULL tras el borrado físico de PII (T-11).
 21. Prueba de regresión que recorra el esquema del ledger buscando patrones de PII y falle si
     aparece alguno.
 22. Cablear `tasaDeAceptacionColectiva` a un endpoint real y a una pantalla.
 23. Construir la pantalla en `apps/web` para proponer una reforma constitucional tocando
-    `requisitos` (una vez exista el acto fundacional — ver lista humana).
+    `requisitos` (`apps/web/app/normas/fundar/page.tsx` ya cierra la pantalla de fundación que
+    faltaba antes; esta es la siguiente pieza del mismo ciclo — abrir reforma, votar, aprobar,
+    ratificar —, que también sigue sin pantalla).
 24. Correr `pnpm run test:coverage` completo en un host descargado y confirmar el piso.
 25. Identificar los ocho parámetros congelados exactos y escribir la prueba que los enumera uno por
     uno.

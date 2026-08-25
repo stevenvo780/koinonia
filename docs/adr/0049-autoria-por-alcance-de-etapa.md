@@ -314,3 +314,51 @@ Entra una que exige lo contrario: **con la etapa abierta**, el paquete sale comp
 `retenidos.json`, el manifiesto no trae `retainedLeafCount`, y los hallazgos del verificador son
 exactamente los mismos que antes de que la conversación existiera. En e2e, la pantalla tiene que
 mostrar la frase del historial completo mientras la etapa oculta la autoría.
+
+---
+
+## Nota de 2026-08-25: se revisó ampliar `deniedDuringStage` a `preguntas_aclaratorias`, y se descarta
+
+> Esta sección **añade**; no borra ni cambia nada de lo decidido arriba. `deniedDuringStage` sigue
+> siendo `'perspectivas'` y nada más.
+
+Una reauditoría señaló que `access.ts:383` sólo oculta la autoría durante `perspectivas`, y que
+mientras `preguntas_aclaratorias` es la etapa **vigente** la autoría de las preguntas se puede leer
+con normalidad —se destapa después, sólo porque en cuanto `perspectivas` abre la regla vuelve a
+mirar la etapa vigente de la deliberación entera, no la etapa en que se escribió cada aporte—. Se
+evaluó ampliar `deniedDuringStage` a las dos etapas y se decidió **no hacerlo**, por tres razones:
+
+1. **No es un hueco: es el alcance que ADR-0046 fijó desde el principio y ADR-0049 heredó sin
+   discutirlo.** ADR-0046 nombra el detalle exacto que motiva el mecanismo: «ocultar la autoría
+   durante la etapa en que se recogen las **perspectivas**» (líneas 39-40 de ese documento). Dos
+   decisiones de dominio, en dos fechas distintas, trazan la misma línea.
+2. **`PRODUCT.md` traza la misma línea en la narrativa del producto.** El recorrido «Días 14-16 ·
+   Preguntas» describe una etapa de hechos, sin una palabra sobre anonimato; el recorrido siguiente,
+   «Días 17-23 · Deliberación», es el que introduce el mecanismo anti-anclaje («no ve ninguna otra
+   hasta enviarla... nadie ancla a nadie»). El sesgo que el mecanismo evita es de **opinión** —quién
+   se posiciona primero y con qué estatus—, y `preguntas_aclaratorias` reúne hechos que aclarar, no
+   posiciones que anclar. Que ambas usen el tipo `posicion` en el motor es un detalle de
+   implementación, no una identidad de acto social.
+3. **Ampliar la regla no repararía el hueco real.** Quien leyó en vivo durante
+   `preguntas_aclaratorias` —facilitación incluida— ya vio quién preguntó qué antes de que
+   `perspectivas` abriera. Tapar la pantalla después no borra lo ya visto. Lo único que protegería
+   algo real sería ocultar la autoría **desde que se escribe cada pregunta**, lo que exige mirar la
+   etapa de cada aporte y no la etapa vigente del agregado: es un mecanismo distinto, con su propio
+   costo de diseño, y ningún documento del proyecto lo pide.
+
+El argumento en contra que sí es real —«una pregunta también se lee distinto según quién la firma»—
+queda escrito aquí y en `access.ts` para que la próxima persona que lo reconsidere no repita el
+análisis desde cero. Si en el futuro el pliego pide esto con una cita concreta, el cambio es de una
+palabra en la matriz (`deniedDuringStage`) y de las pruebas que hoy fijan lo contrario en
+`packages/domain/test/access.test.ts` y `tests/integration/http-deliberacion.test.ts` — no un
+rediseño.
+
+### Pruebas
+
+No cambia ninguna prueba existente, porque no cambia código de producto. Entra una, en
+`packages/domain/test/access.test.ts`: «en `preguntas_aclaratorias` la autoría SÍ se lee: el alcance
+no se amplió», que comprueba con los cuatro roles del círculo (miembro, quien facilita, garantías)
+que `can(actor, 'deliberation:read-authorship', …)` es `true` con esa etapa vigente. Junto con la que
+ya fijaba lo mismo desde fuera del paquete —`tests/integration/http-deliberacion.test.ts`,
+`expect(cuerpo.autoriaVisible).toBe(true)` con la etapa en `preguntas_aclaratorias`— son la
+comprobación de que el alcance es el que este documento describe.
