@@ -386,12 +386,43 @@ Lo que sigue está **aplicado y comprobado en producción**, no preparado:
 | Qué | Estado | Comprobación |
 | --- | --- | --- |
 | Código en producción | `koinonia-{api,web}:20260824-906f4bb` | los tres contenedores `healthy`; migraciones `0012` y `0013` aplicadas al arrancar |
-| **Anclaje externo** | **ENCENDIDO** | el arranque dice `[anclaje] encendido: corte cada 60 min, maduración cada 60 min, 4 calendarios` |
+| **Anclaje externo** | **ENCENDIDO Y ANCLANDO DE VERDAD** | ver abajo: 13 checkpoints, 15 cabeceras de bloque de Bitcoin, y una comprobación criptográfica contra una fuente independiente |
 | Las 16 rutas de la interfaz | 200 | incluidas `/aprendizajes`, `/asistente` y `/propuestas`, que antes no existían o daban 404 |
 | Service worker | 200 en `/sw.js` | la aplicación ya puede funcionar sin conexión |
 | Copia de seguridad | diaria, y **restauración probada** | la copia previa al despliegue verificó sus 20 tablas |
 | Registro de accesos en Caddy | aplicado | y comprobado: cero secretos en el log, cero rastro de la ruta de papeleta, la cadena de consulta recortada |
 | Repositorio publicado | `main` en `origin` | local y remoto coinciden por SHA |
+
+### El anclaje, comprobado contra la cadena real
+
+No es que el proceso arranque: es que **la historia de Koinonía ya está anclada en Bitcoin**.
+
+A las catorce horas de encenderlo, en producción hay **13 checkpoints** y **15 cabeceras de bloque**
+guardadas (de la 963933 a la 963995). El registro lo dice cuando cierra el sello:
+
+```
+[anclaje] cabeceras de bloque guardadas para el checkpoint 121: 963995 —
+          el verificador independiente ya puede cerrar el sello
+```
+
+La comprobación que lo demuestra sin creerle a nadie: se tomó la cabecera cruda de 80 bytes que
+Koinonía guardó para el bloque 963995, se le aplicó el doble SHA-256 y se invirtió —que es como se
+calcula el identificador de un bloque de Bitcoin—, y se comparó con lo que responde un servicio
+externo que no tiene nada que ver con este servidor:
+
+```
+desde la cabecera guardada : 00000000000000000001917aacd522d044ed1a6e3ffab34bf91670b0878b5ada
+blockstream.info (externo) : 00000000000000000001917aacd522d044ed1a6e3ffab34bf91670b0878b5ada
+```
+
+Coinciden. El servidor no se lo puede inventar: para falsificar esa cabecera habría que falsificar
+Bitcoin.
+
+**Qué significa el `NO_ANCLADO (blockchain)` que aparece en el registro.** No es un fallo: es la
+honestidad del quórum. `blockchain` es la clase que **sí** confirmó; `NO_ANCLADO` dice que todavía no
+hay las **dos de tres** clases que la firma exige. Es exactamente lo que está documentado: con una
+sola clase, una reescritura del pasado pasa de indetectable a detectable, pero no hay quórum. El
+sistema prefiere decir «no anclado» a decir «anclado» de más, y eso es lo correcto en una garantía.
 
 ### Lo que el anclaje protege HOY, dicho sin inflarlo
 
