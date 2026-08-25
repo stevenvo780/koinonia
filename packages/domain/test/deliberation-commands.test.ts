@@ -82,6 +82,7 @@ function meta(log: DeliberationLog, at: Instant, actor: Actor): DeliberationComm
 }
 
 const TEXT = 'Un aporte de prueba con longitud más que suficiente para el mínimo del historial.';
+const COST_DETAIL = 'Dos tardes de una persona para armar el cronograma y avisar a los cursos.';
 
 async function abrir(actor: Actor = facilitator, maximo?: number): Promise<DeliberationLog> {
   return openDeliberation(
@@ -390,6 +391,68 @@ describe('grafo tipado', () => {
         text: TEXT,
       }),
     ).rejects.toMatchObject({ code: 'INVALID_ID' });
+  });
+
+  it('una alternativa con costo válido entra, y viaja tal cual en el estado plegado', async () => {
+    const log = await guion('construccion_alternativas');
+    const conCosto = await aportar(log, daniela, cid(6), {
+      kind: 'alternativa',
+      problemId: PROBLEM,
+      sourcePositionIds: [cid(4)],
+      text: TEXT,
+      cost: { kind: 'tiempo', detail: COST_DETAIL },
+    });
+    const estado = replayDeliberation(conCosto);
+    const escrita = estado.contributions.find((c) => c.contributionId === cid(6));
+    expect(escrita?.body).toMatchObject({
+      cost: { kind: 'tiempo', detail: COST_DETAIL },
+    });
+  });
+
+  it('una alternativa sin costo declarado sigue entrando: el campo es opcional hoy', async () => {
+    // No es un descuido: exigirlo aquí sin que la ruta HTTP, el mapeo de servicio y el codec del
+    // ledger lo completaran habría rechazado TODO aporte de alternativa que hoy entra por la API.
+    // Ver el comentario de `cost` en `AlternativeBody` (`types.ts`).
+    const log = await guion('construccion_alternativas');
+    await expect(
+      aportar(log, daniela, cid(6), {
+        kind: 'alternativa',
+        problemId: PROBLEM,
+        sourcePositionIds: [cid(4)],
+        text: TEXT,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('un costo con tipo fuera del vocabulario se rechaza', async () => {
+    const log = await guion('construccion_alternativas');
+    await expect(
+      aportar(log, daniela, cid(6), {
+        kind: 'alternativa',
+        problemId: PROBLEM,
+        sourcePositionIds: [cid(4)],
+        text: TEXT,
+        // @ts-expect-error -- se fuerza un tipo fuera del vocabulario a propósito, para comprobar
+        // que el dominio lo rechaza también en runtime y no sólo por el tipo estático.
+        cost: { kind: 'presupuesto', detail: COST_DETAIL },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ALTERNATIVE_COST_KIND' });
+  });
+
+  it('un costo no admite una cifra suelta sin explicar de qué está hecha', async () => {
+    // «Dinero» es un tipo legítimo, pero el detalle sigue exigiendo la misma longitud mínima que
+    // cualquier otro texto del historial: una cifra de cuatro caracteres no dice de qué está hecho
+    // el costo, y es exactamente lo que el pliego pide no forzar.
+    const log = await guion('construccion_alternativas');
+    await expect(
+      aportar(log, daniela, cid(6), {
+        kind: 'alternativa',
+        problemId: PROBLEM,
+        sourcePositionIds: [cid(4)],
+        text: TEXT,
+        cost: { kind: 'dinero', detail: '30k' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TEXT' });
   });
 
   it('una corrección supersede a un aporte del MISMO tipo', async () => {

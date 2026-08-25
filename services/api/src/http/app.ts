@@ -263,6 +263,8 @@ import { registrarRutasDeEvaluacion } from './rutas-evaluacion.js';
 import { registrarRutasDeIniciativas } from './rutas-iniciativas.js';
 import { registrarRutasDeMetodos } from './rutas-metodos.js';
 import { registrarRutasDeMetricas } from './rutas-metricas.js';
+import { registrarRutasDeObjeciones } from './rutas-objeciones.js';
+import { registrarRutasDeSeguimiento } from './rutas-seguimiento.js';
 
 /**
  * Nombre BASE de la cookie de sesión, sin el prefijo `__Host-`. Se conserva exportado con este
@@ -1960,6 +1962,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return decisiones.flatMap((d) => d.state.delegations);
     },
   });
+
+  // Desestimación de objeciones sorteadas (B.3.a, ADR-0031, ADR-0032): POST
+  // /decisiones/:decisionId/objeciones/:objectionId/desestimar. Sortea el panel con
+  // `sortObjectionPanel` y publica `ObjectionRaised` (si hace falta, derivado de la papeleta) y
+  // `ObjectionDismissed`. Mismos cierres `actorDe`/`cupoDeEscritura` que el resto de las rutas de
+  // escritura; ver la cabecera de `rutas-objeciones.ts` para el porqué de la autorización a mano.
+  registrarRutasDeObjeciones(app, { deps, actorDe, cupoDeEscritura });
+
+  // Tres huecos de seguimiento (PRODUCT.md §3/§6): GET /iniciativas/:id/seguimiento/destrabes,
+  // GET /iniciativas/:id/seguimiento/informe y POST
+  // /iniciativas/:id/tareas/:tareaId/retiro-de-encargo. Sólo lectura y evaluación pura sobre el
+  // agregado real; no aplica nada al ledger (ver la cabecera de `rutas-seguimiento.ts`).
+  registrarRutasDeSeguimiento(app, { deps });
 
   return app;
 }

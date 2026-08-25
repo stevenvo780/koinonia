@@ -414,6 +414,12 @@ export * from './execution/dependencias.js';
 export * from './execution/recursos-y-riesgos.js';
 export * from './execution/presupuesto.js';
 
+// ── Cuatro huecos del seguimiento (PRODUCT.md §3/§6): informe periódico bloqueante, el registro del
+// peldaño 7 (encargo retirado, nunca automático) y el hecho de dependencia destrabada ─────────────
+export * from './execution/informe-periodico.js';
+export * from './execution/retiro-de-encargo.js';
+export * from './execution/destrabe-de-dependencia.js';
+
 // ── Motor ───────────────────────────────────────────────────────────────────────────────────────
 export {
   apply,
@@ -449,3 +455,10 @@ export {
   verifyLog,
   verifySeedReveal,
 } from './engine.js';
+
+// ── Sorteo del panel de objeciones (B.3.a, ADR-0031, ADR-0032) ──────────────────────────────────
+export {
+  type ObjectionPanelSortition,
+  type SortObjectionPanelInput,
+  sortObjectionPanel,
+} from './sortition-panel.js';

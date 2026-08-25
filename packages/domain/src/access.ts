@@ -380,6 +380,49 @@ const RULES: Readonly<Record<Action, Rule>> = {
   // lee la autoría de nada —ni quien facilita, ni garantías—, y en cuanto la etapa avanza la lee
   // cualquier miembro del círculo. La protección es frente a los pares, incluido quien llame a la
   // API saltándose la interfaz; **no** frente a quien administra el servidor y lee la base de datos.
+  //
+  // DECISIÓN (reauditoría 2026-08-25): NO se amplía a `preguntas_aclaratorias`, aunque se consideró.
+  //
+  // El argumento a favor de ampliar es real: una pregunta también se lee distinto según quién la
+  // firma, y hoy la autoría de `preguntas_aclaratorias` SÍ es legible mientras esa etapa sigue
+  // vigente (sólo se oculta después, como efecto colateral de que la regla mira la etapa VIGENTE de
+  // la deliberación entera y no la etapa en que se escribió cada aporte: en cuanto se abre
+  // `perspectivas`, la autoría de las preguntas también queda tapada un rato, hasta que esa etapa
+  // cierra). No se amplía por tres razones, ninguna de las tres nueva ni improvisada para esta
+  // reauditoría:
+  //
+  //  1. **Los dos ADR que diseñaron esto lo dicen dos veces, no una.** ADR-0046 (§«Contexto»,
+  //     líneas 39-40) nombra el detalle exacto que exige el mecanismo: «ocultar la autoría durante
+  //     la etapa en que se recogen las perspectivas». ADR-0049, que retira el sellado criptográfico
+  //     de ADR-0046 pero conserva su alcance, no amplía ese alcance en ningún momento: hereda
+  //     `deniedDuringStage: 'perspectivas'` sin discutir `preguntas_aclaratorias`. Dos decisiones
+  //     independientes, en dos fechas distintas, coinciden en el mismo límite. Eso no prueba que sea
+  //     correcto, pero sí que no es un olvido: es donde las dos veces se trazó la línea a propósito.
+  //  2. **`PRODUCT.md` traza la misma línea en la narrativa, no sólo en el código.** El recorrido
+  //     «Días 14-16 · Preguntas» describe una etapa de hechos («la fase no cierra con preguntas sin
+  //     responder, y "no hay dato" es una respuesta válida») sin una sola palabra sobre anonimato. El
+  //     recorrido siguiente, «Días 17-23 · Deliberación», es el que introduce explícitamente el
+  //     mecanismo anti-anclaje («no ve ninguna otra hasta enviarla... nadie ancla a nadie»). El sesgo
+  //     que el pliego quiere evitar —«los tres primeros fijan el marco»— es un sesgo de OPINIÓN
+  //     (quién se posiciona primero y con qué estatus), y `preguntas_aclaratorias` no reúne
+  //     opiniones: reúne lo que hace falta entender antes de tenerlas. Tratar «pregunta» y
+  //     «afirmación» como el mismo riesgo de sesgo porque ambas son `posicion` en el motor confunde
+  //     el tipo de dato del dominio con el acto social que representa.
+  //  3. **Ampliarla no repara nada del hueco que ya existe.** Quien participó en vivo durante
+  //     `preguntas_aclaratorias` —facilitación incluida— ya vio quién preguntó qué antes de que
+  //     `perspectivas` abriera; ese conocimiento no se puede retirar de la memoria de nadie tapando
+  //     la pantalla después. Ampliar el alcance oscurecería una pregunta ya vista por cualquiera que
+  //     leyó a tiempo, sin oscurecerla para quien de verdad importa. La única ampliación que
+  //     protegería algo real sería ocultar la autoría DESDE que se escribe cada pregunta, lo cual
+  //     exige seguir la etapa **de cada aporte**, no la etapa vigente de la deliberación: es un
+  //     mecanismo distinto, con su propio costo, y no lo pide ningún documento del proyecto.
+  //
+  // Queda una prueba pinneada en `access.test.ts` («en `preguntas_aclaratorias` la autoría SÍ se
+  // lee») como el contrato explícito de esta decisión, junto con la que ya fijaba lo mismo fuera de
+  // este paquete (`tests/integration/http-deliberacion.test.ts`, `expect(cuerpo.autoriaVisible)
+  // .toBe(true)` con la etapa en `preguntas_aclaratorias`). Si el día de mañana el pliego pide lo
+  // contrario con una cita concreta, ampliar es un cambio de una palabra aquí —y de esas pruebas—,
+  // no un rediseño.
   'deliberation:read-authorship': { ...CIRCLE_MEMBER, deniedDuringStage: 'perspectivas' },
 
   // ─── Constitución digital (§6) ─────────────────────────────────────────────────────────────

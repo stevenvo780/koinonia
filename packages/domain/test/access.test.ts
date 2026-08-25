@@ -184,6 +184,22 @@ describe('autorización con alcance de ETAPA (ADR-0049)', () => {
     }
   });
 
+  it('en `preguntas_aclaratorias` la autoría SÍ se lee: el alcance no se amplió (ver ADR-0049)', () => {
+    // Se consideró ampliar `deniedDuringStage` a esta etapa —una pregunta también se lee distinto
+    // según quién la firma— y se descartó con argumento: ADR-0046 y ADR-0049 fijan el mecanismo
+    // sobre `perspectivas` dos veces, `PRODUCT.md` narra el anti-anclaje sólo ahí, y ampliar no
+    // repararía nada porque quien leyó en vivo ya vio la autoría antes de que `perspectivas` abra.
+    // Esta prueba fija esa decisión: si el día de mañana se amplía, tiene que ponerse en rojo aquí.
+    const enPreguntas = {
+      kind: 'deliberation' as const,
+      stage: 'preguntas_aclaratorias' as const,
+      circleId: CIRCULO,
+    };
+    for (const actor of [daniela, julian, lucia, gabriel]) {
+      expect(can(actor, 'deliberation:read-authorship', enPreguntas)).toBe(true);
+    }
+  });
+
   it('sin etapa declarada se DENIEGA: la ausencia de política nunca concede', () => {
     expect(
       denialReason(daniela, 'deliberation:read-authorship', {

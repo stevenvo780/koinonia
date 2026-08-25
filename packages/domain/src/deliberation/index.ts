@@ -71,6 +71,9 @@ export {
 
 export {
   type AlternativeBody,
+  type AlternativeCost,
+  type AlternativeCostKind,
+  ALTERNATIVE_COST_KINDS,
   assertContributionBody,
   type AssumptionBody,
   CONTRIBUTION_KINDS,

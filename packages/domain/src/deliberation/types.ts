@@ -176,6 +176,39 @@ export interface RiskBody {
   readonly mitigation: string;
 }
 
+/**
+ * De qué está hecho el costo de una alternativa.
+ *
+ * `PRODUCT.md` §1 lo dice con todas las letras: «no hay presupuesto que repartir». En una comunidad
+ * estudiantil de ~300 personas el costo real casi nunca es dinero: es tiempo de alguien concreto,
+ * cuánta gente hace falta, o qué permiso institucional hay que conseguir antes de poder actuar.
+ * `dinero` sigue en el vocabulario porque a veces sí lo es —un trámite con costo de expedición, por
+ * ejemplo—, y `otro` cubre lo que no encaja en las cuatro categorías anteriores sin forzarlo a una.
+ * No hay un sexto tipo y **no hay una cifra obligatoria**: lo que se exige es nombrar la MONEDA en
+ * la que se paga, nunca convertirla a una sola unidad.
+ */
+export type AlternativeCostKind = 'tiempo' | 'gente' | 'permiso' | 'dinero' | 'otro';
+
+export const ALTERNATIVE_COST_KINDS: readonly AlternativeCostKind[] = [
+  'tiempo',
+  'gente',
+  'permiso',
+  'dinero',
+  'otro',
+];
+
+/**
+ * El costo declarado de una alternativa. `kind` dice en qué moneda se paga; `detail` lo dice en
+ * palabras: «dos tardes de una persona para armar el cronograma», «el permiso de Bienestar
+ * Universitario para usar el auditorio», «el valor de la fotocopiadora del bloque 12». Nunca un
+ * número suelto: una cifra sin unidad ni quién la paga no dice nada, y forzarla a una sola —casi
+ * siempre dinero— es exactamente lo que este tipo existe para no hacer.
+ */
+export interface AlternativeCost {
+  readonly kind: AlternativeCostKind;
+  readonly detail: string;
+}
+
 export interface AlternativeBody {
   readonly kind: 'alternativa';
   /** El problema que la alternativa dice resolver. «No se propone sin problema» (PRODUCT §4). */
@@ -183,6 +216,28 @@ export interface AlternativeBody {
   /** De qué posiciones sale. **No vacío**: una alternativa sin origen no la sostiene nadie. */
   readonly sourcePositionIds: readonly ContributionId[];
   readonly text: string;
+  /**
+   * El costo de llevarla a cabo, en tiempo, gente, permiso u otra moneda que no sea forzosamente
+   * dinero (ver `AlternativeCost`).
+   *
+   * **Opcional a propósito, y por una sola razón que no es de diseño sino de despliegue.** El pliego
+   * pide «listado separado con costo y supuesto» para cada alternativa, y el supuesto ya existe
+   * (`AssumptionBody`); este campo cierra la mitad que faltaba en el dominio. Pero exigirlo aquí sin
+   * que además lo exigieran el esquema Zod de la ruta HTTP (`packages/contracts/src/http.ts`), el
+   * mapeo de `services/api/src/http/service.ts` y el codificador del ledger
+   * (`services/api/src/workspace/codec.ts`, que fija a mano la lista de claves de cada tipo de
+   * cuerpo) habría hecho que TODO aporte de tipo `alternativa` que hoy entra por la API dejara de
+   * pasar la validación del dominio, sin que ninguna de esas tres capas supiera que tenían que
+   * mandar un costo. Ese cambio de cuatro capas es trabajo del corte vertical, no de este módulo.
+   * Aquí sólo vive la mitad que le corresponde al dominio: el tipo listo, con su validación completa
+   * en cuanto alguien lo declara (ver `assertContributionBody`).
+   *
+   * **Cuando el resto de la cadena lo complete**, el último paso es quitar el `?` y el `| undefined`
+   * de aquí y la rama `if (body.cost !== undefined)` de la validación: ese día, y sólo ese día, un
+   * aporte de tipo `alternativa` sin costo deja de pasar por esta puerta, igual que ya le pasa a uno
+   * sin `sourcePositionIds`.
+   */
+  readonly cost?: AlternativeCost | undefined;
 }
 
 export type ContributionBody =
@@ -381,6 +436,19 @@ export function assertContributionBody(body: ContributionBody): void {
         );
       }
       assertBodyText(body.text, 'la alternativa');
+      // El costo es opcional hoy (ver el comentario del campo en `AlternativeBody`), pero en cuanto
+      // alguien lo declara se exige completo: no hay costo a medias, igual que no hay supuesto que
+      // no se aplique a nada.
+      if (body.cost !== undefined) {
+        if (!ALTERNATIVE_COST_KINDS.includes(body.cost.kind)) {
+          throw new PreconditionError(
+            'INVALID_ALTERNATIVE_COST_KIND',
+            'el costo de una alternativa es tiempo, gente, permiso, dinero u otro; no hay un sexto ' +
+              'tipo, y ninguno de ellos es una cifra suelta',
+          );
+        }
+        assertBodyText(body.cost.detail, 'el costo de la alternativa');
+      }
       return;
     }
   }

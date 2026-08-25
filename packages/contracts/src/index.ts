@@ -48,3 +48,11 @@ export * from './aprendizajes.js';
 export * from './cierre-ciclo.js';
 export * from './concentracion.js';
 export * from './etapas.js';
+
+// ── Sexto incremento: desestimación de objeciones (B.3.a, ADR-0031, ADR-0032) ────────────────
+//
+// `services/api/src/http/rutas-objeciones.ts` escribió su propio esquema Zod local porque esta
+// línea todavía no existía cuando ese fichero se escribió (ver la cabecera de `objeciones.ts`).
+// Ningún nombre choca con lo ya exportado (comprobado con grep sobre los cuatro nombres de este
+// módulo contra el resto de `packages/contracts/src`), así que `export *` alcanza también acá.
+export * from './objeciones.js';
