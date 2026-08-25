@@ -351,6 +351,104 @@ export const MENSAJES: Readonly<Record<string, string>> = {
     'se toca. Volvé a intentarlo en un momento, y si sigue igual, contalo en el grupo.',
 };
 
+/**
+ * Los rechazos que escribe la validación, en español y sin devolver lo que se escribió.
+ *
+ * ═══ Qué se rompía ═══
+ *
+ * Cuando un esquema rechaza algo sin un mensaje propio, la frase la pone la biblioteca de
+ * validación — y esa frase está en inglés y habla de tipos. Una prueba contra producción pidió
+ * ocho rutas con datos mal formados y recibió, tal cual, en el campo que la pantalla muestra:
+ * «Unrecognized key: foo», «Invalid input: expected string, received undefined», «Too small:
+ * expected string to have >=1 characters».
+ *
+ * Son tres problemas a la vez, no uno. Está en inglés, en una plataforma que sólo habla español.
+ * Habla de tipos y de claves, que es exactamente la jerga que ADR-0041 saca de la pantalla. Y la
+ * primera **devuelve el dato que llegó**, que es una forma discreta de reflejar entrada ajena en
+ * una respuesta.
+ *
+ * ═══ Por qué acá y no en el manejador de errores HTTP ═══
+ *
+ * Porque el manejador no puede distinguir un mensaje puesto a mano —`z.string().min(3, 'Escribí al
+ * menos tres letras.')`, de los que este repositorio tiene decenas y son buenos— de uno inventado
+ * por la biblioteca. Elegir entre los dos por el aspecto del texto sería adivinar. Puesto acá, el
+ * mensaje nace en español; los que alguien escribió a mano siguen ganando, porque un mensaje
+ * propio tiene prioridad sobre este mapa.
+ *
+ * Se aplica al importar el paquete, sin que nadie tenga que acordarse de llamar a nada: una regla
+ * que hay que recordar es una regla que se olvida, y el día que se olvide vuelve el inglés.
+ */
+function loQueSeEsperaba(esperado: unknown): string {
+  switch (esperado) {
+    case 'string':
+      return 'Acá va texto.';
+    case 'number':
+    case 'bigint':
+      return 'Acá va un número.';
+    case 'boolean':
+      return 'Acá se responde que sí o que no.';
+    case 'array':
+      return 'Acá va una lista.';
+    case 'object':
+      return 'Acá van varios datos juntos, no uno solo.';
+    case 'date':
+      return 'Acá va una fecha.';
+    default:
+      return 'Esto no tiene la forma que se espera acá.';
+  }
+}
+
+/** «al menos 3 caracteres» / «al menos 1 elemento» — con el número que de verdad se pide. */
+function cuantoFalta(minimo: unknown, origen: unknown): string {
+  const cantidad = typeof minimo === 'bigint' ? Number(minimo) : minimo;
+  if (typeof cantidad !== 'number') return 'Falta contenido acá.';
+  const entero = String(Math.ceil(cantidad));
+  if (origen === 'string') {
+    return cantidad <= 1 ? 'Esto no puede quedar vacío.' : `Escribí al menos ${entero} caracteres.`;
+  }
+  if (origen === 'array' || origen === 'set') {
+    return cantidad <= 1 ? 'Elegí al menos uno.' : `Elegí al menos ${entero}.`;
+  }
+  return `Tiene que ser ${entero} o más.`;
+}
+
+function cuantoSobra(maximo: unknown, origen: unknown): string {
+  const cantidad = typeof maximo === 'bigint' ? Number(maximo) : maximo;
+  if (typeof cantidad !== 'number') return 'Esto es más largo de lo que cabe acá.';
+  const entero = String(Math.floor(cantidad));
+  if (origen === 'string') return `No entran más de ${entero} caracteres.`;
+  if (origen === 'array' || origen === 'set') return `No se pueden elegir más de ${entero}.`;
+  return `Tiene que ser ${entero} o menos.`;
+}
+
+z.config({
+  customError: (issue): string => {
+    const dato = issue as unknown as Record<string, unknown>;
+    switch (issue.code) {
+      case 'invalid_type':
+        return issue.input === undefined ? 'Falta este dato.' : loQueSeEsperaba(dato['expected']);
+      case 'too_small':
+        return cuantoFalta(dato['minimum'], dato['origin']);
+      case 'too_big':
+        return cuantoSobra(dato['maximum'], dato['origin']);
+      case 'unrecognized_keys':
+        // A propósito NO se dice cuál: nombrarla sería devolver en la respuesta lo que llegó en la
+        // petición, y quien manda un dato de más no necesita que se lo lean de vuelta.
+        return 'Llegó un dato que esta operación no espera. Revisá el formulario y mandá otra vez.';
+      case 'invalid_value':
+        return 'Ese valor no es uno de los que se admiten acá. Elegí uno de los que ofrece la pantalla.';
+      case 'invalid_format':
+        return 'El formato no es el que se espera acá. Revisá cómo está escrito.';
+      case 'invalid_union':
+        return 'Esto no encaja con ninguna de las formas que se admiten acá.';
+      case 'not_multiple_of':
+        return 'Ese número no sirve acá: tiene que ir de a pasos exactos.';
+      default:
+        return 'Este dato no tiene la forma que se espera acá.';
+    }
+  },
+});
+
 /** Frase para un código. Si el código es desconocido, se devuelve una frase honesta, no el código. */
 export function mensajeDe(codigo: string, respaldo?: string): string {
   return (

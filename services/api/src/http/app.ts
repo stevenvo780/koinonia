@@ -115,6 +115,7 @@ import {
 } from '@koinonia/domain';
 import Fastify, {
   LogController,
+  type FastifyError,
   type FastifyInstance,
   type FastifyReply,
   type FastifyRequest,
@@ -497,6 +498,29 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
       },
     };
   }
+  /*
+   * Último recurso, y con una distinción que faltaba: **un rechazo que el propio servidor web ya
+   * atribuyó a quien pide no es una avería nuestra**.
+   *
+   * Sin esto, un cuerpo que no es JSON válido caía acá y salía como `500 ERROR_INTERNO` — «Algo se
+   * rompió de nuestro lado», que es literalmente falso: no se rompió nada, llegó mal escrito. Y
+   * decirle a alguien que el problema es del servidor cuando es de su petición lo deja esperando a
+   * que se arregle solo. Medido: `POST /auth/enlace` con `{esto no es json` devolvía 500.
+   *
+   * Se conserva el estado declarado sólo si es de la familia 4xx; el mensaje NO se toma del error
+   * —viene del framework, en inglés y nombrando su propia mecánica— sino del catálogo.
+   */
+  const declarado: unknown = (error as { statusCode?: unknown } | null)?.statusCode;
+  if (typeof declarado === 'number' && declarado >= 400 && declarado < 500) {
+    return {
+      estado: declarado,
+      cuerpo: {
+        codigo: 'DATOS_INVALIDOS',
+        mensaje: mensajeDe('DATOS_INVALIDOS'),
+        queHacer: 'Volvé a cargar la pantalla y mandalo otra vez desde ahí.',
+      },
+    };
+  }
   return { estado: 500, cuerpo: { codigo: 'ERROR_INTERNO', mensaje: mensajeDe('ERROR_INTERNO') } };
 }
 
@@ -542,6 +566,43 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // `LogController` y no el viejo `disableRequestLogging` de nivel superior: ese está obsoleto
     // desde Fastify 5.12 y desaparece en Fastify 6 (aviso `FSTDEP023`).
     logController: new LogController({ disableRequestLogging: true }),
+    /*
+     * Los rechazos que el propio Fastify emite ANTES de llegar a una ruta.
+     *
+     * `setErrorHandler` no los ve: nacen en el enrutador o en el lector del cuerpo, antes de que
+     * exista ruta a la que asociarlos. Sin este gancho salen con la forma del framework y no con la
+     * de `ApiError`, en inglés, con el código interno de la librería, y —lo peor— **devolviendo lo
+     * que llegó**. Medido contra producción el 2026-08-25, pidiendo `/decisiones/aaa…` con 300
+     * caracteres:
+     *
+     *     {"error":"Bad Request","code":"FST_ERR_MAX_PARAM_LENGTH",
+     *      "message":"'/decisiones/aaaaaa…(300 letras)…' is exceeding the max param length",
+     *      "statusCode":414}
+     *
+     * Tres cosas mal a la vez: un cliente que espera `codigo`/`mensaje` no puede leer eso; está en
+     * inglés y nombra la mecánica del framework; y refleja la entrada entera en la respuesta.
+     *
+     * El estado se conserva —414 es, de verdad, «esa dirección es demasiado larga»— y lo que cambia
+     * es la forma y el idioma. Si el estado que trae el error no es uno de los que se pueden
+     * atribuir a quien pide, se degrada a 400 en vez de inventar un 500.
+     */
+    // Los tipos se anotan a mano: la firma de `frameworkErrors` es genérica sobre el cuerpo de la
+    // respuesta y, sin anotar, TypeScript infiere que sólo admite los códigos declarados por un
+    // esquema que acá no existe — y rechaza tanto el estado como el cuerpo.
+    frameworkErrors: (error: FastifyError, _peticion: FastifyRequest, respuesta: FastifyReply) => {
+      const declarado = typeof error.statusCode === 'number' ? error.statusCode : 400;
+      // Sólo se conserva un estado que se le pueda atribuir a quien pide; cualquier otro se
+      // degrada a 400 en vez de inventar un 500 sobre una petición que sí es del cliente.
+      const estado = declarado >= 400 && declarado < 500 ? declarado : 400;
+      const cuerpo: ApiError = {
+        codigo: 'DATOS_INVALIDOS',
+        mensaje: mensajeDe('DATOS_INVALIDOS'),
+        queHacer:
+          'Volvé a la pantalla desde donde llegaste y abrilo desde ahí: la dirección que se usó no ' +
+          'tiene la forma que este sistema entiende.',
+      };
+      void respuesta.code(estado).send(cuerpo);
+    },
   });
 
   await app.register(cookie);
