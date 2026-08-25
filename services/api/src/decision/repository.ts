@@ -22,8 +22,8 @@ import {
 } from '@koinonia/domain';
 
 import type { PgClient, PgPool, PgPoolClient } from '../db/client.js';
-import { append, appendWithin, readHead, readStream } from '../ledger/event-store.js';
-import type { AggregateHead, ExpectedHead } from '../ledger/types.js';
+import { append, appendWithin, readEventAt, readHead, readStream } from '../ledger/event-store.js';
+import { HeadConflictError, type AggregateHead, type ExpectedHead } from '../ledger/types.js';
 import { DECISION_AGGREGATE_TYPE, decodeDecisionEvent, encodeDecisionEvent } from './codec.js';
 
 export class DecisionPersistenceError extends Error {
@@ -59,8 +59,14 @@ export async function persistDecisionLog(
 
   const client = await pool.connect();
   let current: AggregateHead | undefined;
+  let cabezaAjena = false;
   try {
     current = await readHead(client, decisionId);
+    // Cuando no queda nada por escribir hay que averiguar POR QUÉ, y hasta el 2026-08-25 no se
+    // averiguaba: se devolvía éxito. Ver el comentario largo debajo de `pending.length === 0`.
+    if (current !== undefined && current.seq + 1 === log.length) {
+      cabezaAjena = !(await laCabezaEsNuestra(client, decisionId, current.seq, log));
+    }
   } finally {
     client.release();
   }
@@ -74,6 +80,31 @@ export async function persistDecisionLog(
   }
   const pending: readonly DecisionEvent[] = log.slice(persisted);
   if (pending.length === 0) {
+    /*
+     * «Nada pendiente» significa una de dos cosas, y confundirlas costaba votos.
+     *
+     * La buena: este mismo log ya está escrito y alguien vuelve a guardarlo. Ahí no hay nada que
+     * hacer y devolver éxito es correcto.
+     *
+     * La mala: el ledger avanzó EXACTAMENTE lo mismo que mide este log porque el evento de OTRA
+     * persona ocupó por casualidad ese mismo número de posición. La cuenta cuadra y el contenido
+     * no. Hasta el 2026-08-25 esta rama no miraba el contenido, así que devolvía éxito sobre una
+     * escritura que nunca ocurrió — y quien llamaba respondía «tu voto se registró» a alguien cuyo
+     * voto no existía. Las pruebas de carga lo midieron: 174 de 176 confirmaciones eran falsas
+     * (`docs/TESTING.md` §11.2).
+     *
+     * Ahora se distinguen comparando el evento que de verdad está en la cabeza con el último de
+     * este log. Si no es el mismo, esto es un conflicto de cabeza como cualquier otro y se dice
+     * así, en vez de fingir que se escribió.
+     */
+    if (cabezaAjena) {
+      const ultimo = log[log.length - 1];
+      throw new HeadConflictError(
+        decisionId,
+        `el evento ${ultimo === undefined ? '(ninguno)' : ultimo.eventId} en seq=${String(log.length - 1)}`,
+        'ese lugar lo ocupó otro evento: alguien escribió primero',
+      );
+    }
     return { decisionId, appended: 0, head: current, idempotentReplay: false };
   }
 
@@ -108,6 +139,30 @@ export async function persistDecisionLog(
     head: result.head,
     idempotentReplay: result.idempotentReplay,
   };
+}
+
+/**
+ * ¿El evento que está en la cabeza del agregado es el último de ESTE log?
+ *
+ * Se compara por `eventId`, que el dominio genera uno por evento y no se repite. No se compara por
+ * huella: la del ledger se calcula sobre el sobre almacenado y la del dominio sobre su propia
+ * preimagen, y hacerlas coincidir aquí sería reimplementar dos canonizaciones para responder una
+ * pregunta que el identificador ya contesta.
+ *
+ * Cuesta una consulta más, y sólo en el caso raro en que la cuenta de eventos cuadra sin haber
+ * escrito nada. En el camino normal —hay eventos pendientes— no se ejecuta.
+ */
+async function laCabezaEsNuestra(
+  client: PgClient,
+  decisionId: string,
+  ledgerSeq: number,
+  log: DecisionLog,
+): Promise<boolean> {
+  const ultimo = log[log.length - 1];
+  if (ultimo === undefined) return false;
+  const escrito = await readEventAt(client, decisionId, ledgerSeq);
+  if (escrito === undefined) return false;
+  return decodeDecisionEvent(escrito).eventId === ultimo.eventId;
 }
 
 /** Misma persistencia, dentro de la transaccion coordinada por el servicio de aplicacion. */

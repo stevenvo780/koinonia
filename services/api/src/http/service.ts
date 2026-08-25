@@ -209,11 +209,7 @@ import {
   saveClauseTextsWithin,
 } from '../constitution/index.js';
 import { withTransaction, type PgClient, type PgPool, type PgPoolClient } from '../db/client.js';
-import {
-  loadDecisionLog,
-  persistDecisionLog,
-  persistDecisionLogWithin,
-} from '../decision/repository.js';
+import { loadDecisionLog, persistDecisionLogWithin } from '../decision/repository.js';
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
 import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
 
@@ -1175,6 +1171,53 @@ export interface DecisionConEstado {
   readonly state: DecisionState;
 }
 
+/**
+ * Leer una decisión, dejar que el dominio produzca el log siguiente y escribirlo — las tres cosas
+ * dentro de la MISMA transacción y bajo el cerrojo de escritura del ledger.
+ *
+ * ═══ Por qué existe ═══
+ *
+ * Antes cada una de estas operaciones hacía `verDecision(...)` (una transacción), construía el
+ * evento en memoria contra esa lectura, y llamaba a `persistDecisionLog(...)` (otra transacción).
+ * Entre la lectura y la escritura no había nada que impidiera que otra persona escribiera primero,
+ * y eso pasa todo el tiempo: en una votación, el último minuto es cuando vota casi todo el mundo.
+ *
+ * Las pruebas de carga lo midieron con 300 personas (`docs/TESTING.md` §11.2) y el resultado fue
+ * peor que lentitud: de 300 papeletas sólo 2 quedaron contadas, 124 recibieron un 500 y **174
+ * recibieron un `201` sobre un voto que nunca llegó a la base**. Quien recibe un 201 no tiene
+ * ninguna señal de que su voto no cuenta; en un sistema de gobernanza eso es una falla de
+ * integridad, no de rendimiento.
+ *
+ * ═══ Por qué el cerrojo y no un bucle de reintentos ═══
+ *
+ * `pg_advisory_xact_lock` es el cerrojo que TODA escritura del ledger toma ya (`§3.3`,
+ * `lockLedgerWithin`), sólo que lo tomaba dentro de `append`, es decir **después** de que el
+ * llamante hubiera leído. Tomarlo antes de leer no agrega un mecanismo nuevo al sistema: mueve el
+ * principio de la sección crítica al sitio donde de verdad empieza. Un bucle de reintentos
+ * optimista habría necesitado, en el peor caso, tantos intentos como personas votando a la vez, y
+ * habría dejado la corrección dependiendo de un número máximo elegido a ojo.
+ *
+ * El costo es que las escrituras sobre decisiones se serializan de verdad. Ya se serializaban —el
+ * cerrojo es global y lo toma cada `append`—; lo que se alarga es cuánto se sostiene, porque ahora
+ * incluye la lectura del log. Es el precio de que un «tu voto se registró» signifique lo que dice.
+ */
+async function escribirSobreDecision(
+  deps: ServicioDeps,
+  decisionIdRaw: string,
+  requestId: string,
+  producir: (actual: DecisionConEstado) => Promise<DecisionLog>,
+): Promise<DecisionConEstado> {
+  return await withTransaction(deps.pool, async (client) => {
+    // Antes de leer, no después: es el arreglo entero.
+    await lockLedgerWithin(client);
+    const log = await loadDecisionLog(client, decisionIdRaw);
+    if (log.length === 0) throw new ServicioError('NO_ENCONTRADO', 404, 'no existe esa decisión');
+    const siguiente = await producir({ id: decisionIdRaw, log, state: replay(log) });
+    await persistDecisionLogWithin(client, siguiente, { requestId });
+    return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
+  });
+}
+
 export async function verDecision(deps: ServicioDeps, id: string): Promise<DecisionConEstado> {
   return conCliente(deps.pool, async (client) => {
     const log = await loadDecisionLog(client, id);
@@ -1263,7 +1306,6 @@ export async function emitirPapeleta(
     readonly respuesta: RespuestaPapeleta;
   },
 ): Promise<DecisionConEstado> {
-  const { log, state } = await verDecision(deps, decisionIdRaw);
   const votante = actor.memberId;
   if (votante === undefined) {
     throw new ServicioError(
@@ -1272,28 +1314,31 @@ export async function emitirPapeleta(
       'emitir una papeleta exige una cuenta verificada',
     );
   }
-  // `voter` es SIEMPRE el actor autenticado y jamás un campo del cuerpo de la petición. Aunque
-  // alguien lo mandara, no llegaría aquí; y aunque llegara, `apply` exige `voter === actor` al
-  // plegar, así que el log resultante no existiría.
-  const siguiente = await castBallotBy(log, {
-    eventId: nuevoEventId(deps),
-    at: ahora(deps),
-    actor: votante,
-    by: actor,
-    ballot: {
-      ballotId: toBallotId(deps.ports.random.opaqueId()),
-      decisionId: decisionId(decisionIdRaw),
-      voter: votante,
-      round: state.round,
-      payload: payloadDePapeleta(input.respuesta, {
-        ronda: state.round,
-        objecionId: deps.ports.random.opaqueId(),
-      }),
-      proposalVersionHash: toHash(input.huellaVersion),
-    },
-  });
-  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
-  return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
+  // La papeleta se construye DENTRO del cerrojo (ver `escribirSobreDecision`): `state.round` y el
+  // largo del log tienen que ser los mismos que va a encontrar la escritura, o el voto se pierde
+  // en silencio cuando otra persona vota en el mismo instante.
+  return await escribirSobreDecision(deps, decisionIdRaw, input.requestId, async ({ log, state }) =>
+    // `voter` es SIEMPRE el actor autenticado y jamás un campo del cuerpo de la petición. Aunque
+    // alguien lo mandara, no llegaría aquí; y aunque llegara, `apply` exige `voter === actor` al
+    // plegar, así que el log resultante no existiría.
+    castBallotBy(log, {
+      eventId: nuevoEventId(deps),
+      at: ahora(deps),
+      actor: votante,
+      by: actor,
+      ballot: {
+        ballotId: toBallotId(deps.ports.random.opaqueId()),
+        decisionId: decisionId(decisionIdRaw),
+        voter: votante,
+        round: state.round,
+        payload: payloadDePapeleta(input.respuesta, {
+          ronda: state.round,
+          objecionId: deps.ports.random.opaqueId(),
+        }),
+        proposalVersionHash: toHash(input.huellaVersion),
+      },
+    }),
+  );
 }
 
 export async function cerrarDecision(
@@ -3776,28 +3821,32 @@ export async function delegarVoto(
       'prestar tu voto exige una cuenta verificada',
     );
   }
-  const { log, state } = await verDecision(deps, decisionIdRaw);
-  const config = state.config;
-  if (config === undefined) {
-    throw new ServicioError('NO_ENCONTRADO', 404, 'esa votación todavía no está abierta');
-  }
-  const at = ahora(deps);
-  const siguiente = await conMensajeDePrestamo(async () =>
-    grantDelegationBy(log, {
-      eventId: nuevoEventId(deps),
-      at,
-      by: actor,
-      delegation: {
-        delegationId: toDelegationId(deps.ports.random.opaqueId()),
-        delegator: delegante,
-        delegate: memberId(input.enQuienId),
-        scope: { kind: 'circle', circleId: config.circleId },
-        expiresAt: vigenciaDeDelegacion(config, at),
-      },
-    }),
+  return await escribirSobreDecision(
+    deps,
+    decisionIdRaw,
+    input.requestId,
+    async ({ log, state }) => {
+      const config = state.config;
+      if (config === undefined) {
+        throw new ServicioError('NO_ENCONTRADO', 404, 'esa votación todavía no está abierta');
+      }
+      const at = ahora(deps);
+      return await conMensajeDePrestamo(async () =>
+        grantDelegationBy(log, {
+          eventId: nuevoEventId(deps),
+          at,
+          by: actor,
+          delegation: {
+            delegationId: toDelegationId(deps.ports.random.opaqueId()),
+            delegator: delegante,
+            delegate: memberId(input.enQuienId),
+            scope: { kind: 'circle', circleId: config.circleId },
+            expiresAt: vigenciaDeDelegacion(config, at),
+          },
+        }),
+      );
+    },
   );
-  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
-  return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
 }
 
 /** Recupera tu voto. Efecto inmediato: el escrutinio resuelve el grafo al cerrar, no al abrir. */
@@ -3815,17 +3864,16 @@ export async function revocarDelegacionDeVoto(
       'recuperar tu voto exige una cuenta verificada',
     );
   }
-  const { log } = await verDecision(deps, decisionIdRaw);
-  const siguiente = await conMensajeDePrestamo(async () =>
-    revokeDelegationBy(log, {
-      eventId: nuevoEventId(deps),
-      at: ahora(deps),
-      by: actor,
-      delegationId: toDelegationId(delegacionIdRaw),
-    }),
+  return await escribirSobreDecision(deps, decisionIdRaw, input.requestId, async ({ log }) =>
+    conMensajeDePrestamo(async () =>
+      revokeDelegationBy(log, {
+        eventId: nuevoEventId(deps),
+        at: ahora(deps),
+        by: actor,
+        delegationId: toDelegationId(delegacionIdRaw),
+      }),
+    ),
   );
-  await persistDecisionLog(deps.pool, siguiente, { requestId: input.requestId });
-  return { id: decisionIdRaw, log: siguiente, state: replay(siguiente) };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════

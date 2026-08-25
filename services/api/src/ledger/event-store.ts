@@ -227,6 +227,28 @@ export async function readHead(
   return row === undefined ? undefined : headFromRow(row);
 }
 
+/**
+ * Un solo evento de un agregado, por su `seq`.
+ *
+ * Existe para poder responder «¿lo que está escrito en esta posición es mío o de otro?» sin
+ * arrastrar el flujo entero. `readStream` da la respuesta igual, pero leyendo todos los eventos del
+ * agregado — y quien hace esta pregunta la hace justo cuando hay mucha gente escribiendo a la vez,
+ * que es cuando menos conviene traerse una votación completa por cada consulta.
+ */
+export async function readEventAt(
+  client: PgClient,
+  aggregateId: string,
+  seq: number,
+): Promise<StoredEvent | undefined> {
+  const { rows } = await client.query<EventRow>(
+    `SELECT ${SELECT_EVENT_COLUMNS} FROM governance.event
+      WHERE aggregate_id = $1 AND seq = $2`,
+    [aggregateId, seq],
+  );
+  const row = rows[0];
+  return row === undefined ? undefined : rowToStoredEvent(row);
+}
+
 /** Todas las cabezas, ordenadas por `aggregate_id`: el orden del `headsRoot` del checkpoint (§6.4). */
 export async function readAllHeads(client: PgClient): Promise<readonly AggregateHead[]> {
   const { rows } = await client.query<HeadRow>(
