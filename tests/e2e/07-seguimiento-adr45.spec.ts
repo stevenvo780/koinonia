@@ -25,6 +25,24 @@ import { CORREO_FACILITADORA } from './global-setup.js';
 
 test.describe.configure({ mode: 'serial' });
 
+// Cada prueba de este fichero hace varias idas y vueltas de «foco → revalidar sesión → repintar»
+// entre dos pestañas, con el detalle de una iniciativa entero de por medio (bastante más DOM y más
+// peticiones por vuelta que el resto de la suite). Aislado, eso corre en milisegundos. Pero en la
+// corrida completa —doscientos y pico escenarios antes, cada uno con su propio contexto de
+// navegador— el proceso que sirve la interfaz y el propio navegador compiten por CPU con todo lo
+// demás que corre en la máquina, y una vuelta que normalmente tarda milisegundos puede tardar
+// bastante más sin que eso sea un error de nadie: se comprobó con la traza (`test-results/`) que,
+// cuando esto se cae, el hilo de la página sencillamente no llegó a ejecutar el `useEffect` que
+// dispara la revalidación dentro del minuto que le daba el resto de la suite —cero peticiones de
+// red nuevas, cero fotogramas, cero consola—, no que la sesión se haya invalidado (el testigo tenía
+// segundos, no una hora) ni que se agotara un cupo (estas cuentas no piden propuestas ni aportes).
+// `test.slow()` le da a este fichero, y sólo a éste, el triple del plazo por prueba: no es un
+// reintento —vuelve a fallar igual de rápido si la revalidación de verdad se rompe— ni baja ninguna
+// aserción, sólo reconoce que estas pruebas cuestan más y necesitan más margen real de reloj.
+test.beforeEach(() => {
+  test.slow();
+});
+
 const sufijo = marca();
 const TITULO_TAREA = `Preparar el informe verificable ${sufijo}`;
 const NOTA_RESTRINGIDA =
