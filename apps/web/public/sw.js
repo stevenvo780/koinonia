@@ -152,6 +152,44 @@ function escaparHtml(texto) {
 }
 
 /**
+ * Cambia «Cargando el historial…» por la verdad: sin conexión eso no va a llegar nunca.
+ *
+ * Es la consecuencia directa de quitar los `<script>` (ver abajo). El HTML guardado es el que el
+ * servidor mandó ANTES de que la aplicación pidiera nada, así que trae el estado inicial de carga:
+ * un párrafo que dice «Cargando las decisiones…» y, en las pantallas de listas, tres tarjetas de
+ * relleno con la forma de las de verdad. Sin scripts nadie los reemplaza, y una prueba de humo
+ * contra producción encontró justo eso: recargar `/decisiones` sin conexión dejaba el bloque
+ * congelado en «Cargando las decisiones…» para siempre, debajo del aviso de que estaba sin
+ * conexión. Dos mensajes que se contradicen, y el que engaña es el que está donde mira la vista.
+ *
+ * El texto de reemplazo evita el problema de concordancia que tiene esta familia de frases: `que`
+ * vale «el historial» y también «las decisiones», y «no se puede/pueden mostrar» tendría que
+ * concordar con cada uno. «No hay forma de mostrar» sirve para los dos.
+ *
+ * Las tarjetas de relleno se quitan enteras: son `aria-hidden`, sólo existen para reservar la
+ * altura de lo que está por llegar, y sin conexión no está por llegar nada. El aviso que las
+ * acompaña deja de estar oculto a la vista (`solo-lectores` es sólo para lectores de pantalla),
+ * porque al quitarlas se queda siendo lo único que hay que decir ahí.
+ */
+function sinPromesaDeCarga(html) {
+  return html
+    .replace(/<ul class="tarjetas esqueleto" aria-hidden="true">[\s\S]*?<\/ul>/giu, '')
+    .replace(/<div class="solo-lectores">(<p class="cargando)/giu, '<div>$1')
+    .replace(/<p class="cargando[^"]*" role="status">([\s\S]*?)<\/p>/giu, (completo, dentro) => {
+      // React separa el texto interpolado con comentarios vacíos: «Cargando <!-- -->el
+      // historial<!-- -->…». Se limpian antes de leer el nombre de lo que se estaba cargando.
+      const plano = dentro.replace(/<!--[\s\S]*?-->/gu, '');
+      const nombre = /^Cargando\s+([\s\S]+?)\s*…\s*$/u.exec(plano);
+      if (nombre === null) return completo;
+      return (
+        '<p class="cargando" role="status">Sin conexión no hay forma de mostrar ' +
+        escaparHtml(nombre[1]) +
+        '.</p>'
+      );
+    });
+}
+
+/**
  * Inserta el aviso justo después de que abre `<body ...>` — y le quita los `<script>` al
  * documento antes de devolverlo.
  *
@@ -167,9 +205,8 @@ function escaparHtml(texto) {
  */
 async function conAviso(respuestaCache) {
   const guardadoIso = respuestaCache.headers.get(CABECERA_GUARDADO);
-  const html = (await respuestaCache.clone().text()).replace(
-    /<script\b[^>]*>[\s\S]*?<\/script>/giu,
-    '',
+  const html = sinPromesaDeCarga(
+    (await respuestaCache.clone().text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, ''),
   );
   const inicioEtiqueta = html.indexOf('<body');
   const cierreEtiqueta = inicioEtiqueta === -1 ? -1 : html.indexOf('>', inicioEtiqueta);
