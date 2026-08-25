@@ -41,11 +41,11 @@ alterar, en una fecha concreta.
 
 `packages/anchor` implementa tres proveedores, uno por clase (ADR-0016, `packages/anchor/src/types.ts`):
 
-| Clase | Proveedor | Qué prueba | Estado hoy |
-|---|---|---|---|
-| `blockchain` | `OpenTimestampsProvider` | El resumen existía antes de cierto bloque de Bitcoin | **Operativo de punta a punta.** Verificado hoy contra los 4 calendarios reales (§5). |
-| `vcs` | `SignedGitProvider` | Un commit firmado por la veeduría, con el resumen en el mensaje, publicado en dos forjas independientes que coinciden en el mismo objeto | **No operativo.** El código funciona (probado con firmantes y forjas simuladas); falta el repositorio real de anclaje con firmas de la veeduría. Ver §7. |
-| `human-witness` | `WitnessEmailProvider` | Varias personas de dominios distintos acusaron recibo de un correo firmado (DKIM) con el resumen | **No operativo.** El código funciona; falta designar testigos y configurar SMTP/IMAP/DKIM del anclaje. Ver §7. |
+| Clase           | Proveedor                | Qué prueba                                                                                                                               | Estado hoy                                                                                                                                               |
+| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blockchain`    | `OpenTimestampsProvider` | El resumen existía antes de cierto bloque de Bitcoin                                                                                     | **Operativo de punta a punta.** Verificado hoy contra los 4 calendarios reales (§5).                                                                     |
+| `vcs`           | `SignedGitProvider`      | Un commit firmado por la veeduría, con el resumen en el mensaje, publicado en dos forjas independientes que coinciden en el mismo objeto | **No operativo.** El código funciona (probado con firmantes y forjas simuladas); falta el repositorio real de anclaje con firmas de la veeduría. Ver §7. |
+| `human-witness` | `WitnessEmailProvider`   | Varias personas de dominios distintos acusaron recibo de un correo firmado (DKIM) con el resumen                                         | **No operativo.** El código funciona; falta designar testigos y configurar SMTP/IMAP/DKIM del anclaje. Ver §7.                                           |
 
 `independenceClass` no es decorativa: dos proveedores de la misma clase sólo cuentan como un testigo
 (`packages/anchor/src/quorum.ts`, motivo `clase-repetida`). Que las tres sean de naturaleza distinta
@@ -238,10 +238,10 @@ trabajo de código, fuera del alcance de este encargo, y queda anotado aquí par
 3. `docker logs koinonia-api --tail 80`. Buscá, en este orden:
    - La línea de arranque general (correo, base de datos) — ya conocida, sin cambios.
    - Líneas con prefijo `[anclaje]`. Si sigue apagado verías `APAGADO. Se enciende con
-     KOINONIA_ANCLAJE=1…`; con esta variable en `true` verías en cambio, por cada motivo de ausencia
+KOINONIA_ANCLAJE=1…`; con esta variable en `true` verías en cambio, por cada motivo de ausencia
      de git y correo, una línea explicando por qué (p. ej. "anclaje por git APAGADO: sin
      KOINONIA_ANCLAJE_FIRMANTES…"), y al final: `encendido: corte cada 60 min, maduración cada 60
-     min, 4 calendarios, 0 anclaje(s) de git y 0 de correo`.
+min, 4 calendarios, 0 anclaje(s) de git y 0 de correo`.
 4. **El primer checkpoint tarda hasta `KOINONIA_ANCLAJE_CHECKPOINT_MINUTOS` (60 min por defecto) en
    cortarse** — el arranque no fuerza uno inmediato, sólo arma el temporizador. En cuanto se corta,
    el ciclo de anclaje se dispara al instante (sin esperar al `poll`), y aparece una línea
@@ -250,7 +250,7 @@ trabajo de código, fuera del alcance de este encargo, y queda anotado aquí par
 5. **La maduración hasta Bitcoin tarda entre 1 y 6 horas.** Cada `KOINONIA_ANCLAJE_POLL_MINUTOS` (60
    min por defecto) se reintenta madurar los checkpoints pendientes. Cuando un sello madura, aparece
    `cabeceras de bloque guardadas para el checkpoint <N>: … — el verificador independiente ya puede
-   cerrar el sello`. El estado publicado en el ledger seguirá siendo `NO_ANCLADO` (y, pasadas 24 y 72
+cerrar el sello`. El estado publicado en el ledger seguirá siendo `NO_ANCLADO` (y, pasadas 24 y 72
    horas desde la EMISIÓN del checkpoint, `NO_ANCLADO_ALERTA` y `NO_ANCLADO_CRITICO`) mientras sólo
    haya una clase — eso ya está explicado en §6 y no hay que tratarlo como una avería.
 6. Para comprobar que el propio sello es legítimo, sin confiar en nuestro código: instalá el cliente
