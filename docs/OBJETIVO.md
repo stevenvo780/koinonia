@@ -377,3 +377,48 @@ entero conviene recontar y actualizar los encabezados de cada área.
 | `PARCIAL` | Cada pantalla debe estar enlazada desde la navegación principal. **Verificado 2026-08-24**: las 13 existentes están en `CONSULTA` de `apps/web/components/marco.tsx` y cubiertas por `tests/e2e/13-navegacion.spec.ts` (corrido hoy, en verde). Sigue `PARCIAL` y no `CUMPLE` sólo porque la 14.ª pantalla (Reuniones) no existe para poder enlazarse. |
 | `PARCIAL` | Accesibilidad WCAG 2.2 AA: cero violaciones serias o críticas en todas las pantallas |
 | `PARCIAL` | Producción debe responder a todas las rutas de las 14 pantallas. **Verificado 2026-08-24**: las 13 pantallas existentes responden `200` en `https://koinonia.167.114.118.213.sslip.io` (comprobado ruta por ruta). Sigue `PARCIAL` porque falta Reuniones (no construida, deliberado) **y porque producción está desactualizada respecto al código local** —el contenedor es de 2026-08-23 17:53, anterior a 12 commits incluida la tanda de 22 agentes en paralelo; `/concentracion` y `/aprendizajes`, que sí existen en el árbol local, dan `404` en producción. Ver `docs/HANDOFF.md` §7. |
+---
+
+## Estado del despliegue — 2026-08-24
+
+Lo que sigue está **aplicado y comprobado en producción**, no preparado:
+
+| Qué | Estado | Comprobación |
+| --- | --- | --- |
+| Código en producción | `koinonia-{api,web}:20260824-906f4bb` | los tres contenedores `healthy`; migraciones `0012` y `0013` aplicadas al arrancar |
+| **Anclaje externo** | **ENCENDIDO** | el arranque dice `[anclaje] encendido: corte cada 60 min, maduración cada 60 min, 4 calendarios` |
+| Las 16 rutas de la interfaz | 200 | incluidas `/aprendizajes`, `/asistente` y `/propuestas`, que antes no existían o daban 404 |
+| Service worker | 200 en `/sw.js` | la aplicación ya puede funcionar sin conexión |
+| Copia de seguridad | diaria, y **restauración probada** | la copia previa al despliegue verificó sus 20 tablas |
+| Registro de accesos en Caddy | aplicado | y comprobado: cero secretos en el log, cero rastro de la ruta de papeleta, la cadena de consulta recortada |
+| Repositorio publicado | `main` en `origin` | local y remoto coinciden por SHA |
+
+### Lo que el anclaje protege HOY, dicho sin inflarlo
+
+Sólo **OpenTimestamps** está operativo: el arranque apaga por su cuenta las clases de git y de correo
+—«sin padrón de la veeduría no hay firmantes, y un padrón vacío admitiría cualquier firma»—, que es
+exactamente lo que debe hacer. Eso significa:
+
+- **Sí se gana:** una reescritura del pasado pasa de *indetectable* a *detectable*, porque el
+  checkpoint queda anclado en Bitcoin y cualquiera puede contrastarlo por su cuenta.
+- **No se gana:** el quórum de firma, que exige **dos clases de tres**. Para eso hacen falta el
+  repositorio de anclaje con firmas SSH y los testigos de correo — qué montar está en
+  `infra/produccion/ANCLAJE.md` §7.
+
+### Una obligación que no cierra ningún agente
+
+Encender el registro de accesos es **literalmente** la condición que `THREAT_MODEL.md` RA-8 fija para
+traer ese riesgo aceptado a revisión: «logs de proxy conservados más allá de la sesión». Se aplicó
+ahora porque hoy no hay una sola persona usando la plataforma cuyos metadatos se puedan correlacionar.
+**Antes de que la haya, esa revisión hay que pedirla.**
+
+### Lo que sigue esperando a una persona
+
+| Pendiente | Por qué no lo cierra un agente |
+| --- | --- |
+| **ADR-0054 — procedencia del padrón** | Decisión jurídica y política sobre qué promete la plataforma |
+| **Dirección real de facilitación** | El único miembro es `operador@udea.edu.co`, que no existe: **hoy nadie puede entrar** |
+| **Pantalla «Reuniones»** | No tiene dominio detrás; inventarla sería una fachada |
+| **Proveedor de IA** | El puerto existe y es incapaz de decidir por tipos; falta elegir proveedor y política de datos |
+| **Las otras dos clases de anclaje** | Repositorio de anclaje con firmas SSH y testigos de correo |
+| **Revisión de RA-8** | Ver arriba |
