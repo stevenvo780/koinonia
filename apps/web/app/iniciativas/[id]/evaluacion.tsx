@@ -80,6 +80,7 @@ import {
   respuestaEsperada,
   traer,
 } from '../../../lib/api';
+import { enfocarTrasPintar } from '../../../lib/foco';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Vocabulario en palabras. Ninguno de estos vive en `@koinonia/contracts`: son cuatro vocabularios
@@ -276,11 +277,11 @@ export function SeccionEvaluacion({
       setInforme(resultado.valor);
       setNoAbierta(false);
       setMensaje(confirmacion);
-      requestAnimationFrame(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current?.focus());
       return true;
     }
     setErrorAccion(mensajeSeguro(resultado.error));
-    requestAnimationFrame(() => resultadoRef.current?.focus());
+    enfocarTrasPintar(() => resultadoRef.current?.focus());
     return false;
   }
 

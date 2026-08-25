@@ -30,6 +30,7 @@ import type { RespuestaEnlace } from '@koinonia/contracts';
 import { Aviso, ErrorVisible } from '../../components/marco';
 import { useAccionUnica } from '../../lib/acciones';
 import { enviar, ErrorDeApi } from '../../lib/api';
+import { enfocarTrasPintar } from '../../lib/foco';
 
 export default function Entrar(): ReactNode {
   const [correo, setCorreo] = useState('');
@@ -59,14 +60,14 @@ export default function Entrar(): ReactNode {
       setCorreoEnviado(correo);
     } else if (resultado.estado === 'fallo') {
       setError(resultado.error);
-      requestAnimationFrame(() => campo.current?.focus());
+      enfocarTrasPintar(() => campo.current?.focus());
     }
   }
 
   function volverAlFormulario(): void {
     setEnviado(undefined);
     setError(undefined);
-    requestAnimationFrame(() => campo.current?.focus());
+    enfocarTrasPintar(() => campo.current?.focus());
   }
 
   return (

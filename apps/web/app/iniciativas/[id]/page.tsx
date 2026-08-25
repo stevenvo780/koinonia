@@ -43,6 +43,7 @@ import {
   useEscalones,
 } from '../piezas-ejecucion';
 import { SeccionEvaluacion } from './evaluacion';
+import { enfocarTrasPintar } from '../../../lib/foco';
 
 type RespuestaElegida = 'aceptar' | 'rechazar' | 'pedir-reasignacion';
 
@@ -227,7 +228,7 @@ export default function DetalleIniciativa(): ReactNode {
     if (ejecutadaPara === 'cargando') return false;
 
     const enfocarResultado = (): void => {
-      requestAnimationFrame(() => {
+      enfocarTrasPintar(() => {
         (destinoFoco === undefined
           ? resultadoAccionRef.current
           : document.getElementById(destinoFoco)
@@ -1024,7 +1025,7 @@ function TareaVisible({
       } else {
         setResumenAbierto((actual) => ({ ...actual, [identificador]: contenido }));
       }
-      requestAnimationFrame(() => {
+      enfocarTrasPintar(() => {
         document.getElementById(`privado-${tipo}-${identificador}`)?.focus();
       });
     } catch (fallo: unknown) {
@@ -1049,7 +1050,7 @@ function TareaVisible({
         return resto;
       });
     }
-    requestAnimationFrame(() => {
+    enfocarTrasPintar(() => {
       document.getElementById(`abrir-${tipo}-${identificador}`)?.focus();
     });
   }

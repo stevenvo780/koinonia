@@ -23,6 +23,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { enfocarTrasPintar } from '../lib/foco';
 
 const FOCALIZABLES =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -76,7 +77,7 @@ export function DialogoTexto({
       }
       // Al abrir, el foco va al campo: quien no ve la pantalla tiene que aterrizar en lo que se
       // le está pidiendo, no en el título ni en el botón de cancelar.
-      requestAnimationFrame(() => campo.current?.focus());
+      enfocarTrasPintar(() => campo.current?.focus());
     } else {
       // Al cerrar se vacía. Dejar el motivo escrito dentro de un diálogo oculto lo conserva en el
       // documento sin que nadie lo vea ni pueda borrarlo, y lo reaparece en la siguiente apertura
