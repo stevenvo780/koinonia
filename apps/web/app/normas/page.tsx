@@ -5,16 +5,16 @@
  *
  * ═══ Lo que esta pantalla NO hace, y por qué ═══
  *
- * No enseña una «versión 1 vigente desde tal fecha». El motor que versiona las reglas —con su
- * decisión fundacional, su caducidad y su diferencia con la anterior— está construido y probado en
- * el dominio, pero **todavía no hay ningún acto fundacional escrito en el historial**: fundarla al
- * vuelo para tener algo que enseñar sería inventar un acto de gobierno que nadie realizó, y esta
- * pantalla es justamente la que no puede permitirse eso. Prefiero un hueco declarado a una garantía
- * fingida.
+ * No inventa una «versión 1 vigente desde tal fecha» mientras nadie la fundó. El motor que
+ * versiona las reglas —con su decisión fundacional, su caducidad y su diferencia con la anterior—
+ * está construido y probado en el dominio, y ahora esta pantalla ofrece el camino para escribir
+ * ese acto: `/normas/fundar`, sólo para quien cuida el procedimiento o las garantías. Mientras
+ * nadie lo use, acá no se finge que ya existe: fundarla al vuelo para tener algo que enseñar sería
+ * inventar un acto de gobierno que nadie realizó.
  *
- * Lo que sí es verdad y sí sale: el **núcleo intangible** —que es lo más importante de esta
- * pantalla y no se reforma por ninguna vía— y **cuánto cuesta cambiar una regla**, los dos leídos
- * del dominio y no de una copia a mano.
+ * Lo que sí es verdad y sí sale desde el primer día: el **núcleo intangible** —que es lo más
+ * importante de esta pantalla y no se reforma por ninguna vía— y **cuánto cuesta cambiar una
+ * regla**, los dos leídos del dominio y no de una copia a mano.
  */
 
 import Link from 'next/link';
@@ -22,13 +22,18 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import type { Normas } from '@koinonia/contracts';
 
-import { Cargando, ErrorVisible } from '../../components/marco';
+import { Cargando, ErrorVisible, useSesion } from '../../components/marco';
 import { Ficha, Vacio } from '../../components/piezas';
 import { cerrarFrase, cuando, traer } from '../../lib/api';
 
 export default function NormasPantalla(): ReactNode {
   const [normas, setNormas] = useState<Normas | undefined>(undefined);
   const [error, setError] = useState<unknown>(undefined);
+  const { sesion } = useSesion();
+  // Quién puede fundar o refundar (`constitution:found` en `access.ts`: facilitación o
+  // Garantías, nunca `tech-admin`). Sólo decide qué CTA mostrar; el servidor vuelve a exigirlo.
+  const puedeFundar =
+    sesion?.roles.includes('facilitator') === true || sesion?.roles.includes('guarantees') === true;
 
   useEffect(() => {
     traer<Normas>('/normas').then(setNormas).catch(setError);
@@ -151,6 +156,27 @@ export default function NormasPantalla(): ReactNode {
 
           <section aria-labelledby="versiones-titulo">
             <h2 id="versiones-titulo">Cada versión y qué cambió</h2>
+            {normas.hayNormas &&
+              // Aparece también cuando las reglas caducaron (`versionVigente === 0` con
+              // `hayNormas === true`): la lista de abajo sigue mostrando la última versión, con
+              // fecha de vencimiento, pero ninguna rige. `normas.descripcion` ya dice la caducidad
+              // en palabras (viene del aviso del dominio); acá sólo va la salida.
+              normas.versionVigente === 0 && (
+                <div className="aviso atencion" role="note">
+                  <strong>
+                    <span aria-hidden="true">! </span>Sin reglas vigentes:{' '}
+                  </strong>
+                  Nadie queda gobernado por reglas que nadie volvió a aprobar. Mientras esto siga
+                  así, sólo se puede leer y exportar la historia: no se puede reformar, votar ni
+                  ratificar nada.{' '}
+                  {puedeFundar ? (
+                    <Link href="/normas/fundar">Refundarlas con una asamblea nueva</Link>
+                  ) : (
+                    'Refundarlas es un acto de quien cuida el procedimiento o las garantías, con ' +
+                    'los números de esa asamblea.'
+                  )}
+                </div>
+              )}
             {normas.hayNormas ? (
               <ul className="tarjetas">
                 {normas.versiones.map((version) => (
@@ -185,7 +211,11 @@ export default function NormasPantalla(): ReactNode {
               // plataforma, y no lo están todavía.
               <Vacio
                 titulo="Todavía no hay ninguna versión aprobada dentro de Koinonía"
-                salida={{ href: '/decisiones', texto: 'Mirá las votaciones abiertas' }}
+                salida={
+                  puedeFundar
+                    ? { href: '/normas/fundar', texto: 'Fundar la primera versión' }
+                    : { href: '/decisiones', texto: 'Mirá las votaciones abiertas' }
+                }
               >
                 <p>
                   Lo que leés arriba son las reglas con las que arranca la plataforma, pero la
@@ -193,9 +223,14 @@ export default function NormasPantalla(): ReactNode {
                   su fecha, su votación y su vencimiento.
                 </p>
                 <p>
-                  Mientras eso no pase, acá no se puede abrir una reforma. Cuando la Asamblea las
-                  apruebe, esta lista va a mostrar cada versión, desde cuándo rigió y qué cambió
-                  respecto de la anterior, y ninguna se va a poder borrar.
+                  Mientras eso no pase, acá no se puede abrir una reforma.{' '}
+                  {puedeFundar
+                    ? 'Fundarla registra el acto de la asamblea que ya pasó: el censo, los votos y ' +
+                      'desde cuándo rige, para que cualquiera los contraste con el acta.'
+                    : 'Fundarla es un acto de quien cuida el procedimiento o las garantías, con ' +
+                      'los números de esa asamblea.'}{' '}
+                  Cuando exista, esta lista va a mostrar cada versión, desde cuándo rigió y qué
+                  cambió respecto de la anterior, y ninguna se va a poder borrar.
                 </p>
                 <p>
                   <Link href="/historial">Ver el historial completo</Link>

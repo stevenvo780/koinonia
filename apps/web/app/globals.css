@@ -618,8 +618,17 @@ nav.principal .pista {
     display: none;
   }
 
+  /*
+   * `margin-bottom`, no `display: block` a secas: sin él, «Consultar» y el rótulo del primer
+   * tramo («Escribir») quedaban dos renglones seguidos sin nada en medio —dos versalitas en
+   * mayúscula, una encima de la otra, que se leen como un error de maquetado y no como rótulo y
+   * subrótulo—. Sólo hace falta en este escalón: a partir de 64rem `.grupo` pasa a fila (más
+   * abajo en este fichero) y «Consultar» queda en línea junto al primer tramo, donde el hueco
+   * vertical sobraría; por eso se resetea a 0 ahí.
+   */
   nav.principal .titulo-grupo.solo-ancho {
     display: block;
+    margin-bottom: var(--e2);
   }
 
   nav.principal .aca-consulta {
@@ -716,6 +725,10 @@ nav.principal .pista {
   nav.principal .titulo-grupo.solo-ancho {
     flex: 0 0 auto;
     white-space: nowrap;
+    /* El hueco de 48rem (más arriba) era para separar dos renglones; acá «Consultar» vuelve a
+       compartir renglón con el primer tramo, y ese mismo hueco lo empujaría hacia abajo del resto
+       de la fila en vez de dejarlo alineado por la línea de base. */
+    margin-bottom: 0;
   }
 }
 
