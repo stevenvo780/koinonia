@@ -16,6 +16,28 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false },
 };
 
+/**
+ * Cada visita se arma de nuevo, y no es una preferencia: es lo que sostiene la política de contenido.
+ *
+ * `middleware.ts` pone un número de un solo uso por respuesta y Next.js se lo sella a todos sus
+ * guiones — pero sólo puede sellarlos si la pantalla se arma en esa misma respuesta. Con las
+ * pantallas prehorneadas en la construcción, el HTML servido no lleva número, la cabecera sí, y el
+ * navegador bloquea **todos** los guiones: la aplicación queda muerta, con la cáscara pintada y sin
+ * nada que responda. Se comprobó midiendo las dos: `/problemas` forzada a armarse en cada visita
+ * traía el mismo número que la cabecera; `/historial`, prehorneada, no traía ninguno.
+ *
+ * Por eso esta línea es carga estructural y no cosmética. Si alguien la quita, la política pasa a
+ * bloquear la aplicación entera en producción — y por eso hay una prueba que lo comprueba en las
+ * pantallas de verdad (`tests/e2e/15-politica-de-contenido.spec.ts`) en vez de confiar en que este
+ * comentario se lea.
+ *
+ * Lo que cuesta es poco acá: estas pantallas son componentes de cliente y lo que se prehorneaba era
+ * una cáscara vacía —el contenido siempre vino de `/api/*`—, así que armarla no es más trabajo que
+ * leerla de disco. Y `/_next/static/`, que es casi todo el peso que viaja, queda fuera del filtro
+ * del middleware y se sigue sirviendo igual.
+ */
+export const dynamic = 'force-dynamic';
+
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,

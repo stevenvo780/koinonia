@@ -322,7 +322,7 @@ uno de los dos dominios:
 | `log { … format filter … }`                                                             | Registro a fichero en `/var/log/caddy/`, con IP, `Cookie`, `Authorization` y `Set-Cookie` **borrados** (no ofuscados) del JSON antes de escribirlo, y la cadena de consulta recortada | C17 (ninguna IP, en ningún componente) y el mismo criterio de `redact`/`remove` que ya usa la API                                                                                                                                                                  |
 | `roll_size 10MiB` / `roll_keep 5` / `roll_keep_for 720h`                                | Tope de 50 MB por sitio, purga a 30 días                                                                                                                                              | Mismo tope que ya fija `docker-compose.yml` para los tres contenedores (verificado); 30 días sigue la convención que THREAT_MODEL.md usa para `consent_logs`, **no** una práctica ya en producción — esa purga automática está marcada como no implementada (T-11) |
 | `header { Strict-Transport-Security … X-Frame-Options … Cross-Origin-Opener-Policy … }` | Tres cabeceras de la lista de THREAT_MODEL.md §6 que hoy faltan (en modo obligatorio: son estáticas, no dependen de la aplicación)                                                    | `next.config.mjs` ya sirve las otras tres de esa misma lista (verificado)                                                                                                                                                                                          |
-| `Content-Security-Policy-Report-Only` (sólo en el dominio de la interfaz)               | La CSP estricta de THREAT_MODEL.md §6, sin nonce (apps/web no lo genera hoy), en modo **de sólo informe**: nunca bloquea, sólo reporta a la consola del navegador                     | apps/web usa Next.js, que normalmente mete script/estilo en línea; aplicarla obligatoria sin haber mirado qué reporta puede dejar la aplicación en blanco                                                                                                          |
+| ~~`Content-Security-Policy-Report-Only`~~ — ya no la pone el proxy                      | La política se mudó a `apps/web/middleware.ts` y allí es **obligatoria**, con número de un solo uso por respuesta                                                                     | El número tiene que ser el mismo que llevan los guiones del HTML que la aplicación arma, y el proxy no puede saberlo. Ver §9.4                                                                                                                                     |
 
 ### 9.2bis. Antes de aplicar esto: activa una revisión obligatoria de THREAT_MODEL.md
 
@@ -360,8 +360,8 @@ configuration`. (A los otros dos bloques que usan certificados de fichero —`vp
    registradas; una petición con `Cookie`, `Authorization`, `X-Forwarded-For` y `X-Real-Ip` puestas a
    mano llegó al log **sin esos cuatro campos** (el objeto `headers` de la línea registrada ni los
    menciona); una con `?token=secreto` en la URL quedó **sin la cadena de consulta**; y las cabeceras
-   (HSTS, `X-Frame-Options`, COOP, y `Content-Security-Policy-Report-Only` sólo en el dominio de la
-   interfaz) salieron en las respuestas reales.
+   (HSTS, `X-Frame-Options`, COOP) salieron en las respuestas reales; la política de contenido se
+   comprobó por separado, ya servida por la aplicación.
 
 Eso prueba la sintaxis contra el fichero real completo y el comportamiento contra el binario real.
 Lo que **no** se pudo probar —porque la VPS es de sólo lectura para quien escribió esto— es aplicar
@@ -427,10 +427,28 @@ tail -5 /var/log/caddy/koinonia-api-acceso.log /var/log/caddy/koinonia-web-acces
 **Revertir:** `cp` del backup del paso 1 sobre `/etc/caddy/Caddyfile` y `systemctl reload caddy` de
 nuevo — el mismo mecanismo que ya describe §7, con el prefijo `Caddyfile.bak-koinonia-registro-*`.
 
-### 9.4. Cuándo volver obligatoria la CSP
+### 9.4. La CSP ya es obligatoria, y la pone la aplicación
 
-La cabecera queda en `-Report-Only` a propósito (§9.2). Antes de quitarle el sufijo: abrir la
-interfaz un tiempo con las herramientas de desarrollo del navegador abiertas, revisar qué violaciones
-reporta la consola, y decidir con quien mantenga `apps/web` si hace falta `'unsafe-inline'`, un nonce
-real (lo que exige THREAT_MODEL.md §6 y hoy no existe en el código), o ninguna de las dos. Aplicarla
-obligatoria sin haber mirado esos informes es el error que el modo de sólo informe existe para evitar.
+Esta sección decía «cuándo volverla obligatoria» y dejaba una tarea: mirar qué violaciones reporta
+antes de quitarle el sufijo. Se miró, el 2026-08-25, con una prueba de humo contra producción:
+**nueve violaciones en cada carga**, todas de guiones y estilos en línea de Next.js sin sellar. La
+respuesta a la pregunta que quedaba abierta —¿`'unsafe-inline'`, un número de un solo uso, o nada?—
+resultó ser la del medio, y con una consecuencia que obligó a mover la cabecera de sitio: el número
+tiene que ser **el mismo** que llevan los guiones del HTML, así que sólo lo puede poner quien arma
+ese HTML. Un proxy no puede.
+
+Así que ahora la pone `apps/web/middleware.ts`, en modo obligatorio, y el proxy no pone ninguna.
+Tres cosas que conviene saber al operar esto:
+
+1. **`export const dynamic = 'force-dynamic'` en `apps/web/app/layout.tsx` es carga estructural.**
+   Sin esa línea las pantallas se prehornean en la construcción, el HTML servido no lleva número, la
+   cabecera sí, y el navegador bloquea **todos** los guiones: la aplicación queda pintada y muerta.
+   No rompe la construcción ni los tipos, así que se puede perder sin que nadie se entere — por eso
+   `tests/e2e/15-politica-de-contenido.spec.ts` lo comprueba contra las pantallas de verdad.
+2. **`style-src` conserva `'unsafe-inline'`**, y está argumentado en el propio middleware: la
+   interfaz tiene 72 atributos `style="…"` repartidos por las pantallas, y un número de un solo uso
+   no vale para un atributo. Se cede en estilos —que pintan— para poder ser estricto en guiones, que
+   ejecutan. Cerrarlo del todo es convertir esos 72 en clases; está anotado en `docs/OBJETIVO.md`.
+3. **Medido antes de decir que funciona:** cero violaciones en 23 pantallas, todas hidratando (el
+   desplegable de la navegación responde al clic, que es lo que no pasaría si los guiones estuvieran
+   bloqueados).
