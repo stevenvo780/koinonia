@@ -615,6 +615,56 @@ parte de «producción desactualizada» que preocupaba a la pasada anterior.
 
 ---
 
+## Estado del despliegue — 2026-08-25
+
+Reemplaza a la sección de abajo, que se conserva porque su comprobación criptográfica sigue siendo
+válida y porque una de sus afirmaciones resultó ser más generosa que los hechos — ver el último
+punto de esta tabla.
+
+Lo que sigue está **aplicado y comprobado en producción**, no preparado:
+
+| Qué | Estado | Comprobación |
+| --- | --- | --- |
+| Código en producción | `koinonia-{api,web}:20260825-8710ffc` | los tres contenedores `healthy`; `/salud` y `/entrar` responden 200 por loopback y por los dos dominios |
+| Verde del árbol | lint 0 · typecheck 0 · build 0 | **2 955 pruebas en 194 ficheros**, cero saltos; **E2E 240/240** en Chromium y Firefox |
+| Las 19 rutas de la interfaz | 200, y 404 la que no existe | recorridas con navegador real a 390 px: **cero violaciones de la política de contenido, cero pantallas sin hidratar, cero desborde horizontal** |
+| **Política de contenido** | **obligatoria**, ya no de sólo informe | el número de un solo uso de la cabecera es el mismo que llevan los guiones del HTML servido; la de sólo informe se quitó del proxy y los 16 sitios ajenos responden idéntico antes y después de recargar |
+| Título de pestaña | distinto por pantalla | `Problemas · Koinonía`, `Todo lo que quedó escrito · Koinonía`, `Acá no hay nada · Koinonía`… |
+| Rechazos de la API | en español, sin devolver lo que llegó | una dirección de 300 caracteres devuelve `DATOS_INVALIDOS` con la forma del contrato y sin reflejar la entrada; un cuerpo mal escrito devuelve **400** y ya no 500 |
+| Integridad del historial | `todoBien: true` sobre **617 hechos** | las seis comprobaciones en verde |
+| Copia de seguridad | temporizador activo | próxima a las 02:45 UTC; la anterior corrió hace 21 h |
+| Repositorio publicado | `main` en `origin` = `8710ffc` | local y remoto coinciden por SHA |
+| **Anclaje externo** | **anclando, pero rechazando casi todo** | ver el aviso de abajo |
+
+### ⚠ El anclaje confirma 1 de 24, y hasta hoy nadie lo había mirado así
+
+La sección del 2026-08-24 dice que el anclaje está «ENCENDIDO Y ANCLANDO DE VERDAD», y la
+comprobación criptográfica que la respalda —la cabecera del bloque 963995 recalculada a mano y
+contrastada contra un servicio externo— **sigue siendo cierta**. Pero esa comprobación mide una
+cosa (que la cabecera guardada es la de un bloque real de Bitcoin) y se leyó como si midiera otra
+(que los checkpoints quedan anclados). Al mirar el estado de los intentos, hoy:
+
+```
+governance.anchor_attempt (proveedor ots, clase blockchain):
+  CONFIRMADO =  1     PENDIENTE = 3     FALLIDO = 20
+governance.checkpoint = 24 · governance.bitcoin_header = 29 · altura máxima = 964057
+```
+
+El motivo de los rechazos está en los eventos `AnclajeFallido` del propio historial, y es siempre
+el mismo: *«el recibo declara la fecha X y la cabecera del bloque dice Y: el recibo miente sobre
+cuándo se ancló»*. No es que Bitcoin falle ni que el envío falle: es **nuestro propio verificador
+el que rechaza recibos que probablemente son buenos**, o recibos que se rellenaron mal al crearse.
+
+Hay además un defecto de observabilidad que agravó esto: los 20 intentos fallidos tienen
+`anchor_attempt.error` en **NULL**. El motivo existe —está en `outcome.detail`— pero
+`services/api/src/anchor/tarea.ts` sólo guarda el campo `error` del intento, y el camino de
+«la verificación devolvió inválido sin lanzar» lo deja vacío. Un fallo sin motivo guardado es un
+fallo que nadie puede arreglar, y por eso esto estuvo veinte veces delante sin que se viera.
+
+**Estado:** diagnóstico en curso con la evidencia de arriba. No se tocó producción para esto.
+Mientras no se cierre, lo honesto es decir que **la historia se está sellando y las cabeceras de
+Bitcoin son reales, pero el sistema sólo puede afirmar un checkpoint confirmado de veinticuatro**.
+
 ## Estado del despliegue — 2026-08-24
 
 Lo que sigue está **aplicado y comprobado en producción**, no preparado:

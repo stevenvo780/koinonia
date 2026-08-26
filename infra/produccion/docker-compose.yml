@@ -46,7 +46,7 @@ services:
         max-file: '5'
 
   api:
-    image: koinonia-api:20260823-e9c68d9
+    image: koinonia-api:20260825-8710ffc
     container_name: koinonia-api
     restart: unless-stopped
     env_file:
@@ -66,7 +66,7 @@ services:
         max-file: '5'
 
   web:
-    image: koinonia-web:20260823-e9c68d9
+    image: koinonia-web:20260825-8710ffc
     container_name: koinonia-web
     restart: unless-stopped
     # NO lleva `env_file`, a propósito. La interfaz no necesita ni la contraseña de PostgreSQL ni la
