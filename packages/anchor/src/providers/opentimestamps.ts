@@ -60,6 +60,43 @@ export interface OpenTimestampsOptions {
   readonly id?: string;
 }
 
+/**
+ * De todas las atestaciones de Bitcoin de un sello, la del bloque **más antiguo**.
+ *
+ * ═══ Por qué hace falta elegir, y por qué ésta ═══
+ *
+ * Un sello de OpenTimestamps no trae una atestación: trae varias. Los recibos reales de producción
+ * traen cuatro —dos calendarios distintos, más lo que se agrega al madurar el sello—; por ejemplo
+ * `[963933, 963933, 963984, 963989]`. Las cuatro son ciertas: el resumen está en los cuatro
+ * bloques. Lo que cambia es **qué fecha se anuncia como la del anclaje**.
+ *
+ * Se elige la más antigua porque es la afirmación más fuerte que el sello sostiene: «esto ya
+ * existía antes del bloque N». Elegir una posterior no sería falso, sería más débil — y la fecha
+ * de un anclaje es justo lo que no conviene debilitar.
+ *
+ * ═══ Qué se rompía sin esta regla ═══
+ *
+ * No había regla: al crear el recibo se tomaba la **primera** atestación en el orden en que el
+ * recorrido las devuelve, y al verificar se sobrescribía la fecha con **cada** atestación, así que
+ * quedaba la **última**. Dos criterios distintos sobre el mismo sello, y como casi siempre
+ * difieren, la comparación de fechas fallaba y el verificador acusaba al recibo de mentir. Medido
+ * en producción el 2026-08-25: **20 de 24 checkpoints rechazados**, todos con «el recibo declara
+ * la fecha X y la cabecera del bloque dice Y», y los rechazos de dos checkpoints distintos citando
+ * la MISMA hora — la del último bloque, que ambos sellos comparten.
+ *
+ * Por altura y no por orden de recorrido: la altura es un hecho del sello, y el orden depende de
+ * cómo se recorra el árbol.
+ */
+function atestacionMasAntigua(hojas: readonly OtsLeaf[]): { readonly height: number } | undefined {
+  let elegida: { readonly height: number } | undefined;
+  for (const hoja of hojas) {
+    const a = hoja.attestation;
+    if (a.kind !== 'bitcoin') continue;
+    if (elegida === undefined || a.height < elegida.height) elegida = { height: a.height };
+  }
+  return elegida;
+}
+
 export class OpenTimestampsProvider implements AnchorProvider {
   readonly meta: ProviderMetadata;
   readonly #calendar: OtsCalendarClient | undefined;
@@ -118,10 +155,10 @@ export class OpenTimestampsProvider implements AnchorProvider {
   ): Promise<AnchorReceipt> {
     const detached = await parseDetachedTimestamp(otsBytes);
     const leaves = walk(detached.timestamp);
-    const bitcoin = leaves.find((leaf) => leaf.attestation.kind === 'bitcoin');
+    const bitcoin = atestacionMasAntigua(leaves);
     const pending = leaves.find((leaf) => leaf.attestation.kind === 'pending');
 
-    const height = bitcoin?.attestation.kind === 'bitcoin' ? bitcoin.attestation.height : undefined;
+    const height = bitcoin?.height;
     const header = height === undefined ? undefined : this.#headers.get(height);
 
     const externalRef =
@@ -220,6 +257,7 @@ export class OpenTimestampsProvider implements AnchorProvider {
     );
 
     let confirmedAt: string | undefined;
+    let alturaDeLaFecha: number | undefined;
     let confirmed = false;
     let pending = false;
 
@@ -277,7 +315,14 @@ export class OpenTimestampsProvider implements AnchorProvider {
       const instant = blockInstant(header);
       const blockHash = await blockHashHex(header);
       confirmed = true;
-      confirmedAt = instant;
+      // La del bloque más antiguo, igual que al crear el recibo (ver `atestacionMasAntigua`). Antes
+      // esto era una asignación a secas dentro del bucle, así que quedaba la ÚLTIMA atestación
+      // comprobada: dos criterios distintos sobre el mismo sello, y de ahí que el propio
+      // verificador acusara de mentir a recibos buenos.
+      if (alturaDeLaFecha === undefined || attestation.height < alturaDeLaFecha) {
+        alturaDeLaFecha = attestation.height;
+        confirmedAt = instant;
+      }
       checks.push(
         check(
           'bloque',

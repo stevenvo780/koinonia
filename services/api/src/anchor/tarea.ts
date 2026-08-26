@@ -315,7 +315,7 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
             intento.receipt?.independenceClass ?? clases.get(intento.provider) ?? 'third-party-log',
           state: estadoDe(intento.outcome?.status, intento.receipt),
           ...(intento.receipt === undefined ? {} : { receipt: intento.receipt }),
-          ...(intento.error === undefined ? {} : { error: intento.error }),
+          ...motivoDelIntento(intento),
         });
       }
 
@@ -448,6 +448,31 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
     madurarPendientes,
     reposo: () => enCurso,
   };
+}
+
+/**
+ * El motivo del intento, SIEMPRE que haya fracasado.
+ *
+ * Antes se guardaba sólo `intento.error`, que existe cuando algo **lanzó** —un envío que no salió,
+ * una verificación que reventó—. Pero el camino más común no lanza: la verificación termina bien y
+ * devuelve `invalido`, con su porqué en `outcome.detail`. Ese texto se publicaba en el evento del
+ * historial y **no se guardaba en la fila del intento**, que quedaba con `error` en NULL.
+ *
+ * Costó no ver nada. El 2026-08-25 había veinte intentos fallidos seguidos, todos con el mismo
+ * defecto detrás, y la tabla que se mira para saber cómo va el anclaje no decía ni una palabra de
+ * por qué. Un fallo sin motivo guardado es un fallo que nadie arregla.
+ *
+ * Devuelve un trozo de objeto y no un `string | undefined` porque `exactOptionalPropertyTypes`
+ * distingue «sin la clave» de «la clave con `undefined`», y la fila no quiere la clave si no hay
+ * motivo.
+ */
+export function motivoDelIntento(intento: {
+  readonly error?: string | undefined;
+  readonly outcome?: { readonly status: string; readonly detail: string } | undefined;
+}): { readonly error?: string } {
+  if (intento.error !== undefined) return { error: intento.error };
+  if (intento.outcome?.status === 'invalido') return { error: intento.outcome.detail };
+  return {};
 }
 
 function estadoDe(
