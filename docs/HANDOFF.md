@@ -275,7 +275,7 @@ tocar esto debe mantener esa decisión.
 | `0010_private_material.sql` | Aperturas textuales restringidas con ciphertext de longitud fija |
 | `0011_constitucion.sql` | El texto de las reglas direccionado por su huella (ADR-0051), con la regla de tipos del ledger aplicada en el esquema |
 | `0012_sesion_endurecida.sql` | **Nueva desde el corte anterior.** Marca de actividad para el corte por inactividad de la sesión (T-06, `docs/THREAT_MODEL.md`) |
-| `0013_rate_consumption_idempotencia.sql` | **Nueva desde el corte anterior.** Tabla `identity.rate_consumption`: dedup por `(requestId, ambito, sujeto, window_start)` para que un reintento de idempotencia no gaste un cupo real (ADR-0055 — **citado en el código, pero el fichero del ADR no existe todavía**: hueco de trazabilidad anotado en `docs/OBJETIVO.md`, fila «ADRs» de `seguridad-y-tecnologia`) |
+| `0013_rate_consumption_idempotencia.sql` | **Nueva desde el corte anterior.** Tabla `identity.rate_consumption`: dedup por `(requestId, ambito, sujeto, window_start)` para que un reintento de idempotencia no gaste un cupo real (ADR-0055, `docs/adr/0055-idempotencia-del-consumo-de-cupo.md` — el fichero se escribió el 2026-08-26, después que el código; el hueco de trazabilidad que esta fila anotaba ya está cerrado) |
 
 **El corte anterior decía once y hoy son trece:** se sumaron `0012_sesion_endurecida.sql` y
 `0013_rate_consumption_idempotencia.sql`. El resto del dominio sigue sin tabla propia y eso es
