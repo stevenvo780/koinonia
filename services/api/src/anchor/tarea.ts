@@ -416,6 +416,25 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
         );
       }
 
+      /*
+       * Una pasada de maduración AL ARRANCAR, además de la periódica.
+       *
+       * Sin esto, un despliegue deja el anclaje dormido una hora entera: `arrancar()` sólo
+       * programaba temporizadores, así que el reloj se reiniciaba en cada reinicio. Se vio el
+       * 2026-08-26 al desplegar un arreglo del verificador y no poder comprobar si servía hasta la
+       * vuelta siguiente — y con despliegues seguidos, el anclaje podría no llegar a correr nunca.
+       *
+       * Se madura y **no** se corta: madurar vuelve a consultar y a verificar recibos que YA se
+       * enviaron —es idempotente y no crea nada—, mientras que cortar emitiría un checkpoint nuevo,
+       * y un contenedor que se reinicia en bucle emitiría uno por reinicio. La diferencia entre las
+       * dos es justo la que hace segura esta línea.
+       *
+       * Lo que sí cuesta: un reinicio en bucle vuelve a consultar los calendarios cada vez. Está
+       * acotado a `pendientesQueSeSiguen` checkpoints y la cola lo serializa, así que es un puñado
+       * de peticiones a un servicio público, no una ráfaga.
+       */
+      void enCola(madurarPendientes);
+
       const maduracion = setInterval(() => {
         void enCola(madurarPendientes);
       }, config.pollCadaMs);
