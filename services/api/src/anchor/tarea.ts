@@ -522,7 +522,32 @@ interface FilaCheckpoint {
 }
 
 /**
- * Checkpoints que aún no están firmes, del más reciente hacia atrás.
+ * Checkpoints a los que todavía les falta un anclaje confirmado, **el más desatendido primero**.
+ *
+ * ═══ Qué se rompía ═══
+ *
+ * Esto decía «los que no están firmes, del más reciente hacia atrás, los primeros 24». Dos
+ * problemas encadenados:
+ *
+ *  · **`firm` no lo pone nadie nunca.** Se escribe al insertar, con `false` por defecto, y no hay
+ *    una sola línea en el proyecto que lo ponga en `true`. Comprobado en producción el 2026-08-26:
+ *    34 checkpoints, los 34 con `firm = false`. Así que ese filtro no filtraba nada y la lista de
+ *    «pendientes» crecía con la historia.
+ *  · **Del más reciente hacia atrás.** Con la lista creciendo y el límite fijo, la ventana se aleja
+ *    del principio de la historia: los checkpoints más viejos dejan de mirarse **para siempre**. Y
+ *    son exactamente al revés de lo que conviene abandonar — un checkpoint nuevo sin confirmar
+ *    tiene otra vuelta dentro de una hora; uno viejo sin confirmar no la tiene nunca. Se vio el
+ *    2026-08-26: tras arreglar el verificador, 29 checkpoints pasaron a confirmados y quedaron
+ *    tres —los números 1, 6 y 11, los más antiguos— fuera de la ventana, con recibos buenos que
+ *    nadie iba a volver a mirar.
+ *
+ * ═══ La regla nueva ═══
+ *
+ * Entra el que **no tiene ningún anclaje confirmado**, y primero el que lleva más tiempo sin que
+ * se intente —`updated_at` más antiguo, y antes que todos el que no se ha intentado nunca—. Es una
+ * cola justa: nada se queda atrás por ser viejo y nada se queda atrás por ser nuevo, porque en
+ * cuanto uno se atiende se va al final. Y la lista se vacía sola cuando todo está anclado, que es
+ * lo que `firm` prometía y no hacía.
  *
  * El `ORDER BY` va cualificado con la tabla a propósito: con `tree_size::text AS tree_size`,
  * PostgreSQL ordenaría por la columna de SALIDA —que es texto— y con diez checkpoints el «último»
@@ -533,11 +558,15 @@ export async function checkpointsPendientes(
   limite: number,
 ): Promise<readonly Checkpoint[]> {
   const { rows } = await client.query<FilaCheckpoint>(
-    `SELECT tree_size::text AS tree_size, root_hash, heads_root, prev_checkpoint,
-            issued_at, checkpoint_hash, firm
-       FROM governance.checkpoint
-      WHERE firm = false
-      ORDER BY governance.checkpoint.tree_size DESC
+    `SELECT c.tree_size::text AS tree_size, c.root_hash, c.heads_root, c.prev_checkpoint,
+            c.issued_at, c.checkpoint_hash, c.firm
+       FROM governance.checkpoint c
+      WHERE NOT EXISTS (
+              SELECT 1 FROM governance.anchor_attempt a
+               WHERE a.tree_size = c.tree_size AND a.state = 'CONFIRMADO')
+      ORDER BY (SELECT max(a.updated_at) FROM governance.anchor_attempt a
+                 WHERE a.tree_size = c.tree_size) ASC NULLS FIRST,
+               c.tree_size ASC
       LIMIT $1`,
     [limite],
   );
