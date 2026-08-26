@@ -70,13 +70,21 @@ const CLAVES_RESUMEN = new Set([
   'queHaceFaltaParaQuePase',
 ]);
 
-/** `decisionDetalle` = resumen + estas cinco, dos de ellas opcionales (http.ts:586). */
+/**
+ * `decisionDetalle` = resumen + estas seis, dos de ellas opcionales (`http.ts`).
+ *
+ * La lista es blanca a propósito: cualquier clave nueva en el detalle rompe esta prueba y obliga a
+ * mirarla antes de dejarla pasar, que es exactamente lo que pasó con `objeciones` el 2026-08-25.
+ * Se admite porque el texto de una objeción es público —existe para poder responderse— y porque va
+ * SIN firma; lo que no puede aparecer nunca es de quién es, y eso lo comprueba el caso de abajo.
+ */
 const CLAVES_DETALLE_EXTRA = new Set([
   'cuerpoVersion',
   'plan',
   'puedoDecidir',
   'yaVotaste',
   'motivoNoPuedo',
+  'objeciones',
 ]);
 
 describe.skipIf(!env.ok)(`conteo oculto de una votación abierta${skipNote(env)}`, () => {
@@ -249,6 +257,14 @@ describe.skipIf(!env.ok)(`conteo oculto de una votación abierta${skipNote(env)}
       });
       expect(res.statusCode).toBe(200);
       const detalle = res.json<Record<string, unknown>>();
+
+      // Objetar ES el sentido de un voto: si `objeciones` trajera de quién es cada una, esta
+      // respuesta estaría publicando cómo votó esa persona — lo mismo que evita que diga «votaste
+      // que sí» en vez de «ya votaste».
+      const objeciones = JSON.stringify(detalle['objeciones'] ?? []);
+      for (const persona of [miembroSi, miembroNo, ajena, facilitadora]) {
+        expect(objeciones, 'una objeción no puede venir firmada').not.toContain(persona.miembroId);
+      }
 
       const clavesEsperadas = new Set([...CLAVES_RESUMEN, ...CLAVES_DETALLE_EXTRA]);
       // `plan` y `motivoNoPuedo` son opcionales: sólo exigimos que las claves PRESENTES estén

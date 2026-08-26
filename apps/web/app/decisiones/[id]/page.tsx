@@ -32,6 +32,182 @@ import { enPalabras, nombreDelMetodo, porQueTodaviaNo } from '../metodos-en-pala
 type Postura = 'consent' | 'concern' | 'object';
 type Binario = 'si' | 'no' | 'abstengo';
 
+/**
+ * Lo que bloquea la decisión, y —para quien facilita— cómo se desatasca.
+ *
+ * ═══ Por qué existe esta pieza ═══
+ *
+ * El motor sabía desestimar una objeción desde hacía tiempo: panel sorteado, dos tercios,
+ * motivación escrita, y todo eso validado de verdad. Levantar una objeción se podía. Desestimarla
+ * no se podía **desde ninguna pantalla**, así que una decisión con una objeción en pie se quedaba
+ * ahí para siempre. La reauditoría lo llamó por su nombre: construido e inalcanzable, que es peor
+ * que faltante — lo faltante se echa de menos.
+ *
+ * ═══ Tres decisiones sobre qué se enseña ═══
+ *
+ *  1. **La objeción se ve aunque no puedas hacer nada con ella.** Es lo que explica por qué la
+ *     decisión no avanza, y esconderlo a quien no facilita convertiría el bloqueo en un misterio.
+ *  2. **No dice quién objetó, y no se puede.** El texto viene sin firma desde la API: objetar es el
+ *     sentido de un voto, y decir de quién es sería publicar ese voto (ADR-0010).
+ *  3. **Desestimar cuesta escribir.** El formulario pide cuántas personas del panel votaron a favor
+ *     y una motivación de verdad — la misma que el motor exige y que queda publicada—. No hay botón
+ *     de «desestimar» a secas: la comunidad tiene derecho a leer por qué se pasó por encima de una
+ *     objeción, y por eso el precio de hacerlo es explicarse.
+ */
+function ObjecionesEnPie({
+  decisionId,
+  objeciones,
+  puedeDesestimar,
+  alDesestimar,
+}: {
+  readonly decisionId: string;
+  readonly objeciones: DecisionDetalle['objeciones'];
+  readonly puedeDesestimar: boolean;
+  readonly alDesestimar: () => void;
+}): ReactNode {
+  const [abierta, setAbierta] = useState<string | undefined>(undefined);
+  const [votos, setVotos] = useState('');
+  const [motivacion, setMotivacion] = useState('');
+  const [error, setError] = useState<unknown>(undefined);
+  const { ejecutar, enCurso } = useAccionUnica();
+
+  if (objeciones.length === 0) return null;
+
+  async function desestimar(evento: SyntheticEvent, objecionId: string): Promise<void> {
+    evento.preventDefault();
+    setError(undefined);
+    const cuantos = Number(votos);
+    if (!Number.isInteger(cuantos) || cuantos < 0) {
+      setError(
+        new Error('Escribí cuántas personas del panel votaron desestimar, en número entero.'),
+      );
+      return;
+    }
+    const resultado = await ejecutar(
+      `desestimar-${objecionId}`,
+      { objecionId, cuantos, motivacion },
+      () =>
+        enviar(`/decisiones/${decisionId}/objeciones/${objecionId}/desestimar`, {
+          requestId: crypto.randomUUID(),
+          votos: cuantos,
+          motivacion,
+        }),
+    );
+    if (resultado.estado === 'hecho') {
+      setAbierta(undefined);
+      setVotos('');
+      setMotivacion('');
+      alDesestimar();
+    } else if (resultado.estado === 'fallo') {
+      setError(resultado.error);
+    }
+  }
+
+  return (
+    <section aria-labelledby="objeciones-titulo">
+      <h2 id="objeciones-titulo">Lo que la está frenando</h2>
+      <p className="suave">
+        Una objeción no es que a alguien no le guste: es que alguien mostró un daño concreto a lo
+        que el grupo se propuso. Mientras siga en pie, esta decisión no pasa.
+      </p>
+      <ul className="tarjetas">
+        {objeciones.map((objecion) => (
+          <li key={objecion.id}>
+            <article className="tarjeta">
+              <h3>Qué se daña: {objecion.objetivoDanado}</h3>
+              <p>{objecion.argumento}</p>
+              {objecion.enmiendaPropuesta !== undefined && (
+                <p>
+                  <strong>Salida que propone:</strong> {objecion.enmiendaPropuesta}
+                </p>
+              )}
+              <Meta>Se levantó en la ronda {objecion.ronda}</Meta>
+              {puedeDesestimar &&
+                (abierta === objecion.id ? (
+                  <form onSubmit={(e) => void desestimar(e, objecion.id)} noValidate>
+                    <p>
+                      <label htmlFor={`votos-${objecion.id}`}>
+                        Cuántas personas del grupo sorteado votaron desestimarla
+                      </label>
+                      <input
+                        id={`votos-${objecion.id}`}
+                        name="votos"
+                        type="number"
+                        min={0}
+                        inputMode="numeric"
+                        value={votos}
+                        onChange={(e) => {
+                          setVotos(e.target.value);
+                        }}
+                        required
+                      />
+                    </p>
+                    <p>
+                      <label htmlFor={`motivacion-${objecion.id}`}>
+                        Por qué se desestima, para que cualquiera pueda leerlo
+                      </label>
+                      <textarea
+                        id={`motivacion-${objecion.id}`}
+                        name="motivacion"
+                        rows={4}
+                        value={motivacion}
+                        onChange={(e) => {
+                          setMotivacion(e.target.value);
+                        }}
+                        required
+                      />
+                      <span className="suave">
+                        Queda publicado junto a la decisión. Pasar por encima de una objeción sin
+                        explicarse es lo único que este procedimiento no permite.
+                      </span>
+                    </p>
+                    <ErrorVisible error={error} />
+                    <p className="acciones">
+                      {/* `enCurso` es la CLAVE de la acción en vuelo, no un booleano: se compara
+                          con la de esta objeción para no apagar el botón de otra tarjeta. */}
+                      <button
+                        className="boton"
+                        type="submit"
+                        disabled={enCurso === `desestimar-${objecion.id}`}
+                      >
+                        {enCurso === `desestimar-${objecion.id}`
+                          ? 'Publicando…'
+                          : 'Publicar la desestimación'}
+                      </button>{' '}
+                      <button
+                        className="boton secundario"
+                        type="button"
+                        onClick={() => {
+                          setAbierta(undefined);
+                          setError(undefined);
+                        }}
+                      >
+                        Dejarlo así
+                      </button>
+                    </p>
+                  </form>
+                ) : (
+                  <p>
+                    <button
+                      className="boton secundario"
+                      type="button"
+                      onClick={() => {
+                        setAbierta(objecion.id);
+                        setError(undefined);
+                      }}
+                    >
+                      Publicar la desestimación de esta objeción
+                    </button>
+                  </p>
+                ))}
+            </article>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function Decision(): ReactNode {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -275,6 +451,22 @@ export default function Decision(): ReactNode {
             siguen acá, y quien cuida el procedimiento puede cerrarla y volver a abrirla con una
             regla que sí se pueda responder.
           </Aviso>
+        )}
+
+        {!cerrada && (
+          <ObjecionesEnPie
+            decisionId={decision.id}
+            objeciones={decision.objeciones}
+            /*
+             * La misma regla que aplica la ruta: facilita el procedimiento o garantías. Se comprueba
+             * también acá, y no porque la interfaz decida nada —el servidor rechaza igual a quien no
+             * corresponda— sino porque ofrecer un botón que va a fallar es peor que no ofrecerlo.
+             */
+            puedeDesestimar={
+              sesion?.roles.some((rol) => rol === 'facilitator' || rol === 'guarantees') ?? false
+            }
+            alDesestimar={recargar}
+          />
         )}
 
         {!cerrada && decision.puedoDecidir && (consentimiento || formulario === 'binaria') && (

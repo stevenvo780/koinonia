@@ -411,6 +411,56 @@ describe.skipIf(!env.ok)(`desestimar una objeción por HTTP${skipNote(env)}`, ()
     expect([...recalculado.panel].sort()).toEqual([...cuerpo.panel].sort());
   });
 
+  it('la pantalla de la decisión enseña la objeción que la está frenando', async () => {
+    // Sin esto, el motor sabía desestimar una objeción y no había forma de llegar ahí desde
+    // ninguna pantalla: construido e inalcanzable, que es peor que faltante.
+    const { decisionId } = await decisionConObjecion();
+    const res = await e.app.inject({
+      method: 'GET',
+      url: `/decisiones/${decisionId}`,
+      headers: como(objetor.testigo),
+    });
+    expect(res.statusCode).toBe(200);
+    const detalle = res.json<{
+      objeciones: readonly {
+        id: string;
+        argumento: string;
+        objetivoDanado: string;
+        ronda: number;
+      }[];
+    }>();
+    expect(detalle.objeciones).toHaveLength(1);
+    const objecion = detalle.objeciones[0];
+    expect(objecion?.argumento.length).toBeGreaterThan(0);
+    expect(objecion?.objetivoDanado.length).toBeGreaterThan(0);
+    expect(objecion?.ronda).toBe(1);
+  });
+
+  it('y NO enseña quién objetó, que es el sentido de ese voto', async () => {
+    /*
+     * La mitad que no se puede perder. Una objeción vive dentro de una papeleta, y objetar **es**
+     * el sentido del voto: devolver el autor en una lectura de pantalla sería publicar cómo votó
+     * esa persona, que es justo lo que ADR-0010 y la coerción del votante (T-10) prohíben — y lo
+     * mismo por lo que esta misma respuesta dice «ya votaste» y nunca «votaste que sí».
+     *
+     * Se comprueba sobre el cuerpo entero y no sobre una clave concreta: el identificador de quien
+     * objetó no puede aparecer por ningún camino, ni en un campo nuevo que alguien agregue mañana.
+     */
+    const { decisionId } = await decisionConObjecion();
+    const res = await e.app.inject({
+      method: 'GET',
+      url: `/decisiones/${decisionId}`,
+      headers: como(objetor.testigo),
+    });
+    expect(res.statusCode).toBe(200);
+    // Sobre `objeciones` y no sobre el cuerpo entero: el plan de ejecución nombra a quien queda
+    // como responsable, y eso es público a propósito. En este escenario resulta ser la misma
+    // persona que objetó, que es una coincidencia del montaje y no una fuga.
+    expect(JSON.stringify(res.json<{ objeciones: unknown }>().objeciones)).not.toContain(
+      objetor.miembroId,
+    );
+  });
+
   it('desestimar una objeción de un método sin consentimiento se rechaza', async () => {
     const problema = await e.app.inject({
       method: 'POST',

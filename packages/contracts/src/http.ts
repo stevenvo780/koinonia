@@ -583,6 +583,20 @@ export const decisionResumen = z.object({
 });
 export type DecisionResumen = z.infer<typeof decisionResumen>;
 
+/** Una objeción admitida: lo que hay que responder para que la decisión pueda seguir. */
+export const objecionEnPie = z.object({
+  id: opaqueId,
+  /** Qué daño concreto se señala. El motor exige que no sea una frase vacía. */
+  argumento: z.string(),
+  /** Qué objetivo del grupo se daña. Es lo que distingue una objeción de una preferencia. */
+  objetivoDanado: z.string(),
+  /** Si quien objetó propuso además una salida. Opcional, pero es lo que desatasca. */
+  enmiendaPropuesta: z.string().optional(),
+  /** En qué ronda se levantó. Una objeción que sobrevive rondas pesa distinto. */
+  ronda: z.number().int().positive(),
+});
+export type ObjecionEnPie = z.infer<typeof objecionEnPie>;
+
 export const decisionDetalle = decisionResumen.extend({
   cuerpoVersion: z.string(),
   /** Ausente únicamente en decisiones históricas; toda decisión nueva lo congela al abrir. */
@@ -597,6 +611,19 @@ export const decisionDetalle = decisionResumen.extend({
    */
   yaVotaste: z.boolean(),
   motivoNoPuedo: z.string().optional(),
+  /**
+   * Las objeciones que siguen en pie, cuando el método las admite.
+   *
+   * Están porque sin ellas la pantalla no podía enseñar lo que de verdad bloquea una decisión: el
+   * motor ya sabía desestimar una objeción —panel sorteado, dos tercios, motivación escrita— y no
+   * había forma de llegar ahí desde ninguna pantalla. Se comprobó en la reauditoría del 2026-08-25:
+   * construido e inalcanzable, que es peor que faltante, porque nadie lo echa de menos.
+   *
+   * **No dicen quién objetó, y no es un olvido.** La objeción vive dentro de una papeleta, y el
+   * secreto del voto (ADR-0010) no admite que una lectura de pantalla devuelva de quién es. El
+   * texto sí es público —una objeción existe para poder responderse—, la firma no.
+   */
+  objeciones: z.array(objecionEnPie).default([]),
 });
 export type DecisionDetalle = z.infer<typeof decisionDetalle>;
 

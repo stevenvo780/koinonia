@@ -22,6 +22,7 @@ import type {
   ExecutionPlan,
   InitiativeState,
   MemberId,
+  Objection,
   Outcome,
   ProblemState,
   ProposalState,
@@ -30,6 +31,7 @@ import type {
   TaskPauseRecord,
 } from '@koinonia/domain';
 import {
+  blockingObjections,
   can,
   capWeight,
   currentContributions,
@@ -48,6 +50,7 @@ import type {
   AporteDeliberacion,
   Consenso,
   DecisionDetalle,
+  ObjecionEnPie,
   DecisionResumen,
   DelegacionesDeDecision,
   DeliberacionDetalle,
@@ -258,6 +261,74 @@ export function decisionResumenDto(
 }
 
 /**
+ * Las objeciones que siguen bloqueando, con su texto y **sin su firma**.
+ *
+ * ═══ Por qué hay que unir dos sitios ═══
+ *
+ * El estado proyectado guarda el registro de cada objeción —identificador, ronda, si sigue
+ * admitida, si se integró— pero no su texto; el texto viaja dentro de la papeleta que la levantó.
+ * Es la misma unión que hace el escrutinio (`mergeObjections`), y por el mismo motivo: una
+ * objeción presente en una papeleta y ausente del registro sigue bloqueando.
+ *
+ * ═══ Por qué no va quién objetó ═══
+ *
+ * Porque está dentro de una papeleta. Devolver el autor en una lectura de pantalla sería devolver
+ * el sentido del voto de esa persona —objetar ES el sentido del voto—, que es exactamente lo que
+ * ADR-0010 y la coerción del votante (T-10) prohíben. El texto sí es público: una objeción existe
+ * para poder responderse, y el panel que la evalúa necesita leerla. La firma, no.
+ */
+function objecionesEnPie(state: DecisionState): readonly ObjecionEnPie[] {
+  const textos = new Map<string, Objection>();
+  for (const papeleta of state.ballots) {
+    const payload = papeleta.payload;
+    if (payload.kind !== 'consent' || payload.objection === undefined) continue;
+    textos.set(payload.objection.objectionId, payload.objection);
+  }
+  const salida: ObjecionEnPie[] = [];
+  const enPie = new Set(
+    blockingObjections(state.objections).map((registro) => registro.objectionId as string),
+  );
+  /*
+   * Las que viajan dentro de una papeleta y todavía no tienen registro propio también cuentan.
+   *
+   * Es la misma unión que hace el escrutinio (`mergeObjections`) y por el mismo motivo: **toda
+   * objeción nace admitida**, así que una presente en una papeleta y ausente del registro sigue
+   * bloqueando. No se llama a esa función porque pide papeletas EFECTIVAS —las que sobreviven al
+   * descarte y a la resolución de voto prestado—, y calcularlas exige el contexto entero del
+   * escrutinio. Acá no se está escrutando: se está enseñando qué frena la decisión, y para eso la
+   * regla que importa es la de admisión, que es esta.
+   *
+   * Sin esta parte, la pantalla decía «no hay nada frenando esto» sobre una decisión frenada — se
+   * comprobó: con sólo el registro, la lista salía vacía en el escenario real de una objeción
+   * recién levantada.
+   */
+  for (const id of textos.keys()) {
+    const desestimada = state.objections.some(
+      (registro) => registro.objectionId === id && registro.status !== 'admitted',
+    );
+    const integrada = state.objections.some(
+      (registro) => registro.objectionId === id && registro.integrated,
+    );
+    if (!desestimada && !integrada) enPie.add(id);
+  }
+
+  for (const id of [...enPie].sort()) {
+    const texto = textos.get(id);
+    if (texto === undefined) continue;
+    salida.push({
+      id,
+      argumento: texto.argument,
+      objetivoDanado: texto.harmedAim,
+      ...(texto.proposedAmendment === undefined
+        ? {}
+        : { enmiendaPropuesta: texto.proposedAmendment }),
+      ronda: texto.raisedAtRound,
+    });
+  }
+  return salida;
+}
+
+/**
  * Si esta persona ya emitió una papeleta en la ronda vigente — nunca CUÁL.
  *
  * `GET /decisiones/:id` es una lectura que se repite: la primera vez es la confirmación del propio
@@ -288,6 +359,7 @@ export function decisionDetalleDto(
     ...(plan === undefined ? {} : { plan: planDto(plan) }),
     puedoDecidir: enPadron && state.status === 'Open',
     yaVotaste: quien !== undefined && yaVotasteEnEstaRonda(state, quien),
+    objeciones: [...objecionesEnPie(state)],
     ...(enPadron
       ? {}
       : {
