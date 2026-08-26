@@ -193,6 +193,33 @@ docker logs koinonia-web --tail 50 | grep -i error   # sin errores de conexión 
 
 Si el paso 3 falla pero el 2 no, el problema está en Caddy (§6), no en los contenedores.
 
+## 5bis. Después de desplegar: mirar el anclaje
+
+Desde el 2026-08-26 la tarea de anclaje hace **una pasada de maduración al arrancar**, así que ya
+no hay que esperar una hora para saber si quedó bien. Un minuto después de `docker compose up -d`:
+
+```bash
+docker exec koinonia-postgres psql -U postgres -d koinonia -c \
+  "select state, count(*), count(error) con_motivo, max(updated_at)::timestamp(0) ultima
+     from governance.anchor_attempt group by 1 order by 1;"
+```
+
+Qué mirar, en este orden:
+
+1. **`ultima` tiene que ser posterior al despliegue.** Si no, la pasada de arranque no corrió y
+   todo lo demás que se lea es del código anterior. Es el error que costó una hora el 2026-08-26:
+   se leyeron los conteos sin mirar la marca de tiempo y parecía que un arreglo había funcionado
+   cuando todavía no se había ejecutado.
+2. **`FALLIDO` con `con_motivo` en cero es sospechoso**, no tranquilizador: significa que algo
+   falló y no dejó dicho por qué. Desde el 2026-08-26 un fallo siempre guarda su motivo, así que
+   un cero ahí con fallos presentes indica filas viejas que nadie ha vuelto a intentar.
+3. **`PENDIENTE` es normal.** Un sello recién enviado espera a que Bitcoin lo confirme; puede
+   tardar horas. Lo que no es normal es que un mismo checkpoint lleve días pendiente.
+
+Y una cosa que **no** es un fallo: el veredicto dirá `NO_ANCLADO (blockchain)` mientras sólo esté
+activa esa clase. Es el quórum 2-de-3 diciendo la verdad, no un error — faltan el padrón de
+veeduría y los testigos por correo, que son designaciones humanas.
+
 ## 6. Volver atrás
 
 Como el `image:` de cada servicio es un tag fijo y las imágenes anteriores no se borran, revertir

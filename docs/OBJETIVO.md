@@ -634,36 +634,51 @@ Lo que sigue está **aplicado y comprobado en producción**, no preparado:
 | Integridad del historial | `todoBien: true` sobre **617 hechos** | las seis comprobaciones en verde |
 | Copia de seguridad | temporizador activo | próxima a las 02:45 UTC; la anterior corrió hace 21 h |
 | Repositorio publicado | `main` en `origin` = `8710ffc` | local y remoto coinciden por SHA |
-| **Anclaje externo** | **anclando, pero rechazando casi todo** | ver el aviso de abajo |
+| **Anclaje externo** | **29 checkpoints confirmados de 34** | rechazaba 20 de 24 por un defecto del propio verificador; ver abajo |
 
-### ⚠ El anclaje confirma 1 de 24, y hasta hoy nadie lo había mirado así
+### El anclaje confirmaba 1 de 24 — cerrado el 2026-08-26, y con dos defectos detrás
 
-La sección del 2026-08-24 dice que el anclaje está «ENCENDIDO Y ANCLANDO DE VERDAD», y la
-comprobación criptográfica que la respalda —la cabecera del bloque 963995 recalculada a mano y
-contrastada contra un servicio externo— **sigue siendo cierta**. Pero esa comprobación mide una
-cosa (que la cabecera guardada es la de un bloque real de Bitcoin) y se leyó como si midiera otra
-(que los checkpoints quedan anclados). Al mirar el estado de los intentos, hoy:
+La sección del 2026-08-24 decía que el anclaje estaba «ENCENDIDO Y ANCLANDO DE VERDAD». Su
+comprobación criptográfica seguía siendo cierta —la cabecera del bloque 963995, recalculada a
+mano, coincide con la de un servicio externo— pero **medía una cosa y se leyó como si midiera
+otra**: que la cabecera guardada sea la de un bloque real de Bitcoin no dice nada sobre si los
+checkpoints quedan anclados. Al mirar los intentos había 1 confirmado y 20 rechazados.
 
-```
-governance.anchor_attempt (proveedor ots, clase blockchain):
-  CONFIRMADO =  1     PENDIENTE = 3     FALLIDO = 20
-governance.checkpoint = 24 · governance.bitcoin_header = 29 · altura máxima = 964057
-```
+**El primer defecto: el verificador se rechazaba a sí mismo.** Un sello de OpenTimestamps no trae
+una atestación de Bitcoin, trae varias —los recibos reales de producción traen cuatro—, y no
+había ninguna regla para elegir cuál es «la fecha del anclaje». Los dos sitios que la elegían
+elegían distinto: al crear el recibo se tomaba la primera del recorrido; al verificar se
+sobrescribía con cada una, así que quedaba la última. De ahí que los rechazos de dos checkpoints
+distintos citaran la misma hora — la del último bloque, que los dos sellos comparten. Ahora la
+regla es una: la del bloque **más antiguo**, que es la afirmación más fuerte que el sello
+sostiene.
 
-El motivo de los rechazos está en los eventos `AnclajeFallido` del propio historial, y es siempre
-el mismo: *«el recibo declara la fecha X y la cabecera del bloque dice Y: el recibo miente sobre
-cuándo se ancló»*. No es que Bitcoin falle ni que el envío falle: es **nuestro propio verificador
-el que rechaza recibos que probablemente son buenos**, o recibos que se rellenaron mal al crearse.
+Medido en producción tras desplegarlo:
 
-Hay además un defecto de observabilidad que agravó esto: los 20 intentos fallidos tienen
-`anchor_attempt.error` en **NULL**. El motivo existe —está en `outcome.detail`— pero
-`services/api/src/anchor/tarea.ts` sólo guarda el campo `error` del intento, y el camino de
-«la verificación devolvió inválido sin lanzar» lo deja vacío. Un fallo sin motivo guardado es un
-fallo que nadie puede arreglar, y por eso esto estuvo veinte veces delante sin que se viera.
+| | antes | después |
+|---|---|---|
+| CONFIRMADO | 3 | **29** |
+| FALLIDO | 21 | 3 |
+| PENDIENTE | 2 | 2 |
 
-**Estado:** diagnóstico en curso con la evidencia de arriba. No se tocó producción para esto.
-Mientras no se cierre, lo honesto es decir que **la historia se está sellando y las cabeceras de
-Bitcoin son reales, pero el sistema sólo puede afirmar un checkpoint confirmado de veinticuatro**.
+Y responde la pregunta que quedaba: **los rechazados se recuperaron revalidando los recibos ya
+guardados**. No hizo falta volver a anclar nada.
+
+**El segundo defecto, que el primero destapó.** Los tres que quedaron fuera resultaron ser los
+números 1, 6 y 11 — los más antiguos. La consulta que elige a quién le toca el próximo intento
+pedía «los no firmes, del más reciente hacia atrás, los primeros 24», y `firm` **no lo pone nadie
+nunca** (34 checkpoints, los 34 en `false`), así que la lista crecía con la historia y la ventana
+se alejaba del principio. Un checkpoint nuevo sin confirmar tiene otra vuelta en una hora; uno
+viejo sin confirmar no la tiene nunca. Ahora es una cola justa por tiempo sin atender.
+
+**Y un tercero, de observabilidad, que explica por qué esto estuvo veinte veces delante sin
+verse:** los intentos fallidos guardaban `error` en NULL. El motivo existía, en `outcome.detail`,
+pero sólo se persistía el campo que se rellena cuando algo lanza — y el camino más común no
+lanza. Un fallo sin motivo guardado es un fallo que nadie arregla.
+
+**Lo que sigue abierto:** el quórum 2-de-3 sigue sin alcanzarse, y no por un defecto — sólo la
+clase `blockchain` está activa. Git y correo se apagan solos por falta de padrón de veeduría y de
+testigos designados, que es una designación humana y no una tarea de código.
 
 ## Estado del despliegue — 2026-08-24
 
