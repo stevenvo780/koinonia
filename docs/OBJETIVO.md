@@ -615,7 +615,7 @@ parte de «producción desactualizada» que preocupaba a la pasada anterior.
 
 ---
 
-## Estado del despliegue — 2026-08-25
+## Estado del despliegue — 2026-08-26
 
 Reemplaza a la sección de abajo, que se conserva porque su comprobación criptográfica sigue siendo
 válida y porque una de sus afirmaciones resultó ser más generosa que los hechos — ver el último
@@ -625,16 +625,16 @@ Lo que sigue está **aplicado y comprobado en producción**, no preparado:
 
 | Qué | Estado | Comprobación |
 | --- | --- | --- |
-| Código en producción | `koinonia-{api,web}:20260825-8710ffc` | los tres contenedores `healthy`; `/salud` y `/entrar` responden 200 por loopback y por los dos dominios |
-| Verde del árbol | lint 0 · typecheck 0 · build 0 | **2 955 pruebas en 194 ficheros**, cero saltos; **E2E 240/240** en Chromium y Firefox |
-| Las 19 rutas de la interfaz | 200, y 404 la que no existe | recorridas con navegador real a 390 px: **cero violaciones de la política de contenido, cero pantallas sin hidratar, cero desborde horizontal** |
+| Código en producción | `koinonia-{api,web}:20260826-b01fe58` | los tres contenedores `healthy`; `/salud` y `/entrar` responden 200 por loopback y por los dos dominios |
+| Verde del árbol | lint 0 · typecheck 0 · build 0 | **2 970 pruebas en 197 ficheros**, cero saltos; **E2E 240/240** en Chromium y Firefox |
+| Las 21 rutas de la interfaz | 200, y 404 la que no existe | recorridas con navegador real a 390 px: **cero violaciones de la política de contenido, cero pantallas sin hidratar, cero desborde horizontal, y 21 títulos de pestaña distintos de 21** |
 | **Política de contenido** | **obligatoria**, ya no de sólo informe | el número de un solo uso de la cabecera es el mismo que llevan los guiones del HTML servido; la de sólo informe se quitó del proxy y los 16 sitios ajenos responden idéntico antes y después de recargar |
 | Título de pestaña | distinto por pantalla | `Problemas · Koinonía`, `Todo lo que quedó escrito · Koinonía`, `Acá no hay nada · Koinonía`… |
 | Rechazos de la API | en español, sin devolver lo que llegó | una dirección de 300 caracteres devuelve `DATOS_INVALIDOS` con la forma del contrato y sin reflejar la entrada; un cuerpo mal escrito devuelve **400** y ya no 500 |
-| Integridad del historial | `todoBien: true` sobre **617 hechos** | las seis comprobaciones en verde |
+| Integridad del historial | `todoBien: true` sobre **1 741 hechos** | las seis comprobaciones en verde |
 | Copia de seguridad | temporizador activo | próxima a las 02:45 UTC; la anterior corrió hace 21 h |
-| Repositorio publicado | `main` en `origin` = `8710ffc` | local y remoto coinciden por SHA |
-| **Anclaje externo** | **29 checkpoints confirmados de 34** | rechazaba 20 de 24 por un defecto del propio verificador; ver abajo |
+| Repositorio publicado | `main` en `origin` | local y remoto coinciden por SHA |
+| **Anclaje externo** | **46 confirmados, 1 pendiente, CERO fallidos** | rechazaba 20 de 24 por un defecto del propio verificador; los tres que quedaban —los más antiguos— entraron con la cola nueva. Ver abajo |
 
 ### El anclaje confirmaba 1 de 24 — cerrado el 2026-08-26, y con dos defectos detrás
 
@@ -653,19 +653,20 @@ distintos citaran la misma hora — la del último bloque, que los dos sellos co
 regla es una: la del bloque **más antiguo**, que es la afirmación más fuerte que el sello
 sostiene.
 
-Medido en producción tras desplegarlo:
+Medido en producción, en las dos vueltas:
 
-| | antes | después |
-|---|---|---|
-| CONFIRMADO | 3 | **29** |
-| FALLIDO | 21 | 3 |
-| PENDIENTE | 2 | 2 |
+| | antes | tras el primer arreglo | tras la cola nueva |
+|---|---|---|---|
+| CONFIRMADO | 3 | 29 | **46** |
+| FALLIDO | 21 | 3 | **0** |
+| PENDIENTE | 2 | 2 | 1 |
 
 Y responde la pregunta que quedaba: **los rechazados se recuperaron revalidando los recibos ya
 guardados**. No hizo falta volver a anclar nada.
 
 **El segundo defecto, que el primero destapó.** Los tres que quedaron fuera resultaron ser los
-números 1, 6 y 11 — los más antiguos. La consulta que elige a quién le toca el próximo intento
+números 1, 6 y 11 — los más antiguos. Con la cola nueva entraron en la primera vuelta y la tabla
+quedó sin ni un fallido. La consulta que elige a quién le toca el próximo intento
 pedía «los no firmes, del más reciente hacia atrás, los primeros 24», y `firm` **no lo pone nadie
 nunca** (34 checkpoints, los 34 en `false`), así que la lista crecía con la historia y la ventana
 se alejaba del principio. Un checkpoint nuevo sin confirmar tiene otra vuelta en una hora; uno
