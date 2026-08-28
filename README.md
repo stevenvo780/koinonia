@@ -1,21 +1,99 @@
 # Koinonía
 
-Plataforma de gobernanza colectiva del estudiantado del Instituto de Filosofía de la Universidad de
-Antioquia. Software libre, ~300 personas, español, móvil primero.
+**Una asamblea que deja constancia de sí misma.** Se escribe un problema, se discute con plazo, se
+decide con una regla dicha de antemano — y queda un acta que **cualquiera puede recalcular por su
+cuenta, sin confiar en quien administra el servidor**.
 
-> Koinonía **no es un órgano de la Universidad de Antioquia ni la representa.**
+[![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0--or--later-2b6cb0)](LICENSE)
+[![Node 22](https://img.shields.io/badge/node-22-026937)](.nvmrc)
+[![TypeScript estricto](https://img.shields.io/badge/typescript-estricto-026937)](tsconfig.base.json)
+[![Pruebas](https://img.shields.io/badge/pruebas-2970%20en%20198%20ficheros-026937)](docs/TESTING.md)
+[![Extremo a extremo](https://img.shields.io/badge/e2e-120%20escenarios-026937)](tests/e2e)
 
-Se escribe un problema, se discute con plazo, se decide con una regla dicha de antemano, y queda una
-constancia que **cualquiera puede recalcular por su cuenta sin confiar en quien administra el
-servidor**. Ver `docs/PRODUCT.md` (qué es y para quién), `docs/GOVERNANCE.md` (quién decide qué y con
-qué regla), `docs/ARCHITECTURE.md` (cómo encajan las piezas) y `docs/adr/` (por qué cada decisión
-técnica es la que es).
+Hecho para el estudiantado del **Instituto de Filosofía de la Universidad de Antioquia**: unas 300
+personas, en español, y pensado primero para el teléfono con datos contados.
 
-Ese «sin confiar en quien administra el servidor» no es una figura retórica: el historial se ancla
-fuera —Bitcoin vía OpenTimestamps, un commit firmado en dos forjas y testigos por correo, con
-**quórum de 2 clases independientes de 3**— y hay un **verificador que se ejecuta por separado y no
-habla con este servidor** (`packages/verifier-cli`). Cómo usarlo está más abajo, en
-[«Comprobarlo sin confiar en nosotros»](#comprobarlo-sin-confiar-en-nosotros).
+> [!IMPORTANT]
+> Koinonía **no es un órgano de la Universidad de Antioquia ni la representa.** Su infraestructura,
+> sus datos y su historia son de la comunidad estudiantil.
+
+## El problema que resuelve
+
+Una asamblea decide algo. Tres meses después nadie recuerda con qué regla se decidió, quién podía
+votar, ni si lo acordado llegó a hacerse. La constancia vive en un acta que alguien escribió, en un
+grupo de chat que se perdió, o en la memoria de quien estaba. Y si quien administra la herramienta
+quisiera cambiar un número, **nadie tendría cómo notarlo**.
+
+Koinonía parte de que esa última frase es el problema de verdad. Todo lo demás —los plazos, los
+métodos de recuento, el padrón— ya lo resuelve cualquier formulario. Lo que no resuelve ninguno es
+darte una forma de **comprobar que no te están mintiendo**.
+
+## El recorrido
+
+Hay una sola cosa que se hace acá, y tiene orden:
+
+|     | Etapa            | Qué pasa                                                                                                                                                                                |
+| --- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Problema**     | Alguien escribe lo que está mal. Sin votar nada todavía.                                                                                                                                |
+| 2   | **Deliberación** | Se discute con plazo y por etapas. Las objeciones se registran, no se borran.                                                                                                           |
+| 3   | **Decisión**     | Se vota con una regla **dicha antes de abrir**: mayoría simple, consentimiento sociocrático, supermayoría, Condorcet-Schulze, juicio mayoritario, puntuación, IRV, unanimidad o sorteo. |
+| 4   | **Iniciativa**   | Lo aprobado se convierte en compromisos con responsable y fecha.                                                                                                                        |
+| 5   | **Tareas**       | Y esos compromisos son de alguien, que puede aceptarlos o no.                                                                                                                           |
+
+Abrir una votación es **el acto más caro del sistema, no el más barato**: exige que antes haya
+habido discusión y evidencia. Es a propósito.
+
+## Lo que lo hace distinto: no hace falta creernos
+
+«Sin confiar en quien administra el servidor» no es una figura retórica. Es una propiedad
+construida, y se apoya en tres piezas:
+
+- **El historial es de sólo-anexar.** Cada evento encadena con el anterior por hash. El rol con el
+  que la aplicación sirve las peticiones tiene exactamente `SELECT` e `INSERT` sobre la tabla de
+  eventos: ni `UPDATE`, ni `DELETE`, ni la propiedad de la tabla — así que tampoco puede apagar el
+  disparador que lo impone. Si esa conexión resulta ser superusuario, **el arranque se niega**.
+- **El historial se ancla fuera.** Bitcoin vía OpenTimestamps, un commit firmado en dos forjas, y
+  testigos por correo — con **quórum de 2 clases independientes de 3**. Una sola clase no basta, y
+  cuando no se alcanza el quórum el sistema lo dice en vez de fingir un verde.
+- **Hay un verificador que no habla con este servidor.** [`packages/verifier-cli`](packages/verifier-cli)
+  descarga el paquete, recalcula toda la historia y contrasta los sellos externos por su cuenta. Su
+  código de salida **es** el veredicto. Ver [«Comprobarlo sin confiar en nosotros»](#comprobarlo-sin-confiar-en-nosotros).
+
+El resultado de una votación no se guarda: **se recalcula** desde los votos cada vez que se pide. Un
+resultado almacenado es un número que alguien puede editar; uno derivado, no.
+
+## Estado
+
+Funciona y está desplegado, pero es software joven y conviene decir qué falta.
+
+|                        |                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| Código                 | ~145 000 líneas de TypeScript estricto (sin `any`, sin `@ts-ignore`)                 |
+| Pruebas                | 2 970 en 198 ficheros, contra **PostgreSQL real** — cero dobles de la base           |
+| Extremo a extremo      | 120 escenarios en 5 navegadores (Chromium, Firefox, WebKit, Chrome y Safari móviles) |
+| Decisiones registradas | 56 ADR en [`docs/adr/`](docs/adr)                                                    |
+| Pantallas              | 33                                                                                   |
+
+**Lo que aún no está resuelto**, y está escrito para que nadie se lleve una sorpresa:
+
+- El **padrón** —el denominador de todas las reglas de quórum— es el único estado de gobierno que
+  todavía no vive en el historial encadenado. [ADR-0054](docs/adr) lo documenta y deliberadamente
+  **no lo decide**: la elección de fondo es jurídica y política, no técnica.
+- El commit firmado del anclaje **se publica a mano**, no automáticamente.
+- La puntuación de mutación global está en 73,7 % contra un umbral de 85 %. El informe con los
+  mutantes que sobreviven se sube como artefacto en cada corrida nocturna, y el trabajo pendiente
+  está listado, no escondido.
+
+## Documentación
+
+| Documento                                      | Para qué                                   |
+| ---------------------------------------------- | ------------------------------------------ |
+| [`docs/PRODUCT.md`](docs/PRODUCT.md)           | Qué es y para quién                        |
+| [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)     | Quién decide qué, y con qué regla          |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Cómo encajan las piezas                    |
+| [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Contra qué se defiende, y contra qué no    |
+| [`docs/TESTING.md`](docs/TESTING.md)           | Qué se prueba y por qué así                |
+| [`docs/adr/`](docs/adr)                        | Por qué cada decisión técnica es la que es |
 
 ---
 
@@ -431,7 +509,27 @@ lo dice con esas palabras en vez de dar un verde que no se ha ganado.
 
 ---
 
+## Contribuir
+
+Se aceptan aportes. Antes de abrir un pull request conviene saber tres cosas, porque son las que
+hacen que una revisión sea corta o larga:
+
+1. **`pnpm run verify` tiene que pasar.** Son las tres puertas juntas: tipos, estilo y las 2 970
+   pruebas. CI corre además las de extremo a extremo y exige Docker de verdad — una corrida verde
+   que no probó nada del historial es peor que una roja.
+2. **El porqué va en el código, no en el pull request.** Este árbol comenta densamente las
+   decisiones: por qué la base es `node:22.17.0-alpine3.22` y no `latest`, por qué el enlace de
+   entrada dura 15 minutos, por qué una prueba mide y no afirma. Un comentario que explica una
+   decisión sobrevive al hilo de discusión donde se tomó; hay [56 ADR](docs/adr) por el mismo motivo.
+3. **Si tocás una regla de decisión, traé la prueba de la frontera.** El recuento es la parte donde
+   un error no se ve: empate exacto, cero votantes, un solo voto, censo que cambia a mitad de
+   votación. Hay 178 propiedades de `fast-check` en el dominio; sumar una es más barato que discutir
+   un caso hipotético.
+
+El código, los nombres y los comentarios están **en español**, y así se quedan: quien mantiene esto
+delibera en español.
+
 ## Licencia
 
 AGPL-3.0-or-later. Es una plataforma de gobernanza autoalojable: si alguien la modifica y la
-despliega como servicio, las modificaciones vuelven a la comunidad que la usa. Ver `LICENSE`.
+despliega como servicio, las modificaciones vuelven a la comunidad que la usa. Ver [`LICENSE`](LICENSE).

@@ -52,3 +52,8 @@ next-env.d.ts
 
 # Ajustes personales de Claude Code: rutas y permisos de esta máquina, no del proyecto.
 .claude/settings.local.json
+
+# Guía de acceso para las pruebas: es operativa, no fuente. Nombra la dirección de producción, un
+# correo real de contacto y el estado de los defectos abiertos — cosas que sirven a quien opera esto
+# y que no tienen por qué viajar en un repositorio público. Se queda en la carpeta de trabajo.
+/ACCESO-PRUEBAS.md
