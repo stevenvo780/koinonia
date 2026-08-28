@@ -17,6 +17,22 @@ const DATABASE_URL =
   process.env.DATABASE_URL ?? 'postgresql://postgres:koinonia@localhost:55432/koinonia';
 const PUERTO_API = process.env.PORT ?? '3001';
 const PUERTO_WEB = process.env.PUERTO_WEB ?? '3000';
+/*
+ * La base con la que se arma el enlace de entrada.
+ *
+ * Era un literal `http://localhost:${PUERTO_WEB}` metido directamente en el entorno del servicio,
+ * y como `lanzar` pisa `process.env` con lo que recibe, no había forma de cambiarlo desde fuera —
+ * al contrario que la base de datos y los dos puertos, que sí se dejan elegir tres líneas más
+ * arriba. Esa asimetría rompe un caso concreto: **desarrollar contra esta máquina desde otra**
+ * (aquí, por Tailscale). El enlace llegaba diciendo `localhost:3000`, que en la máquina que lo
+ * abre es esa máquina y no ésta, así que entrar era imposible sin editar la dirección a mano.
+ *
+ * Por omisión sigue siendo exactamente lo de antes; lo único que cambia es que ahora se puede
+ * decir otra cosa:
+ *
+ *   KOINONIA_WEB_URL=http://100.64.0.2:3000 pnpm dev
+ */
+const WEB_URL = process.env.KOINONIA_WEB_URL ?? `http://localhost:${PUERTO_WEB}`;
 
 const procesos = [];
 
@@ -61,7 +77,7 @@ process.stdout.write(
 lanzar('api', 'node', ['services/api/dist/bin.js'], {
   DATABASE_URL,
   PORT: PUERTO_API,
-  KOINONIA_WEB_URL: `http://localhost:${PUERTO_WEB}`,
+  KOINONIA_WEB_URL: WEB_URL,
 });
 
 lanzar('web', 'pnpm', ['--filter', '@koinonia/web', 'exec', 'next', 'dev', '--port', PUERTO_WEB], {
@@ -69,7 +85,7 @@ lanzar('web', 'pnpm', ['--filter', '@koinonia/web', 'exec', 'next', 'dev', '--po
 });
 
 process.stdout.write(
-  `\nInterfaz:  http://localhost:${PUERTO_WEB}\n` +
+  `\nInterfaz:  ${WEB_URL}\n` +
     `Servicio:  http://localhost:${PUERTO_API}\n\n` +
     `Para entrar: pedí el enlace en /entrar; en desarrollo aparece en la propia pantalla y\n` +
     `también en esta consola, sin necesidad de un servidor de correo.\n\n`,

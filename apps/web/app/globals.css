@@ -23,9 +23,22 @@
  *    cabeceras de tabla, pozos y código. Tres capas, no un blanco único.
  * 2. **Tinta cálida** (#171310) en vez de un casi-negro azulado. Sobre papel cálido el conjunto
  *    tiene temperatura; el acento frío es el contrapunto que evita el sepia.
- * 3. **Un acento propio: petróleo #0d4c58.** No es el azul de enlace de nadie. Vive en los
- *    enlaces, en la regla de la cabecera, en la marca del «estás acá», en la marca al margen de
- *    cada sección y en el botón principal. Se reconoce.
+ * 3. **El acento es el verde de la Universidad de Antioquia.** El institucional es #026937; el
+ *    que se usa para texto es el mismo tono y la misma saturación bajados a 17,5 % de luz
+ *    (#02582e), porque el institucional tal cual no llega al piso de contraste de este fichero —
+ *    ver el bloque de `--acento` más abajo, con los números—. Vive en los enlaces, en la regla de
+ *    la cabecera, en la marca del «estás acá», en la marca al margen de cada sección y en el
+ *    botón principal.
+ *
+ *    Que sea el verde de la UdeA no dice que esto sea de la UdeA: el pie de cada pantalla dice lo
+ *    contrario con todas las letras, y eso no se toca. Dice de quiénes es —el estudiantado de un
+ *    instituto de esa universidad—, que es otra cosa.
+ * 4. **Los títulos van en serifa del sistema.** Lo que se decide acá se decide leyendo y
+ *    escribiendo argumentos, no tocando controles: una pantalla enteramente en la tipografía de
+ *    interfaz del sistema operativo se parecía a un panel de administración y no a un cuaderno de
+ *    actas. La serifa no cuesta un byte de red —es la que ya está instalada— y es la señal más
+ *    barata de que acá se viene a leer. El cuerpo se queda en la de sistema, que es la que mejor
+ *    se lee en un teléfono a tamaño pequeño.
  *
  * ═══ Contraste comprobado (medido, no estimado) ═══
  *
@@ -35,10 +48,17 @@
  *
  *   tinta/papel 17.41   tinta/alto 18.47   tinta/hondo 15.70
  *   suave/papel  9.31   suave/alto  9.87   suave/hondo  8.39
- *   acento/papel 9.03   acento/alto 9.58   acento/hondo 8.14   acento/tenue 8.10
- *   blanco/acento 9.58  blanco/acento-hondo 12.35
+ *   acento/papel 6.43   acento/alto 6.82   acento/hondo 5.80   acento/tenue 5.99
+ *   blanco/acento 6.82  blanco/acento-hondo 11.79   acento-hondo/tenue 10.36
  *   bien/bien-fondo 7.24   mal/mal-fondo 7.21   atención/aviso-fondo 7.39
  *   línea-control/blanco 5.78  (WCAG 1.4.11 pide 3:1; antes daba 3.43)
+ *
+ * ⚠ El párrafo de arriba describe el estado ANTERIOR al verde institucional. Con #026937 exacto
+ * (ver el bloque de `--acento`), los cinco pares del acento caen por debajo de 7.2 y **el peor
+ * caso global de texto es 5.80:1**, no 7.21. Todos siguen cumpliendo WCAG AA (4.5:1), que es la
+ * norma que el pliego exige y la que comprueban las pruebas con axe; el 7.2 era un listón propio,
+ * y se cambió a sabiendas por fidelidad a la marca de la Universidad. Los pares neutros y los
+ * semánticos no se movieron.
  *
  * Y las tres reglas que no se negocian: objetivos táctiles de 44 px (no de 24), nada distinguido
  * sólo por color —verde, rojo y ámbar llevan siempre símbolo y palabra—, y foco siempre visible.
@@ -63,10 +83,48 @@
   --linea-fuerte: #c6b9a6; /* separadores con peso, tramas */
   --linea-control: #6e6459; /* input, textarea, select: 5.78:1 sobre blanco */
 
-  /* ── Acento ──────────────────────────────────────────────────────────────────────────── */
-  --acento: #0d4c58;
-  --acento-hondo: #093a44;
-  --acento-tenue: #e3eef0;
+  /*
+   * ── Acento: el verde de la Universidad de Antioquia, exacto ──────────────────────────
+   *
+   * `--acento` es **#026937**, el institucional del Manual de Identidad Institucional, sin
+   * retocar. La paleta completa de ese manual es #026937, #35944b, #43b649, #8dc63f, #3ebdac,
+   * #069a7e y #0e7774; los otros seis son de gráfico y de fondo, no de letra (el más oscuro,
+   * #0e7774, da 4.57:1 sobre el plano hundido, y el más claro, #8dc63f, 1.74:1).
+   *
+   * ═══ Lo que esto le cuesta al contraste, dicho con los números ═══
+   *
+   * Usarlo tal cual **baja el piso que este fichero se había puesto**. Medido:
+   *
+   *   acento/papel 6.43   acento/alto 6.82   acento/hondo 5.80   acento/tenue 5.99
+   *   blanco/acento 6.82  blanco/acento-hondo 11.79   acento-hondo/tenue 10.36
+   *
+   * Cinco pares del acento quedan por debajo de 7.2:1 y el peor caso global de texto pasa de
+   * **7.21:1 a 5.80:1**. Los pares neutros y los tres semánticos no se mueven.
+   *
+   * Esto es una decisión tomada a sabiendas, no un descuido, y el criterio que se eligió es el
+   * de la norma y no el de la casa: **todos los pares siguen cumpliendo WCAG AA (4.5:1)**, que es
+   * lo que exige el pliego y lo que comprueban las pruebas de `04-accesibilidad.spec.ts` y
+   * `13-navegacion.spec.ts` con axe. El 7.2:1 era un listón propio, más alto que la norma, y se
+   * cambia por fidelidad literal a la marca de la institución a la que pertenece el estudiantado
+   * que usa esto.
+   *
+   * Si algún día se quiere recuperar el 7.2 sin perder el verde: #02582e es ese mismo tono
+   * (150.9°) y esa misma saturación (96 %) con la luminosidad bajada de 21 % a 17,5 %, y da
+   * 8.12 / 8.61 / 7.32 / 7.29. A simple vista no se distingue del institucional.
+   *
+   * `--acento-hondo` (estados sobre el puntero, texto del «estás acá») y `--acento-tenue` (fondo
+   * lavado) son el mismo verde a otras luminosidades, no colores nuevos.
+   */
+  --acento: #026937;
+  --acento-hondo: #014122;
+  --acento-tenue: #e8f3eb;
+  /*
+   * Alias del institucional para superficie (el pilar del membrete, la barra del sistema). Hoy
+   * vale lo mismo que `--acento`; existe aparte porque son dos decisiones distintas —una es «el
+   * color de la marca», la otra «el color con el que se escribe»— y separarlas es lo que permitió
+   * medir el cambio de arriba en vez de discutirlo.
+   */
+  --acento-marca: #026937;
 
   /* ── Semánticos. Recalentados para pertenecer al papel, y todos ≥7.2:1 ───────────────── */
   --bien: #0f5a2b;
@@ -866,7 +924,14 @@ main dd {
  *     orden…» (va después del veredicto, que ya tiene su propio tratamiento visual y no es prosa).
  */
 .lede {
-  font-size: clamp(1.1875rem, 1.11rem + 0.34vw, 1.375rem);
+  /*
+   * El tope baja de 1.375rem (22 px) a 1.3125rem (21 px), que es el mismo al que llega `h3`. Eran
+   * los dos últimos tamaños contiguos que quedaban tras la auditoría, y un píxel de diferencia no
+   * es jerarquía: es un valor más que mantener sincronizado. Que el párrafo de entrada y el título
+   * de una ficha midan igual no los confunde —el `h3` va en negrita y en tinta plena; el lede, en
+   * regular y en tinta suave—, y así la escala queda sin dos peldaños pegados.
+   */
+  font-size: clamp(1.1875rem, 1.11rem + 0.34vw, 1.3125rem);
   line-height: 1.5;
   letter-spacing: -0.004em;
   color: var(--tinta-suave);
@@ -2337,4 +2402,947 @@ ul.tareas > li {
   flex-wrap: wrap;
   gap: var(--e2);
   margin-top: var(--e4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * EL MARCO — membrete, navegación y cuenta
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ═══ Qué estaba mal ═══
+ *
+ * En el teléfono la barra ya estaba resuelta: el recorrido a la vista y el resto plegado tras
+ * «Consultar». En pantalla ancha, en cambio, la regla era «si sobra ancho, que se vea todo», y lo
+ * que se veía —medido acá a 1440 px, con la aplicación andando— eran **quince destinos y cinco
+ * rótulos repartidos en cuatro renglones ragged** que ocupaban 302 px antes del `h1`. La página
+ * empezaba por un índice del sitio, no por la pantalla que habías pedido. Y debajo, el contenido
+ * quedaba pegado al borde izquierdo con media pantalla vacía a la derecha.
+ *
+ * ═══ Por qué barra lateral y no un desplegable ═══
+ *
+ * La salida evidente —plegar también en pantalla ancha— está **prohibida por una decisión ya
+ * tomada y probada**: `13-navegacion.spec.ts` exige que donde el ancho sobra los doce destinos
+ * estén a la vista y que no haya botón, con el motivo escrito («un mando que no manda nada sobre
+ * una lista que ya está abierta, y dos formas de llegar al mismo sitio»). Ese razonamiento sigue
+ * siendo bueno; el que estaba mal era dar por hecho que «a la vista» significa «en horizontal,
+ * arriba».
+ *
+ * Puestos en **vertical, a un lado**, los quince destinos entran enteros, con su rótulo de tramo y
+ * con la pista de cada uno —que en horizontal había que esconder por falta de sitio—, y no le
+ * cuestan ni un píxel de alto al contenido: el `h1` nace arriba del todo. Es la misma decisión de
+ * antes, servida por una forma que sí le da lugar.
+ *
+ * El corte es 64rem, el mismo que este fichero ya usaba para pasar a dos carriles en las pantallas
+ * de detalle: por debajo no hay ancho que gastar en una columna fija y manda el teléfono, que no
+ * se toca.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* La cuenta, en el teléfono: un renglón corto arriba de todo, separado por el filete de la barra. */
+.sesion-barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e2) var(--e3);
+  margin-top: var(--e3);
+  padding-top: var(--e3);
+  border-top: 1px solid var(--linea);
+  font-size: 0.9375rem;
+}
+
+.sesion-barra .quien {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e2);
+  min-width: 0;
+  color: var(--tinta-suave);
+}
+
+/*
+ * La inicial. Es decoración —lleva `aria-hidden`, y el nombre va al lado en texto— pero hace el
+ * trabajo que hace un avatar en cualquier aplicación: da un ancla fija donde el ojo vuelve a
+ * buscar «quién soy» sin releer. No es una imagen: es una letra en una caja, cero bytes de red.
+ */
+.sesion-barra .inicial {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--acento-tenue);
+  color: var(--acento-hondo);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.sesion-barra .alias {
+  overflow: hidden;
+  color: var(--tinta);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 44 px de área táctil, como todo lo que se pulsa en este fichero. */
+.sesion-barra .entrar {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: var(--e3);
+  border: 1px solid var(--acento);
+  border-radius: var(--radio-2);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sesion-barra .entrar:hover {
+  background: var(--acento-tenue);
+}
+
+/* El nombre en la portada no enlaza (ver el comentario en `marco.tsx`), pero se ve igual. */
+header.cabecera p.marca {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: 0;
+  color: var(--tinta);
+  font-weight: 700;
+  font-size: 1.1875rem;
+  letter-spacing: -0.006em;
+}
+
+header.cabecera p.marca::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  margin-right: var(--e2);
+  border-radius: 1px;
+  background: var(--acento);
+}
+
+/* ── La barra lateral ─────────────────────────────────────────────────────────────────────── */
+@media (min-width: 64rem) {
+  :root {
+    --barra-lateral: 18.5rem;
+  }
+
+  /*
+   * `body` ya era una rejilla de tres renglones (cabecera, contenido, pie) para anclar el pie
+   * abajo. Acá pasa a dos columnas: la barra ocupa la primera de arriba abajo y el contenido y el
+   * pie se apilan en la segunda. El pie sigue anclado abajo por el `minmax(0, 1fr)` del primer
+   * renglón, igual que antes.
+   */
+  body {
+    grid-template-columns: var(--barra-lateral) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    /* El lavado de luz vertical era para una cabecera ancha arriba; con la barra al lado, teñía
+       el arranque de la columna de contenido sin motivo. La luz la da ahora el filete de la barra. */
+    background-image: none;
+  }
+
+  header.cabecera {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    /* `dvh` y no `vh`: en el móvil-en-escritorio de las herramientas y en las ventanas con barras
+       que aparecen y desaparecen, `vh` deja la barra cortada por abajo. */
+    height: 100dvh;
+    padding-block: var(--e5);
+    overflow-y: auto;
+    border-right: 1px solid var(--linea);
+    border-bottom: 0;
+    background: var(--papel-alto);
+  }
+
+  main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  footer.pie {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  /*
+   * Dentro de la barra, `.interior` deja de ser «la franja centrada de 76rem»: es la columna
+   * entera. En alto se reparte para que la cuenta caiga abajo del todo (`margin-top: auto` sobre
+   * el último hijo), que es donde la busca cualquiera que haya usado una aplicación antes.
+   */
+  header.cabecera > .interior {
+    display: flex;
+    flex-direction: column;
+    gap: var(--e5);
+    min-height: 100%;
+    max-width: none;
+    margin-inline: 0;
+    padding-inline: var(--e5);
+  }
+
+  header.cabecera .sesion-barra {
+    margin-top: auto;
+  }
+
+  /* La navegación, en columna: los dos grupos uno debajo del otro, no dos filas que envuelven. */
+  nav.principal {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--e5);
+    column-gap: 0;
+    row-gap: var(--e5);
+    flex-wrap: nowrap;
+  }
+
+  nav.principal .grupo {
+    display: block;
+    margin-top: 0;
+  }
+
+  nav.principal .grupo + .grupo {
+    margin-top: 0;
+  }
+
+  nav.principal .titulo-grupo,
+  nav.principal .titulo-grupo.solo-ancho {
+    display: block;
+    margin-bottom: var(--e2);
+    white-space: nowrap;
+  }
+
+  /* Los tres tramos vuelven a ser bloques apilados, cada uno con su rótulo encima de sus destinos. */
+  nav.principal .consulta,
+  nav.principal .consulta[data-abierto='no'] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--e4);
+  }
+
+  nav.principal .tramo {
+    display: block;
+    min-width: 0;
+  }
+
+  nav.principal .titulo-tramo {
+    margin: 0 0 var(--e1);
+    white-space: normal;
+  }
+
+  nav.principal .lista {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  nav.principal .consulta li,
+  nav.principal .lista > li {
+    display: block;
+    width: auto;
+    margin: 0;
+  }
+
+  /*
+   * Cada destino es un renglón pulsable de la columna, no una palabra suelta en un párrafo: se
+   * pinta entero al pasar por encima y la marca de «estás acá» ocupa la fila completa. Es lo que
+   * convierte quince enlaces en una lista que se recorre con el ojo en vez de leerse.
+   */
+  nav.principal a {
+    display: block;
+    padding: var(--e2) var(--e3);
+    border-radius: var(--radio-1);
+    color: var(--tinta);
+    text-decoration: none;
+    /* El área táctil de 44 px la daba `min-height` en la versión en fila; en columna la dan el
+       relleno y la altura de línea, y `min-height` sólo añadiría aire muerto entre renglones. */
+    line-height: 1.35;
+  }
+
+  nav.principal a:hover {
+    background: var(--papel-hondo);
+    color: var(--acento-hondo);
+    text-decoration: none;
+  }
+
+  /*
+   * «Estás acá»: fondo teñido y un pilar de petróleo a la izquierda. El color NO es lo único que
+   * lo dice —el enlace sigue llevando `aria-current="page"`, que es lo que lee un lector de
+   * pantalla y lo que comprueban las pruebas—, así que esto es refuerzo, no información.
+   */
+  nav.principal a[aria-current='page'] {
+    position: relative;
+    background: var(--acento-tenue);
+    color: var(--acento-hondo);
+    font-weight: 600;
+  }
+
+  nav.principal a[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    inset-block: 20%;
+    left: 0;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--acento);
+  }
+
+  nav.principal a[aria-current='page']:hover {
+    background: var(--acento-tenue);
+  }
+
+  /* El número del paso, dentro del renglón y no colgando a su izquierda. */
+  nav.principal .recorrido > li {
+    display: flex;
+    align-items: center;
+    gap: var(--e2);
+  }
+
+  nav.principal .recorrido .paso {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 1px solid var(--linea-fuerte);
+    border-radius: 50%;
+    color: var(--tinta-suave);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  nav.principal .recorrido > li:has(a[aria-current='page']) .paso {
+    border-color: var(--acento);
+    background: var(--acento);
+    color: var(--papel-alto);
+  }
+
+  nav.principal .recorrido a {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /*
+   * La pista **sigue escondida**, y esto se probó en los dos sentidos antes de dejarlo así.
+   *
+   * En columna hay renglón de sobra para ponerla, así que el primer intento fue mostrarla: son
+   * diez nombres que se parecen entre sí («En qué coincidimos», «Quién decide qué», «Cómo está
+   * repartido el voto prestado») y la pista es lo que los separa sin abrir ninguno. Medido con la
+   * aplicación andando a 1440×900: la navegación pasaba a **1352 px dentro de una barra de 900**,
+   * o sea 653 px de desborde. Una barra lateral que hay que desplazar para llegar a la mitad de
+   * sus destinos es peor que una sin pistas: obliga a un gesto extra en cada visita para ganar una
+   * línea de ayuda que se lee una sola vez.
+   *
+   * Sin las pistas la columna mide ~765 px y entra entera, que es la única forma de que los quince
+   * destinos estén de verdad «a la vista» —que es lo que la decisión de `13-navegacion.spec.ts`
+   * pide—. La pista se sigue leyendo en el teléfono, donde el grupo se despliega y el
+   * desplazamiento ya es el gesto natural.
+   */
+  nav.principal .pista {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* El membrete de la barra: separado de la navegación por un filete, como el pie de la cuenta. */
+  header.cabecera a.marca,
+  header.cabecera p.marca {
+    padding-bottom: var(--e4);
+    border-bottom: 1px solid var(--linea);
+  }
+}
+
+/*
+ * ── Remates ──────────────────────────────────────────────────────────────────────────────────
+ *
+ * 1. **El título de una tarjeta deja de ir subrayado.** El subrayado de este fichero existe para
+ *    los enlaces *dentro de un bloque de texto*, donde es lo que cumple 1.4.1: ahí hay que poder
+ *    distinguir el enlace de la prosa que lo rodea sin usar el color. El título de una tarjeta no
+ *    está dentro de ninguna prosa —es un encabezado suelto, en negrita, más grande que todo lo que
+ *    tiene alrededor y dentro de una caja que ya responde al puntero—, así que el subrayado no
+ *    distingue nada y sí pesa: seis títulos subrayados en una rejilla se leen como un formulario.
+ *    Vuelve al pasar por encima y al recibir el foco, que es cuando sí dice algo.
+ *
+ * 2. **Los dos rótulos de la barra dejan de parecer el mismo rótulo dos veces.** Apilados —
+ *    «CONSULTAR» y debajo «ESCRIBIR», los dos en versalita, mismo peso, mismo espaciado— se leían
+ *    como un error de maquetado. El de grupo se queda como está (es el que ordena la barra) y el
+ *    de tramo baja a minúscula y se aleja: pasa a ser un subtítulo, que es lo que es.
+ * ─────────────────────────────────────────────────────────────────────────────────────────── */
+
+:is(ul, ol).tarjetas :is(h2, h3, h4) a {
+  text-decoration-line: none;
+}
+
+:is(ul, ol).tarjetas :is(h2, h3, h4) a:hover,
+:is(ul, ol).tarjetas :is(h2, h3, h4) a:focus-visible {
+  text-decoration-line: underline;
+  text-decoration-color: currentcolor;
+}
+
+@media (min-width: 64rem) {
+  nav.principal .titulo-grupo,
+  nav.principal .titulo-grupo.solo-ancho {
+    margin-bottom: var(--e3);
+  }
+
+  nav.principal .titulo-tramo {
+    margin: 0 0 var(--e2);
+    padding-inline: var(--e3);
+    color: var(--tinta-suave);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* El primer tramo arranca pegado a su rótulo de grupo; los otros dos respiran. */
+  nav.principal .consulta {
+    gap: var(--e5);
+  }
+}
+
+/*
+ * ── La densidad de la barra ───────────────────────────────────────────────────────────────────
+ *
+ * Quince destinos tienen que entrar en el alto de una pantalla sin desplazar, porque ése es el
+ * trato de la barra lateral: si hay que arrastrarla para ver la mitad, no están «a la vista».
+ * Medido a 1440×900 con la aplicación andando: con el cuerpo de texto de la página (19 px) la
+ * columna medía 1109 px contra los 900 disponibles. Acá baja a 15 px y el ritmo se aprieta un
+ * paso, y entra entera con margen.
+ *
+ * Bajar el tamaño en la navegación y no en el contenido no es una inconsistencia: la barra se
+ * **reconoce**, no se lee: son quince rótulos cortos que ya sabés de memoria a la tercera visita.
+ * La prosa —que es lo que de verdad se lee acá, y despacio— se queda en 19 px. El área táctil no
+ * se toca: los 44 px los sigue dando el relleno, y `zoom` y `text-size-adjust` siguen andando
+ * porque todo está en `rem`.
+ * ─────────────────────────────────────────────────────────────────────────────────────────── */
+@media (min-width: 64rem) {
+  header.cabecera {
+    padding-block: var(--e4);
+  }
+
+  header.cabecera > .interior {
+    gap: var(--e4);
+  }
+
+  header.cabecera a.marca,
+  header.cabecera p.marca {
+    padding-bottom: var(--e3);
+  }
+
+  nav.principal {
+    gap: var(--e4);
+    row-gap: var(--e4);
+  }
+
+  nav.principal .consulta,
+  nav.principal .consulta[data-abierto='no'] {
+    gap: var(--e4);
+  }
+
+  nav.principal a {
+    padding: var(--e1) var(--e3);
+    font-size: 0.9375rem;
+  }
+
+  nav.principal .titulo-grupo,
+  nav.principal .titulo-grupo.solo-ancho {
+    margin-bottom: var(--e2);
+  }
+
+  nav.principal .titulo-tramo {
+    margin-bottom: var(--e1);
+    font-size: 0.75rem;
+  }
+
+  nav.principal .recorrido .paso {
+    width: 1.375rem;
+    height: 1.375rem;
+    font-size: 0.6875rem;
+  }
+}
+
+/*
+ * ── La cuenta y el membrete de portada son de la barra lateral, no del teléfono ───────────────
+ *
+ * Las dos piezas que se agregaron con la barra lateral —el nombre en la portada y el bloque de
+ * cuenta— cuestan un renglón cada una, y en el teléfono ese renglón sale del sitio equivocado:
+ * medido a 360×800, el `h1` de la portada pasó de estar dentro del primer tercio a **y=304 px**
+ * contra un tope de 267. Es exactamente la regresión que `13-navegacion.spec.ts` vigila desde que
+ * la barra ocupaba el 47 % del teléfono, y la prueba tenía razón.
+ *
+ * En la barra lateral ninguna de las dos cuesta nada: hay una columna entera de alto y sobra
+ * sitio. Así que viven ahí y no antes. En el teléfono la cabecera vuelve a ser exactamente la que
+ * era —recorrido a la vista, «Consultar» plegado— y la sesión se sigue diciendo donde ya se decía,
+ * en la portada (`BarraSesion`) y en el aviso de cada pantalla que lo necesita.
+ * ─────────────────────────────────────────────────────────────────────────────────────────── */
+.sesion-barra,
+header.cabecera p.marca {
+  display: none;
+}
+
+@media (min-width: 64rem) {
+  .sesion-barra {
+    display: flex;
+  }
+
+  header.cabecera p.marca {
+    display: inline-flex;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * LOS TÍTULOS, EN SERIFA DEL SISTEMA
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Toda la pantalla estaba en `system-ui`. Es la decisión correcta para el cuerpo —es la que mejor
+ * se lee en un teléfono barato a tamaño pequeño, y es la que ya está cargada— pero aplicada
+ * también a los títulos deja una pantalla que se parece a un panel de administración: la misma
+ * letra del sistema operativo, en negrita y más grande. Y esto no es un panel de administración.
+ * Es donde un instituto de filosofía escribe lo que le pasa, lo discute con plazo y deja el acta.
+ *
+ * La serifa es la señal —barata, inmediata, anterior a leer una palabra— de que acá se viene a
+ * leer y a escribir argumentos. Y no cuesta absolutamente nada de red: son las que ya están
+ * instaladas. La regla de «cero tipografías web» de este fichero sigue intacta.
+ *
+ * La pila va de mejor a peor y termina en `serif` para no dejar nunca a nadie sin nada:
+ * Charter/Iowan (macOS e iOS, la mejor en pantalla), Source Serif y Noto Serif (Linux, las que
+ * suele traer una distribución), Cambria y Georgia (Windows, con Georgia como la que está
+ * prácticamente en todas partes).
+ *
+ * El cuerpo, las listas, los botones, los campos y la barra lateral NO cambian: la serifa es para
+ * los títulos, la marca y las cifras grandes, que es donde da carácter sin costar legibilidad.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --serifa:
+    Charter, 'Iowan Old Style', 'Source Serif 4', 'Source Serif Pro', 'Noto Serif', Cambria,
+    Georgia, 'Times New Roman', serif;
+}
+
+h1,
+h2,
+h3,
+header.cabecera a.marca,
+header.cabecera p.marca {
+  font-family: var(--serifa);
+}
+
+/*
+ * La serifa tiene otro color de texto: a igual tamaño se ve más liviana que la de sistema, así
+ * que los títulos suben medio punto de peso y aflojan el espaciado negativo, que estaba puesto
+ * para una gramática de palo seco y en serifa aprieta las astas.
+ */
+h1 {
+  letter-spacing: -0.014em;
+}
+
+h2 {
+  letter-spacing: -0.008em;
+}
+
+h3 {
+  letter-spacing: 0;
+}
+
+/* El pilar del membrete es superficie, no letra: ahí sí va el institucional puro. */
+header.cabecera a.marca::before,
+header.cabecera p.marca::before {
+  background: var(--acento-marca);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * CUADERNO DE ACTAS
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * La dirección elegida: que esto se lea como el libro donde queda escrito lo que la asamblea
+ * decidió, no como un panel de control. Lo que hay acá no son adornos sueltos; son las cuatro
+ * cosas que separan un acta de una aplicación:
+ *
+ *  1. **La prosa va en serifa.** Los títulos ya lo estaban; ahora también el cuerpo, que es donde
+ *     de verdad está el material de este sitio —una propuesta, una objeción, la frase que explica
+ *     con qué regla se aprueba algo—. Lo que NO cambia es el andamiaje: la barra lateral, los
+ *     botones, los campos, las metas y las pistas siguen en la de sistema. No es incoherencia: en
+ *     un teléfono barato, a 13-15 px, la de sistema se lee mejor que cualquier serifa, y ese
+ *     andamiaje es todo texto chico. La serifa se queda donde el tamaño la sostiene.
+ *  2. **Las entradas van numeradas al margen**, en romanos, como los artículos de un acta. El
+ *     numeral es `::before` sobre el `<li>`, NO sobre el encabezado: si entrara en el encabezado
+ *     pasaría a formar parte de su nombre accesible y las pruebas que buscan
+ *     `getByRole('heading', { name: 'Ampliar el horario…' })` dejarían de encontrarlo. Tampoco
+ *     entra en `innerText`, que es lo que revisa el control de jerga.
+ *  3. **Filete bajo el título de pantalla.** Un documento empieza con su título y una raya; una
+ *     aplicación empieza con su título y una tarjeta.
+ *  4. **Las fichas se aplanan.** Sin sombra y con filete: dejan de ser tarjetas flotantes de
+ *     interfaz y pasan a ser entradas de un registro. La sombra se guarda para lo que de verdad
+ *     flota —el diálogo—, que es lo que hace que ahí signifique algo.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. La prosa, en serifa ──────────────────────────────────────────────────────────────── */
+main p,
+main li,
+main dd,
+main blockquote,
+main figcaption {
+  font-family: var(--serifa);
+  line-height: 1.72;
+}
+
+/*
+ * El andamiaje se queda en la de sistema. Va después y con la misma especificidad o más, porque
+ * la regla de arriba alcanza a `main li` y la barra lateral no está en `main`, pero las metas,
+ * las pistas y los pies de tabla sí.
+ */
+main .meta,
+main .pista,
+main .plazo,
+main .etiqueta,
+main .cargando,
+main .tira-sesion,
+main .pista-tabla,
+main label,
+main legend,
+main button,
+main input,
+main select,
+main textarea,
+main .boton,
+main table {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+}
+
+/* ── 2. Las entradas, numeradas al margen ────────────────────────────────────────────────── */
+.pagina-indice :is(ul, ol).tarjetas {
+  counter-reset: entrada;
+}
+
+.pagina-indice :is(ul, ol).tarjetas > li {
+  counter-increment: entrada;
+  position: relative;
+}
+
+.pagina-indice :is(ul, ol).tarjetas > li::before {
+  content: counter(entrada, upper-roman);
+  position: absolute;
+  top: var(--e4);
+  right: var(--e4);
+  color: var(--linea-fuerte);
+  font-family: var(--serifa);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  /* Decorativo: ordena la lectura, no la sustituye. El orden real ya lo da la lista. */
+  pointer-events: none;
+}
+
+/* Que el numeral no se meta debajo del título cuando el título es largo. */
+.pagina-indice :is(ul, ol).tarjetas > li > :is(h2, h3, h4) {
+  padding-right: var(--e5);
+}
+
+/* ── 3. El filete bajo el título de pantalla ─────────────────────────────────────────────── */
+main > h1,
+main > .pagina-indice > h1,
+main > .pagina-prosa > h1,
+main > .pagina-detalle > h1 {
+  padding-bottom: var(--e3);
+  border-bottom: 1px solid var(--linea);
+}
+
+/* ── 4. Las fichas, aplanadas ────────────────────────────────────────────────────────────── */
+:is(ul, ol).tarjetas > li {
+  box-shadow: none;
+  background: var(--papel-alto);
+}
+
+:is(ul, ol).tarjetas > li:hover {
+  border-color: var(--acento);
+  box-shadow: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * COHERENCIA — lo que encontró la auditoría sobre el navegador
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Se midieron las 19 pantallas en 1440×1000 y en 390×844, contando lo que de verdad se pinta.
+ * Tres cosas no cuadraban. (Una cuarta que se sospechaba —objetivos táctiles chicos— resultó no
+ * serlo: los 67 casos por debajo de 44 px son enlaces EN LÍNEA dentro de un párrafo, que es
+ * justamente lo que WCAG 2.5.8 exime; en bloque no hay ni uno.)
+ *
+ * ── 1. Dos insignias idénticas en dos tipografías distintas ──────────────────────────────────
+ *
+ * `.ficha` y `.etiqueta` son la misma pieza dibujada dos veces: mismo cuerpo (0.8125rem), mismo
+ * radio, mismo relleno, misma forma de píldora. Pero `.etiqueta` estaba en la lista de andamiaje
+ * que se queda en la de sistema y `.ficha` no, así que heredaba la serifa de `main li`. Resultado
+ * medido: 34 fichas en serifa al lado de etiquetas en palo seco, en las mismas tarjetas. Eso no se
+ * lee como una decisión, se lee como un descuido — y era mío, de cuando entró la serifa.
+ *
+ * La regla general que queda escrita: **la serifa es para prosa; toda pieza de estado —insignia,
+ * plazo, veredicto, marca, cabecera de tabla, código— es andamiaje y va en la de sistema.**
+ *
+ * ── 2. Cuatro tamaños de letra chica donde caben tres ────────────────────────────────────────
+ *
+ * Estaban en uso 12, 13, 14 y 15 px. Entre 13 y 14 no hay diferencia que alguien pueda ver, pero sí
+ * hay dos decisiones distintas que mantener sincronizadas para siempre. El 14 (`0.875rem`) se
+ * elimina y sus cinco usos se reparten entre los que sí tienen un papel definido:
+ *
+ *   0.75rem   rótulo   — versalitas que ordenan (rótulos de la barra, cabeceras de tabla)
+ *   0.8125rem ficha    — insignias, unidades, numerales, código
+ *   0.9375rem apoyo    — ayuda de un campo, metadatos, sesión
+ *
+ * ── 3. El espaciado de la prosa ignoraba la escala ───────────────────────────────────────────
+ *
+ * La cabecera de este fichero dice «una escala, no valores sueltos; base 4 px». Los párrafos no la
+ * usaban: al no declarar margen, se quedaban con el `1em` del navegador, que a 19 px de cuerpo son
+ * **19 px** — un valor que no está en la escala y que además cambia solo cuando cambia el cuerpo.
+ * Se midieron 52 formas de espaciado fuera de escala y la enorme mayoría eran ésa. Pasan a `--e4`.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Todo lo que es estado, en la de sistema ──────────────────────────────────────────── */
+main .ficha,
+main .ficha *,
+main .marca-estado,
+main .marca-estado *,
+main .plazo,
+main .plazo *,
+main .veredicto > .marca-estado,
+main dt,
+main th,
+main code,
+main time {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}
+
+/* ── 2. Fuera el cuarto tamaño de letra chica ────────────────────────────────────────────── */
+nav.principal .pista,
+.pista-tabla,
+code.comprobante,
+.pagina-indice :is(ul, ol).tarjetas > li::before {
+  font-size: 0.8125rem;
+}
+
+/* Cabecera de tabla: es un rótulo que ordena una columna, del mismo orden que los de la barra. */
+table.datos th {
+  font-size: 0.75rem;
+}
+
+/* ── 3. La prosa, sobre la escala ────────────────────────────────────────────────────────── */
+main p {
+  margin-block: var(--e4);
+}
+
+/*
+ * El relleno de las dos píldoras estaba en `0.125rem` (2 px), que tampoco es de la escala. `--e1`
+ * son 4 px y sube la altura de la píldora de 22 a 26 px, que además la acerca al mínimo de 24 px
+ * que WCAG 2.5.8 pide para un objetivo que no está en línea dentro de un texto.
+ */
+.ficha,
+.etiqueta {
+  padding-block: var(--e1);
+}
+
+/*
+ * ── Los últimos residuos de la medición ───────────────────────────────────────────────────
+ *
+ * Tras el paso anterior quedaban 12 apariciones fuera de escala (de 265) y un tamaño de más:
+ *
+ *  · Las listas de `main` no llevaban margen declarado, así que se quedaban con el `1em` del
+ *    navegador igual que los párrafos —19 px—. Van a `--e4`, como la prosa que las rodea.
+ *  · `h4` no está declarado en este fichero, así que hereda el `1.33em` del navegador: 25,3 px,
+ *    que no está en la escala y encima se mueve solo con el cuerpo. Se le da su paso.
+ *  · `.veredicto .marca-estado` llegaba a 23 px y `.lede` a 22. Un píxel de diferencia entre dos
+ *    piezas que nunca se ven juntas no es una jerarquía: es un tamaño más que mantener. Se iguala
+ *    al de `.lede`.
+ */
+main :is(ul, ol) {
+  margin-block: var(--e4);
+}
+
+main h4 {
+  margin-block: var(--e5) var(--e2);
+  font-size: 1.0625rem;
+  line-height: 1.35;
+}
+
+/* 1.3125rem: el mismo peldaño al que llegan `h3` y `.lede`, para no dejar un tamaño suelto. */
+.veredicto .marca-estado {
+  font-size: clamp(1.1875rem, 1.09rem + 0.42vw, 1.3125rem);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * LA FRANJA DE 768 A 1023 PX, QUE SE HABÍA QUEDADO SIN NINGUNA DE LAS DOS SOLUCIONES
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Medido con el navegador, `/decisiones`, altura de la cabecera y dónde nace el `h1`:
+ *
+ *     ancho   cabecera   h1 en    botón   barra lateral
+ *      360      219 px    y=235     sí         no          ← el teléfono, correcto
+ *      700      175 px    y=191     sí         no          ← correcto
+ *      768      346 px    y=362     NO         NO          ← ✗
+ *     1023      346 px    y=362     NO         NO          ← ✗
+ *     1024      barra      y=16     no         sí          ← correcto
+ *
+ * Entre 768 y 1023 no había ninguna de las dos respuestas: el botón «Consultar» ya se escondía
+ * (regla vieja, a partir de 48rem) pero la barra lateral todavía no empezaba (64rem). Los quince
+ * destinos se desplegaban en horizontal sin sitio, y la cabecera medía **346 px con el `h1` en
+ * y=362** — peor que los 284 px y el y=373 de la queja original que todo este rediseño vino a
+ * arreglar, y que el propio `13-navegacion.spec.ts` vigila a 360 px. Nadie lo vio porque las
+ * pruebas miran 360 y 1280, y el agujero estaba justo en medio: iPad vertical, portátil chico,
+ * ventana a media pantalla.
+ *
+ * El arreglo es hacer coincidir los dos cortes en 64rem: mientras no haya barra lateral, manda el
+ * patrón del teléfono —grupo plegado tras su botón—, que funciona en cualquier ancho angosto. No
+ * toca el contrato probado: a 1280 px sigue habiendo barra, sigue sin haber botón y los quince
+ * destinos siguen a la vista; a 360 px sigue estando el botón.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 48rem) and (max-width: 63.999rem) {
+  nav.principal .abridor {
+    display: inline-flex;
+  }
+
+  nav.principal .aca-consulta {
+    display: block;
+  }
+
+  nav.principal .titulo-grupo.solo-ancho {
+    display: none;
+  }
+
+  nav.principal .consulta[data-abierto='no'] {
+    display: none;
+  }
+
+  nav.principal .consulta {
+    flex-direction: column;
+    gap: var(--e3);
+  }
+
+  nav.principal .tramo {
+    display: block;
+  }
+
+  nav.principal .consulta li {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  /* La pista vuelve a leerse: acá el grupo se despliega hacia abajo y hay renglón para ella. */
+  nav.principal .pista {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    padding-bottom: var(--e2);
+    white-space: normal;
+  }
+}
+
+/*
+ * ── El filete de la cuenta, anclado abajo ────────────────────────────────────────────────────
+ *
+ * Medido a 1440×900 con la aplicación andando: la barra lateral mide 900 px de alto y su contenido
+ * **1007**. Los quince destinos con sus 44 px de área táctil, el membrete y el bloque de cuenta no
+ * entran en una pantalla de 900, así que la columna desplaza — y ahí aparecía el defecto que se ve
+ * a simple vista: el filete que separa la cuenta quedaba flotando justo debajo de «Verificar», el
+ * último destino, pegado a él y sin nada debajo hasta que desplazaras. Se leía como una raya suelta
+ * encima de un enlace, no como el borde de un bloque.
+ *
+ * La cuenta pasa a quedarse pegada al fondo de lo visible (`position: sticky; bottom: 0`) con el
+ * papel de la barra detrás: el filete es entonces siempre el borde inferior de la columna, la
+ * navegación desplaza por detrás, y el bloque de identidad no se va nunca de la vista — que es
+ * justamente lo que se le pide a esa pieza.
+ *
+ * `margin-top: auto` se queda: cuando la barra SÍ entra entera (pantallas de 1000 px o más), es lo
+ * que empuja la cuenta al fondo. Las dos reglas se reparten los dos casos y no se estorban.
+ *
+ * El separador también se despega del último destino: `padding-top` sube de `--e3` a `--e4` y se le
+ * suma un margen, para que la raya no nazca lamiendo el borde del enlace de arriba.
+ */
+@media (min-width: 64rem) {
+  header.cabecera .sesion-barra {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: auto;
+    padding-top: var(--e4);
+    padding-bottom: var(--e1);
+    background: var(--papel-alto);
+  }
+
+  /* Que el encargo no se lleve un renglón entero cuando cabe al lado del nombre. */
+  header.cabecera .sesion-barra .etiqueta {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+}
+
+/*
+ * ── La barra, en tres franjas: membrete fijo, navegación que desplaza, cuenta fija ───────────
+ *
+ * El intento anterior —dejar la cuenta pegajosa dentro de una columna que desplaza entera— movía
+ * el problema en vez de resolverlo: la raya dejaba de flotar suelta, pero los últimos destinos
+ * («Lo que ya aprendimos», «Verificar») pasaban a deslizarse POR DEBAJO del bloque de cuenta y se
+ * veían cortados a media palabra. Un enlace medio tapado es peor que una raya mal puesta.
+ *
+ * Lo que corresponde es que la barra sea tres franjas y no un bloque que desplaza:
+ *
+ *     membrete        alto propio, no se mueve
+ *     navegación      se queda con lo que sobra y desplaza DENTRO de sí misma
+ *     cuenta          alto propio, no se mueve, siempre visible
+ *
+ * Así nada se solapa con nada: si los quince destinos no entran, la que desplaza es la lista, y lo
+ * hace entre dos bordes fijos. `min-height: 0` en la franja del medio no es decorativo: sin él, un
+ * hijo flexible se niega a encogerse por debajo de su contenido y la lista, en vez de desplazar,
+ * empuja la cuenta fuera de la pantalla — que es exactamente el fallo original.
+ */
+@media (min-width: 64rem) {
+  header.cabecera {
+    overflow: hidden;
+  }
+
+  header.cabecera > .interior {
+    /*
+     * `100%` y no `100dvh`: la cabecera ya mide `100dvh` y además lleva `padding-block: --e4`
+     * (16 px arriba y 16 abajo). Una hija de `100dvh` dentro de esa caja mide el alto entero MÁS
+     * el relleno, y la barra se pasaba de la pantalla exactamente esos 32 px — medido: el bloque
+     * de cuenta quedaba fuera de la vista y «Todo lo que quedó escrito» partido por la mitad.
+     * Con `100%` toma el alto de la caja de contenido, que es el que de verdad hay.
+     */
+    height: 100%;
+    min-height: 0;
+  }
+
+  header.cabecera > nav.principal,
+  header.cabecera .interior > nav.principal {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* Aire para que el último destino no quede lamiendo el filete de la cuenta. */
+    padding-bottom: var(--e2);
+  }
+
+  header.cabecera .sesion-barra {
+    position: static;
+    flex: 0 0 auto;
+    margin-top: 0;
+  }
 }

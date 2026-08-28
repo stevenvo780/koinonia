@@ -40,7 +40,36 @@ export function middleware(request: NextRequest): NextResponse {
     "default-src 'none'",
     // `strict-dynamic` es lo que permite que los guiones que Next carga desde los suyos hereden el
     // permiso sin tener que enumerarlos: sin esto habría que ir listando cada trozo del paquete.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    //
+    // ── `unsafe-eval`, y SÓLO en desarrollo ────────────────────────────────────────────────────
+    // El recargado en caliente de Next (`react-refresh`) evalúa texto como código. Con la política
+    // estricta, esa evaluación lanza `EvalError` **mientras se inicializa `main-app.js`**, y como
+    // eso ocurre antes de que React monte nada, la pantalla se queda con los esqueletos puestos
+    // para siempre: no hidrata, no carga datos, no responde un solo botón. Medido acá el
+    // 2026-08-28 con `pnpm dev`: `hidratado: false` y once esqueletos fijos en `/decisiones`,
+    // con la API devolviendo las dos decisiones correctamente por su lado.
+    //
+    // No lo agarraba ninguna prueba porque las de extremo a extremo corren contra una
+    // construcción de producción (`next build`), donde `react-refresh` no existe — o sea, el
+    // único modo roto era justamente el que usa quien programa, que es el que nadie automatiza.
+    //
+    // La concesión NO viaja a producción: ahí `NODE_ENV` es `production` y la línea vuelve a ser
+    // la estricta de siempre, que es la que la prueba 15 comprueba.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${
+      process.env.NODE_ENV === 'production' ? '' : " 'unsafe-eval'"
+    }`,
+    // El manifiesto no lo cubre `default-src 'none'` por accidente: sin `manifest-src` el
+    // navegador cae al `default-src`, que es `none`, y **bloquea el manifiesto en cada carga**
+    // («Loading a manifest … violates … default-src 'none'»). Con `display: standalone` y un
+    // service worker en el árbol, eso dejaba la aplicación sin poder instalarse en el teléfono,
+    // que es el dispositivo para el que está hecha. Excluir la ruta del `matcher` de abajo no
+    // arregla nada: quien decide si el manifiesto se puede cargar es la política del DOCUMENTO,
+    // no la de la respuesta del manifiesto.
+    "manifest-src 'self'",
+    // Por la misma caída al `default-src`, el service worker de `public/sw.js`: `worker-src` no
+    // hereda de `script-src` en todos los navegadores, y con `strict-dynamic` el `'self'` de esa
+    // línea se ignora. Se dice explícito.
+    "worker-src 'self'",
     // ── La única concesión, y está medida ──────────────────────────────────────────────────────
     // Un número de un solo uso vale para un `<style>`, pero **no** para un atributo `style="…"`, y
     // la interfaz tiene 72 repartidos por las pantallas (casi todos separaciones y rejillas que

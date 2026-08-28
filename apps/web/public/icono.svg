@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Koinonía">
   <title>Koinonía</title>
-  <rect width="512" height="512" rx="96" fill="#0b4fa8" />
+  <rect width="512" height="512" rx="96" fill="#026937" />
   <circle cx="196" cy="256" r="88" fill="none" stroke="#ffffff" stroke-width="28" />
   <circle cx="316" cy="256" r="88" fill="none" stroke="#ffffff" stroke-width="28" />
 </svg>

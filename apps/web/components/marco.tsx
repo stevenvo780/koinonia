@@ -428,8 +428,91 @@ function EnlaceDestino({
   );
 }
 
+/**
+ * ¿Estamos en el ancho donde existe la barra lateral?
+ *
+ * El corte es el mismo 64rem que usa `globals.css`, y está escrito en los dos sitios porque no hay
+ * forma de leer una variable de CSS desde una consulta de medios de JavaScript. Si se cambia allá,
+ * se cambia acá.
+ *
+ * Hace falta en JavaScript y no basta con esconder la pieza por CSS: esconderla la deja igualmente
+ * montada, y montada significa **pedir `/auth/estado` en cada pantalla y en cada vuelta al foco de
+ * la ventana** para pintar algo que en el teléfono no se ve. Este proyecto cuenta los kilobytes que
+ * manda —es la razón por la que no hay ni una imagen rasterizada ni una tipografía web— así que
+ * gastar una petición por pantalla en lo invisible sería incoherente con todo lo demás.
+ *
+ * Arranca en `false` a propósito: es lo que se pinta en el servidor, y coincidir con eso en el
+ * primer render del cliente es lo que evita un desajuste de hidratación.
+ */
+function usePantallaAncha(): boolean {
+  const [ancha, setAncha] = useState(false);
+
+  useEffect(() => {
+    const consulta = window.matchMedia('(min-width: 64rem)');
+    const alCambiar = (): void => {
+      setAncha(consulta.matches);
+    };
+    alCambiar();
+    consulta.addEventListener('change', alCambiar);
+    return () => {
+      consulta.removeEventListener('change', alCambiar);
+    };
+  }, []);
+
+  return ancha;
+}
+
+/**
+ * Quién sos, dicho en la propia barra y en todas las pantallas.
+ *
+ * Hasta acá la sesión sólo se decía en la portada (`<BarraSesion/>` en `app/page.tsx`): en las
+ * otras treinta y dos pantallas no había forma de saber si estabas dentro o mirando de visita sin
+ * volver al principio. Eso importa especialmente acá, donde la mitad de las pantallas cambian de
+ * contenido según si entraste —«Mis tareas», «Prestar tu voto», votar— y la explicación de por qué
+ * no ves algo es justamente ésa.
+ *
+ * Va **fuera** de `<nav className="principal">` a propósito, y no es un detalle de maquetado: las
+ * pruebas de navegación buscan enlaces *dentro* de esa región (`getByRole('navigation', { name:
+ * 'Principal' })`) y cuentan los que hay. Un enlace de cuenta metido ahí adentro sería un destino
+ * más para ellas, y además es mentira: la cuenta no es un lugar del recorrido.
+ *
+ * Y el texto es «Entrar» a secas, no la frase de `BarraSesion` («Estás mirando sin cuenta»): esa
+ * frase ya la escriben, palabra por palabra, los `Vacio` de `/delegaciones`, `/deliberaciones` y
+ * `/problemas/[id]` como título, y repetirla en la barra dejaba dos apariciones del mismo texto en
+ * la misma pantalla —que es exactamente lo que una búsqueda por texto no puede desambiguar—.
+ */
+function SesionEnCabecera(): ReactNode {
+  const { sesion, cargando } = useSesion();
+  // Mientras no se sabe, no se dice: un «entrar» que parpadea y se convierte en tu nombre medio
+  // segundo después es peor que un hueco, porque el primero invita a pulsarlo.
+  if (cargando) return null;
+  if (sesion === undefined) {
+    return (
+      <div className="sesion-barra">
+        <Link className="entrar" href="/entrar" prefetch={false}>
+          Entrar
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <div className="sesion-barra">
+      <span className="quien">
+        <span className="inicial" aria-hidden="true">
+          {sesion.alias.slice(0, 1).toUpperCase()}
+        </span>
+        <span className="alias">{sesion.alias}</span>
+      </span>
+      {sesion.roles.includes('facilitator') && (
+        <span className="etiqueta">Cuidás el procedimiento</span>
+      )}
+    </div>
+  );
+}
+
 export function Cabecera(): ReactNode {
   const camino = usePathname();
+  const anchaParaBarra = usePantallaAncha();
   const dondeEstas = CONSULTA.find((destino) => esDestinoActual(camino, destino.href));
   const [abierto, setAbierto] = useState(false);
 
@@ -457,7 +540,23 @@ export function Cabecera(): ReactNode {
   return (
     <header className="cabecera">
       <div className="interior">
-        {enPortada ? null : (
+        {/*
+         * En la portada el nombre se escribe pero **no enlaza**, y las dos mitades de esa frase
+         * son deliberadas.
+         *
+         * No enlaza porque un enlace a la pantalla en la que ya estás no lleva a ningún lado, y
+         * porque el nombre ya es el `h1` de esta pantalla: decirlo dos veces como enlace y como
+         * título es repetir el mismo destino en el árbol de accesibilidad. Hay una prueba que lo
+         * fija (`13-navegacion.spec.ts`: cero enlaces llamados «Koinonía» en `/`).
+         *
+         * Pero se escribe igual, y eso sí cambió: antes desaparecía entero. Con la barra lateral
+         * de pantalla ancha, quitarlo dejaba la columna empezando por «El recorrido», sin membrete
+         * —la única pantalla del sitio donde el marco se veía distinto, y justamente la primera que
+         * ve quien llega—. Un `<p>` conserva la forma sin prometer un destino.
+         */}
+        {enPortada ? (
+          <p className="marca marca-portada">Koinonía</p>
+        ) : (
           <Link className="marca" href="/" prefetch={false}>
             Koinonía
           </Link>
@@ -549,6 +648,13 @@ export function Cabecera(): ReactNode {
             </div>
           </div>
         </nav>
+
+        {/*
+         * Sólo donde existe la barra lateral. No es lo mismo que esconderla con CSS: montarla en
+         * el teléfono costaría una petición de sesión por pantalla para pintar algo invisible (ver
+         * `usePantallaAncha`).
+         */}
+        {anchaParaBarra && <SesionEnCabecera />}
       </div>
     </header>
   );
