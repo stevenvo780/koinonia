@@ -30,7 +30,7 @@ import {
   isRole,
 } from '@koinonia/domain';
 
-import { type PgClient, type PgPool, withTransaction } from '../db/client.js';
+import { PG_ERROR, pgError, type PgClient, type PgPool, withTransaction } from '../db/client.js';
 import { appendWithin, lockLedgerWithin, readAppendRequestWithin } from '../ledger/event-store.js';
 import { IdempotencyConflictError } from '../ledger/types.js';
 import {
@@ -186,45 +186,91 @@ function huboCambioDeRoles(
  * y obligar a abrir una sesión nueva —con un testigo nuevo— para volver a entrar. Una sesión
  * capturada con el rol anterior deja de servir en el instante en que el rol cambia, en vez de seguir
  * viva con permisos que ya no le corresponden (o, en sentido contrario, sin los que sí le tocan).
+ *
+ * ═══ El alias declarado por autoservicio no se pisa, y no bloquea el alta de nadie más (0014) ═══
+ *
+ * Desde que existe la rectificación propia (`pii-rectification.ts`), `alias` deja de derivarse
+ * siempre del proveedor de identidad: si `alias_declarado_en` no es nulo, la persona ya lo corrigió
+ * a mano, y el `CASE` de abajo conserva lo declarado en vez de reafirmar lo que dice el proveedor —
+ * la razón exacta vive en `0014_rectificacion_datos_declarativos.sql`.
+ *
+ * Y desde que `identity_member_alias_lower_key` exige que el alias sea único sin distinguir
+ * mayúsculas (misma migración, misma razón: una lista de delegación que sólo muestra `{id, alias}`
+ * no puede tener dos personas con el mismo nombre en pantalla), un alta COMPLETAMENTE NUEVA puede
+ * chocar con un alias que otra persona ya declaró por su cuenta — algo que antes de la rectificación
+ * era estructuralmente imposible (el alias era la parte local de un correo `UNIQUE`) y ahora es una
+ * coincidencia rara pero real. La respuesta no es fallar: es desambiguar con un sufijo al azar y
+ * reintentar con OTRA sentencia — nunca dentro de la transacción que la sentencia anterior dejó
+ * abortada. Por eso esta función asume que `client` NO está ya dentro de una transacción explícita
+ * abierta por quien llama: el único llamante hoy (`POST /auth/enlace`) usa el cliente crudo del
+ * pool, sin `BEGIN`, así que cada intento es su propia transacción implícita y un intento fallido no
+ * arrastra al siguiente. Un llamante futuro que envolviera esto en su propia transacción rompería
+ * ese supuesto, y le toca a ese llamante saberlo. Nadie pierde su propia alta por un alias que no
+ * eligió: como mucho, un desconocido detrás de escena la ve pasar un poco más lento.
  */
+const MAX_INTENTOS_DE_ALIAS = 5;
+
+function esColisionDeAlias(error: unknown): boolean {
+  const info = pgError(error);
+  return (
+    info?.code === PG_ERROR.uniqueViolation && info.constraint === 'identity_member_alias_lower_key'
+  );
+}
+
 export async function upsertMember(
   client: PgClient,
   claim: IdentityClaim,
   ports: { readonly random: RandomPort; readonly clock: ClockPort },
 ): Promise<MemberRecord> {
   const emailHash = sha256Hex(claim.email);
-  const { rows } = await client.query<MemberUpsertRow>(
-    `WITH previo AS (
-       SELECT roles FROM identity.member WHERE email_hash = $3
-     )
-     INSERT INTO identity.member
-       (member_id, email, email_hash, alias, roles, circles, semestre, jornada, enrolled_at)
-     VALUES ($1, $2, $3, $4, $5::text[], $6::char(32)[], $7, $8,
-             to_timestamp($9::double precision / 1000))
-     ON CONFLICT (email_hash) DO UPDATE
-       SET alias = EXCLUDED.alias,
-           roles = EXCLUDED.roles,
-           circles = EXCLUDED.circles
-     RETURNING ${MEMBER_COLUMNS}, (SELECT roles FROM previo) AS roles_previos`,
-    [
-      ports.random.opaqueId(),
-      claim.email,
-      emailHash,
-      claim.alias,
-      [...claim.roles],
-      [...claim.circles],
-      claim.semestre,
-      claim.jornada,
-      ports.clock.now(),
-    ],
-  );
-  const row = rows[0];
-  if (row === undefined) throw new Error('el alta de la persona no devolvió fila');
-  const record = toRecord(row);
-  if (huboCambioDeRoles(row.roles_previos, row.roles)) {
-    await revokeAllSessions(client, record.memberId, ports.clock);
+  const idGenerado = ports.random.opaqueId();
+  let alias = claim.alias;
+  for (let intento = 0; ; intento++) {
+    try {
+      const { rows } = await client.query<MemberUpsertRow>(
+        `WITH previo AS (
+           SELECT roles FROM identity.member WHERE email_hash = $3
+         )
+         INSERT INTO identity.member
+           (member_id, email, email_hash, alias, roles, circles, semestre, jornada, enrolled_at)
+         VALUES ($1, $2, $3, $4, $5::text[], $6::char(32)[], $7, $8,
+                 to_timestamp($9::double precision / 1000))
+         ON CONFLICT (email_hash) DO UPDATE
+           SET alias = CASE WHEN identity.member.alias_declarado_en IS NOT NULL
+                              THEN identity.member.alias
+                              ELSE excluded.alias
+                         END,
+               roles = EXCLUDED.roles,
+               circles = EXCLUDED.circles
+         RETURNING ${MEMBER_COLUMNS}, (SELECT roles FROM previo) AS roles_previos`,
+        [
+          idGenerado,
+          claim.email,
+          emailHash,
+          alias,
+          [...claim.roles],
+          [...claim.circles],
+          claim.semestre,
+          claim.jornada,
+          ports.clock.now(),
+        ],
+      );
+      const row = rows[0];
+      if (row === undefined) throw new Error('el alta de la persona no devolvió fila');
+      const record = toRecord(row);
+      if (huboCambioDeRoles(row.roles_previos, row.roles)) {
+        await revokeAllSessions(client, record.memberId, ports.clock);
+      }
+      return record;
+    } catch (error) {
+      if (!esColisionDeAlias(error) || intento >= MAX_INTENTOS_DE_ALIAS - 1) throw error;
+      // Otra persona ya declaró este alias por su cuenta. Un sufijo al azar —no un contador— evita
+      // que dos altas nuevas que chocan al mismo tiempo elijan el mismo desambiguador y vuelvan a
+      // chocar entre sí.
+      const sufijo = Buffer.from(ports.random.bytes(2)).toString('hex');
+      alias = `${claim.alias}-${sufijo}`;
+    }
   }
-  return record;
 }
 
 export async function findMember(

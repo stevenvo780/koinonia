@@ -226,7 +226,11 @@ export function BarraSesion(): ReactNode {
   return (
     <p className="tira-sesion">
       <span>
-        Entraste como <strong>{sesion.alias}</strong>.
+        Entraste como <strong>{sesion.alias}</strong>.{' '}
+        <Link className="enlace-corregir" href="/mis-datos">
+          Corregir tus datos
+        </Link>
+        .
       </span>
       {sesion.roles.includes('facilitator') && (
         <span className="etiqueta">Cuidás el procedimiento</span>
@@ -508,12 +512,20 @@ function SesionEnCabecera(): ReactNode {
   }
   return (
     <div className="sesion-barra">
-      <span className="quien">
+      {/*
+       * Antes era un `<span>` decorativo: quien mira su propio nombre en la cabecera no tenía
+       * ningún camino, ni aquí ni en ningún otro sitio ancho, hacia la pantalla que le deja
+       * corregirlo (`/mis-datos`). El texto visible no cambia —sigue siendo sólo el alias, para no
+       * repetir la frase completa que ya dice `<BarraSesion>` en la portada— pero el enlace sí
+       * dice, para quien usa lector de pantalla, adónde lleva: ver `.solo-lectores` más abajo.
+       */}
+      <Link className="quien" href="/mis-datos" prefetch={false}>
         <span className="inicial" aria-hidden="true">
           {sesion.alias.slice(0, 1).toUpperCase()}
         </span>
         <span className="alias">{sesion.alias}</span>
-      </span>
+        <span className="solo-lectores"> — corregir tus datos</span>
+      </Link>
       {sesion.roles.includes('facilitator') && (
         <span className="etiqueta">Cuidás el procedimiento</span>
       )}

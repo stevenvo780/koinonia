@@ -102,6 +102,8 @@ import {
   type Sesion,
   solicitarSupresion as solicitarSupresionSchema,
   type SupresionSolicitada,
+  solicitarRectificacion as solicitarRectificacionSchema,
+  type RectificacionAplicada,
   solicitudEnlace as solicitudEnlaceSchema,
 } from '@koinonia/contracts';
 import {
@@ -147,6 +149,12 @@ import {
   requestOwnErasure,
   upsertMember,
 } from './identity.js';
+import {
+  RectificationAliasInUseError,
+  RectificationNoChangeError,
+  RectificationUnavailableError,
+  requestOwnRectification,
+} from './pii-rectification.js';
 import type { AuthenticatedMember, Ports } from './ports.js';
 import {
   InvalidPrivateMaterialInputError,
@@ -372,6 +380,36 @@ function cupoAgotadoApiError(error: CupoAgotadoError): ApiError {
 }
 
 function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
+  if (error instanceof RectificationNoChangeError) {
+    return {
+      estado: 422,
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code),
+        campo: 'valorNuevo',
+      },
+    };
+  }
+  if (error instanceof RectificationAliasInUseError) {
+    return {
+      estado: 409,
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code),
+        campo: 'valorNuevo',
+      },
+    };
+  }
+  if (error instanceof RectificationUnavailableError) {
+    return {
+      estado: 503,
+      cuerpo: {
+        codigo: error.code,
+        mensaje: mensajeDe(error.code),
+        queHacer: 'Probá de nuevo más tarde; no se guardó ningún cambio a medias.',
+      },
+    };
+  }
   if (error instanceof ErasureReauthenticationRequiredError) {
     return {
       estado: 401,
@@ -989,6 +1027,31 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       solicitadaEn: receipt.requestedAt,
       estado: 'pendiente',
     } satisfies SupresionSolicitada);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Rectificación propia: a diferencia de la supresión, se corrige de una vez —no hay un segundo
+  // paso técnico que autorizar— porque no hay nada irreversible en juego (ver `pii-rectification.ts`).
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  app.post('/mi/rectificacion', async (request) => {
+    await cupoDeEscritura(request);
+    parse(z.object({}).strict(), request.query);
+    const cuerpo = parse(solicitarRectificacionSchema, request.body);
+    const receipt = await requestOwnRectification(options.pool, sujetoPropioDe(request), {
+      clock: options.ports.clock,
+      random: options.ports.random,
+      requestId: cuerpo.requestId,
+      field: cuerpo.campo,
+      newValue: cuerpo.valorNuevo,
+    });
+    return {
+      solicitudId: receipt.rectificationId,
+      radicado: receipt.claimRef,
+      campo: receipt.field,
+      aplicadaEn: receipt.appliedAt,
+      estado: 'aplicada',
+    } satisfies RectificacionAplicada;
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════

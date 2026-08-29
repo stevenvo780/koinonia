@@ -2448,12 +2448,44 @@ ul.tareas > li {
   font-size: 0.9375rem;
 }
 
+/*
+ * El nombre de la cabecera es un ENLACE a «Corregí tus datos», no un adorno: era la única pantalla
+ * de la aplicación sin ningún camino desde ninguna parte. Y como se pulsa, tiene que cumplir los
+ * 44 px que cumple todo lo demás — el margen negativo compensa el relleno para que el bloque siga
+ * alineado con el filete de la barra.
+ */
 .sesion-barra .quien {
   display: inline-flex;
   align-items: center;
   gap: var(--e2);
   min-width: 0;
+  min-height: 44px;
+  padding-inline: var(--e2);
+  margin-inline: calc(var(--e2) * -1);
+  border-radius: var(--radio-1);
   color: var(--tinta-suave);
+  text-decoration: none;
+}
+
+.sesion-barra .quien:hover {
+  background: var(--acento-tenue);
+}
+
+/*
+ * El mismo enlace, en la portada, dentro de `<BarraSesion>`: ahí vive en un párrafo de texto
+ * corrido, así que sin esto heredaría el tamaño del párrafo y se quedaría sin área táctil.
+ */
+.enlace-corregir {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: var(--e2);
+  margin-inline: calc(var(--e2) * -1);
+  border-radius: var(--radio-1);
+}
+
+.enlace-corregir:hover {
+  background: var(--acento-tenue);
 }
 
 /*

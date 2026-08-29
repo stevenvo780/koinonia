@@ -111,6 +111,16 @@ export const MENSAJES: Readonly<Record<string, string>> = {
   AGREEMENT_WITHOUT_PROBLEM:
     'Este acuerdo no dice a qué problema responde, y sin eso no se puede convertir en propuesta. ' +
     'Volvé a publicar el acta indicando el problema, o escribí la propuesta desde cero.',
+  RECTIFICATION_NO_CHANGE:
+    'Ese ya es el valor que tenemos guardado, así que no hay nada que anotar. Escribí un valor ' +
+    'distinto del actual antes de mandarlo.',
+  RECTIFICATION_ALIAS_IN_USE:
+    'Otra persona ya se saluda con exactamente ese nombre, y no pueden compartirlo: quien va a ' +
+    'delegar su voto necesita distinguir a una de la otra. Agregale una inicial o tu apellido y ' +
+    'probá de nuevo.',
+  RECTIFICATION_UNAVAILABLE:
+    'No se pudo corregir el dato en este momento, y no se guardó ningún cambio a medias. Volvé a ' +
+    'intentarlo en un rato; si sigue igual, contalo en el grupo.',
   AGREEMENT_ALREADY_LINKED:
     'Ese acuerdo ya se había convertido en propuesta: mirá cuál es en el acta de la reunión.',
   // Faltaba, y sin entrada acá quien se topaba con este rechazo veía el código en crudo en vez de

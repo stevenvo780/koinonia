@@ -141,6 +141,132 @@ export const miembrosCirculo = z.array(miembroCirculo);
 export type MiembrosCirculo = z.infer<typeof miembrosCirculo>;
 
 /**
+ * Rectificación propia (art. 8 lit. a, Ley 1581): la hermana de la supresión de arriba.
+ *
+ * ═══ Por qué sólo estos tres campos, y no también el correo ═══
+ *
+ * `docs/research/20-normativa-datos-colombia.md` §1.3 (fila RL-12) nombra el autoservicio para
+ * «programa, semestre, nombre de pila usado»: datos que la persona declara de sí misma y que nadie
+ * más necesita verificar. El correo institucional NO está en esa lista, y hay un motivo estructural,
+ * no un olvido: acá el correo **es** la credencial de acceso —`upsertMember` (`identity.ts`) resuelve
+ * la sesión por `email_hash`— así que corregirlo con la misma ligereza que un alias abriría la
+ * puerta a apropiarse de la cuenta de otra persona antes de que ella entre por primera vez, o a
+ * perder la propia por una errata. Cerrarlo bien exige tres piezas que hoy no existen para este
+ * flujo: demostrar la posesión de la dirección nueva (el enlace de un solo uso ya existe, pero para
+ * otro propósito), una sesión recién autenticada —como ya exige la supresión— y revocar toda sesión
+ * abierta al terminar —como ya hace `upsertMember` cuando cambia el nivel de privilegio (T-06)—.
+ * Escribirlo a medias es exactamente el agujero que rechazó el primer intento de esta tarea. Se
+ * prefiere dejar el correo fuera y decirlo, en vez de abrir esa puerta por cumplir la letra completa
+ * del artículo; cuando existan esas tres piezas, se agrega como un cuarto miembro de la unión.
+ *
+ * ═══ Por qué `semestre` y `jornada` son enumeraciones cerradas, no texto libre ═══
+ *
+ * Los dos son claves de estrato de una métrica PUBLICADA (`/metricas/salud`, C11 en
+ * `packages/metrics/src/cobertura.ts`): un `semestre` de texto libre convierte «octavo», «8» y «s8»
+ * en tres estratos distintos y arruina el cruce que pide el §6 de PRODUCT, y —el defecto real que
+ * tumbó el primer intento— deja que cualquiera escriba su propio identificador de miembro como
+ * «semestre» y haga que `sellar()` lance `FugaDeIdentidadError` la primera vez que alguien pida la
+ * métrica, sin ninguna pantalla desde la que deshacerlo. Un `z.enum` no es una validación más
+ * estricta: es la única forma en que estos dos campos pueden significar lo que la métrica necesita
+ * que signifiquen.
+ *
+ * ═══ Lo que se conserva del patrón de la supresión ═══
+ *
+ * No hay selector de sujeto: la persona se deriva de la sesión, nunca de un `subjectId` que alguien
+ * más podría nombrar. A diferencia de la supresión, no hace falta base legal que elegir ni
+ * confirmación de irreversibilidad: ninguno de los tres campos es irreversible —si alguien se
+ * equivoca, rectifica otra vez— así que el autoservicio corrige de una vez.
+ */
+export const campoRectificable = z.enum(['alias', 'semestre', 'jornada']);
+export type CampoRectificable = z.infer<typeof campoRectificable>;
+
+/**
+ * Semestres reconocidos. El pregrado de Filosofía dura diez semestres (PRODUCT.md llega hasta
+ * noveno en sus perfiles, y `cobertura.ts` usa «décimo» como el estrato límite de su propio
+ * ejemplo); un valor por fuera de este rango no es un dato mal escrito, es un programa distinto del
+ * que esta plataforma atiende. El prefijo `s` no es cosmético: `identity.member.semestre` ya lo usa
+ * desde el alta (`services/api/src/http/adapters.ts`, `udeaIdentityAdapter`), y una etiqueta de
+ * estrato tiene que empezar por una letra para poder viajar algún día como clave de un mapa sin
+ * romper el perfil canónico (`packages/crypto/src/canonical.ts`: las claves de objeto casan
+ * `^[A-Za-z][A-Za-z0-9_]*$`, y un identificador de opción no puede ser clave de un mapa).
+ */
+export const SEMESTRES = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10'] as const;
+export type Semestre = (typeof SEMESTRES)[number];
+
+/** Jornadas reconocidas (PRODUCT.md; `coberturaEjes` en `packages/metrics/src/textos.ts`). */
+export const JORNADAS = ['diurna', 'nocturna'] as const;
+export type Jornada = (typeof JORNADAS)[number];
+
+/**
+ * Un alias no puede traer un carácter de control. Uno de puros espacios ya lo rechaza `.min(1)`
+ * después de `.trim()`, pero un `\u0000` en medio del texto sobrevive al recorte, y PostgreSQL
+ * rechaza la fila entera con «invalid byte sequence for encoding "UTF8"» — un 500 genérico en vez
+ * de un rechazo con mensaje. Se corta acá, antes de que el dato salga de esta función.
+ */
+// eslint-disable-next-line no-control-regex -- el rango de control es el punto: se rechaza a propósito.
+const SIN_CARACTERES_DE_CONTROL = /^[^\u0000-\u001f\u007f]*$/u;
+
+export const solicitarRectificacion = z.discriminatedUnion('campo', [
+  z
+    .object({
+      requestId,
+      campo: z.literal('alias'),
+      valorNuevo: z
+        .string()
+        .trim()
+        .min(1, 'Escribí al menos un carácter.')
+        .max(120, 'No entran más de 120 caracteres.')
+        .regex(
+          SIN_CARACTERES_DE_CONTROL,
+          'Ese texto trae un carácter que no se puede guardar. Escribilo de nuevo a mano, sin ' +
+            'pegarlo de otra aplicación.',
+        )
+        /*
+         * El espaciado se NORMALIZA, y esto cierra una suplantación que la revisión independiente
+         * reprodujo contra Fastify y PostgreSQL reales.
+         *
+         * El índice de unicidad es `UNIQUE (lower(alias))`: normaliza las mayúsculas y NO el
+         * espaciado. El navegador hace lo contrario —el HTML colapsa las secuencias de espacios al
+         * pintarlas—. Son dos igualdades distintas, y la que ve la persona que va a prestar su voto
+         * es la del navegador. Así `ana  lopez` (dos espacios) pasaba el índice como distinto de
+         * `ana lopez` y se dibujaba idéntico: dos filas indistinguibles en la pantalla de delegar, y
+         * una de ellas no es quien parece.
+         *
+         * Se normaliza en vez de prohibir el espacio, y la primera versión de este arreglo hacía lo
+         * segundo: era más simple y estaba mal. El alias es «cómo te saludamos», así que prohibir el
+         * espacio le impide a alguien llamarse «Ana López» para cerrar un agujero que no lo exige.
+         *
+         * Normalizar aquí es suficiente porque este `transform` es la ÚNICA puerta por la que un
+         * alias elegido por una persona llega a la base: el otro origen —el alias por defecto que
+         * `upsertMember` deriva de la parte local del correo— no puede traer espacios. Así que la
+         * base sólo ve valores ya colapsados y `lower(alias)` vuelve a ser una igualdad fiel a la
+         * que ve el ojo.
+         */
+        .transform((valor) => valor.replace(/\s+/gu, ' ')),
+    })
+    .strict(),
+  z.object({ requestId, campo: z.literal('semestre'), valorNuevo: z.enum(SEMESTRES) }).strict(),
+  z.object({ requestId, campo: z.literal('jornada'), valorNuevo: z.enum(JORNADAS) }).strict(),
+]);
+export type SolicitarRectificacion = z.infer<typeof solicitarRectificacion>;
+
+/**
+ * A diferencia de `SupresionSolicitada` —«pendiente», porque un técnico ejecuta después— acá
+ * `estado` siempre es `'aplicada'`: no hay nada irreversible que autorizar aparte (ver la cabecera
+ * de `solicitarRectificacion`). El valor rectificado no viaja de vuelta: quien lo mandó ya lo tiene.
+ */
+export const rectificacionAplicada = z
+  .object({
+    solicitudId: opaqueId,
+    radicado: opaqueId,
+    campo: campoRectificable,
+    aplicadaEn: instantMs,
+    estado: z.literal('aplicada'),
+  })
+  .strict();
+export type RectificacionAplicada = z.infer<typeof rectificacionAplicada>;
+
+/**
  * ¿Esta sesión puede pedir la lista de integrantes de este grupo?
  *
  * La lista **no se mueve de sitio**: `/circulos/{id}/miembros` sigue contestando 401 y 403. Leer un
