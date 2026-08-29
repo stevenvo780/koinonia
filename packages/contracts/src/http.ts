@@ -367,6 +367,124 @@ export const propuestaDetalle = propuestaResumen.extend({
 export type PropuestaDetalle = z.infer<typeof propuestaDetalle>;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+// Reuniones (PRODUCT §4): el puente entre lo presencial y el resto del recorrido.
+//
+// El identificador de cada punto del orden del día y de cada acuerdo lo genera el SERVIDOR, igual
+// que `evidenceId` en `aportarEvidencia`: el cliente nunca elige un identificador de frontera.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const puntoOrdenDelDiaEntrada = z.object({
+  texto: z
+    .string()
+    .min(10, 'Un punto del orden del día necesita algo más que una palabra.')
+    .max(4000),
+  problemaId: opaqueId.optional(),
+  deliberacionId: opaqueId.optional(),
+});
+export type PuntoOrdenDelDiaEntrada = z.infer<typeof puntoOrdenDelDiaEntrada>;
+
+/**
+ * Convocar exige decir dónde: un lugar físico, un enlace remoto, o los dos — nunca ninguno. El
+ * `.refine` repite en la frontera la misma regla que `applyMeeting` exige en el dominio (`NEEDS_
+ * PLACE_OR_LINK`): la del cliente es sólo para no hacer viajar una petición condenada a rechazarse.
+ */
+export const convocarReunion = z
+  .object({
+    requestId,
+    titulo: z
+      .string()
+      .min(10, 'Contá de qué se trata la reunión en una frase.')
+      .max(140, 'Un título más corto se lee mejor en un teléfono.'),
+    circuloId: opaqueId,
+    cuando: instantMs,
+    lugar: z.string().min(3).max(200).optional(),
+    enlaceRemoto: z.string().min(3).max(500).optional(),
+    ordenDelDia: z
+      .array(puntoOrdenDelDiaEntrada)
+      .min(1, 'Una reunión se convoca con orden del día: agregá al menos un punto.')
+      .max(20),
+  })
+  .refine((v) => v.lugar !== undefined || v.enlaceRemoto !== undefined, {
+    message: 'Decí dónde es: un lugar físico, un enlace remoto, o los dos.',
+    path: ['lugar'],
+  });
+export type ConvocarReunion = z.infer<typeof convocarReunion>;
+
+export const acuerdoEntrada = z.object({
+  texto: z.string().min(15, 'Un acuerdo tiene que poder leerse como una frase completa.').max(4000),
+  /** Sin esto, el acuerdo no puede convertirse en propuesta (no se propone sin problema). */
+  problemaId: opaqueId.optional(),
+});
+export type AcuerdoEntrada = z.infer<typeof acuerdoEntrada>;
+
+export const publicarActa = z.object({
+  requestId,
+  resumen: z
+    .string()
+    .min(30, 'El acta cuenta lo que pasó: hace falta más que una línea.')
+    .max(4000),
+  /**
+   * Puede llegar vacía: PRODUCT §4 lo permite y lo marca («Acta sin asistentes… no sirve para
+   * decisiones que dependan de quiénes estaban»), no lo prohíbe.
+   */
+  asistentes: z.array(opaqueId).max(300),
+  acuerdos: z.array(acuerdoEntrada).max(20),
+});
+export type PublicarActa = z.infer<typeof publicarActa>;
+
+export const enlazarAcuerdoConPropuesta = z.object({ requestId, propuestaId: opaqueId });
+export type EnlazarAcuerdoConPropuesta = z.infer<typeof enlazarAcuerdoConPropuesta>;
+
+export const puntoOrdenDelDia = z.object({
+  id: opaqueId,
+  texto: z.string(),
+  problemaId: opaqueId.optional(),
+  /** El título de ese problema, resuelto por el servidor: la pantalla no repite el enlace crudo. */
+  problemaTitulo: z.string().optional(),
+  deliberacionId: opaqueId.optional(),
+  /** El título del problema que esa deliberación trata, mismo motivo que `problemaTitulo`. */
+  deliberacionTitulo: z.string().optional(),
+});
+export type PuntoOrdenDelDia = z.infer<typeof puntoOrdenDelDia>;
+
+export const acuerdoDeReunion = z.object({
+  id: opaqueId,
+  texto: z.string(),
+  problemaId: opaqueId.optional(),
+  problemaTitulo: z.string().optional(),
+  /** Presente cuando ya se convirtió en propuesta. */
+  propuestaId: opaqueId.optional(),
+  /** `true` cuando nombra un problema y todavía no se convirtió en propuesta. Lo calcula el servidor
+   *  con la misma regla que el dominio (`convertibleAgreements`): el cliente nunca la reinventa. */
+  puedeConvertirseEnPropuesta: z.boolean(),
+});
+export type AcuerdoDeReunion = z.infer<typeof acuerdoDeReunion>;
+
+export const reunionResumen = z.object({
+  id: opaqueId,
+  titulo: z.string(),
+  circuloId: opaqueId,
+  cuando: instantMs,
+  lugar: z.string().optional(),
+  enlaceRemoto: z.string().optional(),
+  puntosOrdenDelDia: z.number().int().nonnegative(),
+  actaPublicada: z.boolean(),
+  /** `true` si esta sesión convocó la reunión: sólo ella puede publicar el acta. */
+  laConvoqueYo: z.boolean(),
+});
+export type ReunionResumen = z.infer<typeof reunionResumen>;
+
+export const reunionDetalle = reunionResumen.extend({
+  ordenDelDia: z.array(puntoOrdenDelDia),
+  resumenActa: z.string().optional(),
+  asistentes: z.array(opaqueId),
+  /** PRODUCT §4, columna «Errores»: «Acta sin asistentes: se permite pero se marca». */
+  actaSinAsistentes: z.boolean(),
+  acuerdos: z.array(acuerdoDeReunion),
+});
+export type ReunionDetalle = z.infer<typeof reunionDetalle>;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Decisiones
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 

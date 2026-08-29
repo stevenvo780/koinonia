@@ -87,6 +87,40 @@ export const MENSAJES: Readonly<Record<string, string>> = {
     'Falta texto o hay demasiado. Fijate en la ayuda que está debajo del campo: dice el mínimo y el ' +
     'máximo que se admiten.',
 
+  // ── Reuniones ───────────────────────────────────────────────────────────────────────────────
+  NEEDS_PLACE_OR_LINK:
+    'Hace falta decir dónde es: un lugar físico, un enlace remoto, o los dos. Sin eso nadie sabe ' +
+    'cómo llegar.',
+  AGENDA_REQUIRED:
+    'Una reunión se convoca con orden del día: hay que agregar al menos un punto antes de ' +
+    'convocarla.',
+  TOO_MANY_AGENDA_ITEMS:
+    'El orden del día admite pocos puntos: hay que agrupar algunos o dividir la reunión en dos.',
+  DUPLICATE_ID: 'Hay dos puntos o dos acuerdos con el mismo identificador. Volvé a intentarlo.',
+  MEETING_NOT_CONVENED:
+    'Esa reunión ya no existe o el enlace está mal escrito: volvé a la lista e intentá desde ahí.',
+  MEETING_ALREADY_CONVENED: 'Esa reunión ya estaba convocada: no hace falta convocarla de nuevo.',
+  MINUTES_ALREADY_PUBLISHED:
+    'Esta reunión ya tiene acta publicada: no se publica una segunda vez, mirá la que ya está.',
+  MINUTES_NOT_PUBLISHED:
+    'Todavía no hay acta publicada para esta reunión: esperá a que quien la convocó la publique.',
+  TOO_MANY_AGREEMENTS:
+    'El acta admite pocos acuerdos: hay que publicar los principales y agregar el resto después.',
+  UNKNOWN_AGREEMENT:
+    'Ese acuerdo no existe en el acta de esta reunión: volvé a cargar la pantalla y probá otra vez.',
+  AGREEMENT_WITHOUT_PROBLEM:
+    'Este acuerdo no dice a qué problema responde, y sin eso no se puede convertir en propuesta. ' +
+    'Volvé a publicar el acta indicando el problema, o escribí la propuesta desde cero.',
+  AGREEMENT_ALREADY_LINKED:
+    'Ese acuerdo ya se había convertido en propuesta: mirá cuál es en el acta de la reunión.',
+  // Faltaba, y sin entrada acá quien se topaba con este rechazo veía el código en crudo en vez de
+  // una frase. La revisión independiente lo encontró: la ruta lo lanzaba y la tabla no lo conocía.
+  PROPOSAL_PROBLEM_MISMATCH:
+    'Esa propuesta responde a otro problema, así que no es la que salió de este acuerdo. ' +
+    'Elegí la propuesta que trata el mismo problema, o escribí una nueva desde el acuerdo.',
+  EMPTY_PROPOSAL_ID:
+    'Falta indicar qué propuesta salió de este acuerdo: elegí una de la lista antes de guardar.',
+
   // ── Papeletas ───────────────────────────────────────────────────────────────────────────────
   BALLOT_INELIGIBLE_VOTER:
     'No estabas en la lista de quienes podían decidir aquí, que se cerró al abrir la votación. ' +

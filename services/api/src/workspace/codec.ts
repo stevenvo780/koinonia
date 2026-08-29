@@ -36,6 +36,7 @@ import {
   initiativeId,
   instant,
   memberId,
+  type MeetingPayload,
   milestoneId,
   OUTCOME_CRITERION_EVIDENCE,
   type OutcomeCriterionEvidence,
@@ -78,6 +79,7 @@ export const PROBLEM_AGGREGATE_TYPE = 'problem';
 export const PROPOSAL_AGGREGATE_TYPE = 'proposal';
 export const INITIATIVE_AGGREGATE_TYPE = 'initiative';
 export const DELIBERATION_AGGREGATE_TYPE = 'deliberation';
+export const MEETING_AGGREGATE_TYPE = 'meeting';
 export const WORKSPACE_EVENT_VERSION = 1;
 
 export class WorkspaceCodecError extends Error {
@@ -286,6 +288,142 @@ function decodeProblemBody(type: string, body: JsonObject): ProblemPayload {
       };
     default:
       throw new WorkspaceCodecError('eventType', `${type} no es un evento de problema`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Reunión
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+function encodeAgendaItem(item: {
+  readonly itemId: string;
+  readonly text: string;
+  readonly problemId?: string | undefined;
+  readonly deliberationId?: string | undefined;
+}): JsonObject {
+  return {
+    itemId: item.itemId,
+    text: item.text,
+    ...(item.problemId === undefined ? {} : { problemId: item.problemId }),
+    ...(item.deliberationId === undefined ? {} : { deliberationId: item.deliberationId }),
+  };
+}
+
+function decodeAgendaItem(
+  raw: JsonValue,
+  path: string,
+): {
+  readonly itemId: string;
+  readonly text: string;
+  readonly problemId?: string;
+  readonly deliberationId?: string;
+} {
+  if (!isObject(raw)) throw new WorkspaceCodecError(path, 'se esperaba un objeto');
+  const keys = ['itemId', 'text'];
+  if (raw['problemId'] !== undefined) keys.push('problemId');
+  if (raw['deliberationId'] !== undefined) keys.push('deliberationId');
+  assertExactKeys(raw, keys, path);
+  const problemId = optStr(raw, 'problemId', path);
+  const deliberationId = optStr(raw, 'deliberationId', path);
+  return {
+    itemId: str(raw, 'itemId', path),
+    text: str(raw, 'text', path),
+    ...(problemId === undefined ? {} : { problemId }),
+    ...(deliberationId === undefined ? {} : { deliberationId }),
+  };
+}
+
+function encodeAgreement(agreement: {
+  readonly agreementId: string;
+  readonly text: string;
+  readonly problemId?: string | undefined;
+}): JsonObject {
+  return {
+    agreementId: agreement.agreementId,
+    text: agreement.text,
+    ...(agreement.problemId === undefined ? {} : { problemId: agreement.problemId }),
+  };
+}
+
+function decodeAgreement(
+  raw: JsonValue,
+  path: string,
+): { readonly agreementId: string; readonly text: string; readonly problemId?: string } {
+  if (!isObject(raw)) throw new WorkspaceCodecError(path, 'se esperaba un objeto');
+  const keys = ['agreementId', 'text'];
+  if (raw['problemId'] !== undefined) keys.push('problemId');
+  assertExactKeys(raw, keys, path);
+  const problemId = optStr(raw, 'problemId', path);
+  return {
+    agreementId: str(raw, 'agreementId', path),
+    text: str(raw, 'text', path),
+    ...(problemId === undefined ? {} : { problemId }),
+  };
+}
+
+function encodeMeetingBody(payload: MeetingPayload): JsonObject {
+  switch (payload.type) {
+    case 'MeetingConvened':
+      return {
+        title: payload.title,
+        circleId: payload.circleId,
+        scheduledAt: payload.scheduledAt,
+        // Omitir, jamás `null`: ver el mismo comentario en `encodeProblemBody`.
+        ...(payload.location === undefined ? {} : { location: payload.location }),
+        ...(payload.remoteLink === undefined ? {} : { remoteLink: payload.remoteLink }),
+        agenda: payload.agenda.map(encodeAgendaItem),
+      };
+    case 'MinutesPublished':
+      return {
+        summary: payload.summary,
+        attendees: [...payload.attendees],
+        agreements: payload.agreements.map(encodeAgreement),
+      };
+    case 'AgreementLinkedToProposal':
+      return { agreementId: payload.agreementId, proposalId: payload.proposalId };
+  }
+}
+
+function decodeMeetingBody(type: string, body: JsonObject): MeetingPayload {
+  switch (type) {
+    case 'MeetingConvened': {
+      const keys = ['title', 'circleId', 'scheduledAt', 'agenda'];
+      if (body['location'] !== undefined) keys.push('location');
+      if (body['remoteLink'] !== undefined) keys.push('remoteLink');
+      assertExactKeys(body, keys, type);
+      const location = optStr(body, 'location', type);
+      const remoteLink = optStr(body, 'remoteLink', type);
+      return {
+        type,
+        title: str(body, 'title', type),
+        circleId: circleId(str(body, 'circleId', type)),
+        scheduledAt: instant(int(body, 'scheduledAt', type)),
+        ...(location === undefined ? {} : { location }),
+        ...(remoteLink === undefined ? {} : { remoteLink }),
+        agenda: arr(body, 'agenda', type).map((item, index) =>
+          decodeAgendaItem(item, `${type}.agenda[${String(index)}]`),
+        ),
+      };
+    }
+    case 'MinutesPublished':
+      assertExactKeys(body, ['summary', 'attendees', 'agreements'], type);
+      return {
+        type,
+        summary: str(body, 'summary', type),
+        attendees: stringArray(body, 'attendees', type).map((value) => memberId(value)),
+        agreements: arr(body, 'agreements', type).map((agreement, index) =>
+          decodeAgreement(agreement, `${type}.agreements[${String(index)}]`),
+        ),
+      };
+    case 'AgreementLinkedToProposal':
+      assertExactKeys(body, ['agreementId', 'proposalId'], type);
+      return {
+        type,
+        agreementId: str(body, 'agreementId', type),
+        proposalId: str(body, 'proposalId', type),
+      };
+    default:
+      throw new WorkspaceCodecError('eventType', `${type} no es un evento de reunión`);
   }
 }
 
@@ -1061,6 +1199,21 @@ export function decodeProblemEvent(stored: StoredEvent): ChainedInput<ProblemPay
     occurredAt: isoToInstant(event.occurredAt),
     actor: event.actor === undefined ? 'system' : memberId(event.actor),
     payload: decodeProblemBody(event.eventType, body),
+  };
+}
+
+export function encodeMeetingEvent(event: ChainedEvent<MeetingPayload>): LedgerEventDraft {
+  return encode(event, encodeMeetingBody);
+}
+
+export function decodeMeetingEvent(stored: StoredEvent): ChainedInput<MeetingPayload> {
+  const { event, body, id } = decodeEnvelope(stored, MEETING_AGGREGATE_TYPE);
+  return {
+    eventId: eventId(id),
+    aggregateId: event.aggregateId,
+    occurredAt: isoToInstant(event.occurredAt),
+    actor: event.actor === undefined ? 'system' : memberId(event.actor),
+    payload: decodeMeetingBody(event.eventType, body),
   };
 }
 

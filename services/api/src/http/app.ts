@@ -265,6 +265,7 @@ import { registrarRutasDeIniciativas } from './rutas-iniciativas.js';
 import { registrarRutasDeMetodos } from './rutas-metodos.js';
 import { registrarRutasDeMetricas } from './rutas-metricas.js';
 import { registrarRutasDeObjeciones } from './rutas-objeciones.js';
+import { registrarRutasDeReuniones } from './rutas-reuniones.js';
 import { registrarRutasDeSeguimiento } from './rutas-seguimiento.js';
 
 /**
@@ -2030,6 +2031,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   // `ObjectionDismissed`. Mismos cierres `actorDe`/`cupoDeEscritura` que el resto de las rutas de
   // escritura; ver la cabecera de `rutas-objeciones.ts` para el porqué de la autorización a mano.
   registrarRutasDeObjeciones(app, { deps, actorDe, cupoDeEscritura });
+
+  // La pantalla «Reuniones» que faltaba de las 14 de PRODUCT.md §4: GET /reuniones, GET
+  // /reuniones/:id, POST /reuniones (convocar), POST /reuniones/:id/acta (publicar el acta) y
+  // POST /reuniones/:id/acuerdos/:acuerdoId/propuesta (enlazar con la propuesta que ya se creó por
+  // la única puerta que existe). Ver la cabecera de `rutas-reuniones.ts`.
+  registrarRutasDeReuniones(app, { deps, actorDe, cupoDeEscritura });
 
   // Tres huecos de seguimiento (PRODUCT.md §3/§6): GET /iniciativas/:id/seguimiento/destrabes,
   // GET /iniciativas/:id/seguimiento/informe y POST

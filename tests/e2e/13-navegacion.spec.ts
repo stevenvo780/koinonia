@@ -54,10 +54,11 @@ const RECORRIDO = [
   { enlace: 'Mis tareas', ruta: /\/mis-tareas$/u },
 ] as const;
 
-/** Los seis de consulta. El `h1` de «Verificar» no es el texto del enlace; los otros cinco sí. */
+/** Los siete de consulta. El `h1` de «Verificar» no es el texto del enlace; los otros seis sí. */
 const CONSULTA = [
   { enlace: 'En qué coincidimos', encabezado: 'En qué coincidimos' },
   { enlace: 'Quién decide qué', encabezado: 'Quién decide qué' },
+  { enlace: 'Reuniones', encabezado: 'Reuniones' },
   { enlace: 'Las reglas del juego', encabezado: 'Las reglas del juego' },
   { enlace: 'Prestar tu voto', encabezado: 'Prestar tu voto' },
   { enlace: 'Todo lo que quedó escrito', encabezado: 'Todo lo que quedó escrito' },

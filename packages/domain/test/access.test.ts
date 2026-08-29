@@ -54,6 +54,10 @@ const ACCIONES_ABIERTAS: readonly Action[] = [
   'constitution:read',
   'ledger:read',
   'ledger:export',
+  // Leer una reunión no exige cuenta, igual que leer un problema o una decisión: el principio 1 del
+  // pliego —no asistir no puede equivaler a perder participación— empieza por poder ENTERARSE de que
+  // la reunión existe y de qué se acordó, sin tener que entrar.
+  'meeting:read',
 ];
 // Ni «member» ni «tech-admin» abren nada: sirve sólo para que `rule.roles.join(', ')` y
 // `actor.roles.join(', ')` tengan DOS elementos cada uno y el separador se note en el mensaje.
@@ -93,9 +97,13 @@ describe('matriz de autorización', () => {
     expect(isRole('')).toBe(false);
   });
 
-  it('`ACTIONS` trae las 41, sin repetidos: vaciada, el bucle de arriba no notaría nada', () => {
-    expect(ACTIONS).toHaveLength(41);
-    expect(new Set(ACTIONS).size).toBe(41);
+  it('`ACTIONS` trae las 45, sin repetidos: vaciada, el bucle de arriba no notaría nada', () => {
+    // 41 + las cuatro de reuniones (`meeting:read`, `:convene`, `:publish-minutes`,
+    // `:link-agreement`). Este número se actualiza a mano a propósito: que agregar una acción
+    // obligue a tocar esta línea es lo que impide que una acción entre en la matriz sin que nadie
+    // decida qué rol la puede ejercer.
+    expect(ACTIONS).toHaveLength(45);
+    expect(new Set(ACTIONS).size).toBe(45);
   });
 
   it('el observador anónimo no tiene identidad ni pertenece a ningún círculo', () => {

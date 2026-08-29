@@ -1,5 +1,5 @@
 /**
- * Persistencia y rehidratación de problemas y propuestas.
+ * Persistencia y rehidratación de problemas, propuestas, iniciativas, deliberaciones y reuniones.
  *
  * Copia deliberada de la estructura de `decision/repository.ts`: el `seq` del dominio es denso desde
  * 1 y el del ledger desde 0, la correspondencia es `ledgerSeq = domainSeq - 1`, y **se comprueba**.
@@ -18,6 +18,9 @@ import {
   type DeliberationLog,
   type DeliberationPayload,
   type DeliberationState,
+  type MeetingLog,
+  type MeetingPayload,
+  type MeetingState,
   type ProblemLog,
   type ProblemPayload,
   type ProblemState,
@@ -27,6 +30,7 @@ import {
   type ProposalLog,
   type ProposalPayload,
   type ProposalState,
+  replayMeeting,
   replayProblem,
   verifyDeliberationLog,
   verifyInitiativeLog,
@@ -44,15 +48,18 @@ import type {
 } from '../ledger/types.js';
 import {
   decodeDeliberationEvent,
+  decodeMeetingEvent,
   decodeProblemEvent,
   decodeInitiativeEvent,
   decodeProposalEvent,
   DELIBERATION_AGGREGATE_TYPE,
   encodeDeliberationEvent,
+  encodeMeetingEvent,
   encodeProblemEvent,
   encodeInitiativeEvent,
   INITIATIVE_AGGREGATE_TYPE,
   encodeProposalEvent,
+  MEETING_AGGREGATE_TYPE,
   PROBLEM_AGGREGATE_TYPE,
   PROPOSAL_AGGREGATE_TYPE,
 } from './codec.js';
@@ -99,6 +106,12 @@ const DELIBERATION_CODEC: Codec<DeliberationPayload> = {
   aggregateType: DELIBERATION_AGGREGATE_TYPE,
   encode: encodeDeliberationEvent,
   decode: decodeDeliberationEvent,
+};
+
+const MEETING_CODEC: Codec<MeetingPayload> = {
+  aggregateType: MEETING_AGGREGATE_TYPE,
+  encode: encodeMeetingEvent,
+  decode: decodeMeetingEvent,
 };
 
 function pendingFor<P>(
@@ -251,6 +264,25 @@ export async function loadProblemState(client: PgClient, problemId: string): Pro
   return replayProblem(log);
 }
 
+export async function persistMeetingLog(
+  pool: PgPool,
+  log: MeetingLog,
+  options: { readonly requestId: string; readonly requestScope?: string },
+): Promise<WorkspacePersistResult> {
+  return persist(pool, log, MEETING_CODEC, options);
+}
+
+export async function loadMeetingLog(client: PgClient, meetingId: string): Promise<MeetingLog> {
+  return load(client, meetingId, MEETING_CODEC);
+}
+
+/** Rehidrata y pliega, verificando la cadena por el camino — mismo patrón que `loadProblemState`. */
+export async function loadMeetingState(client: PgClient, meetingId: string): Promise<MeetingState> {
+  const log = await loadMeetingLog(client, meetingId);
+  await verifyChain(log);
+  return replayMeeting(log);
+}
+
 export async function persistProposalLog(
   pool: PgPool,
   log: ProposalLog,
@@ -354,6 +386,7 @@ export async function listAggregateIds(
 export {
   DELIBERATION_AGGREGATE_TYPE,
   INITIATIVE_AGGREGATE_TYPE,
+  MEETING_AGGREGATE_TYPE,
   PROBLEM_AGGREGATE_TYPE,
   PROPOSAL_AGGREGATE_TYPE,
 };

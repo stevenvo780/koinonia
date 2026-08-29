@@ -20,6 +20,13 @@ function Formulario(): ReactNode {
   const router = useRouter();
   const params = useSearchParams();
   const problemaId = params.get('problema') ?? '';
+  // Presentes sólo cuando se llega desde «convertir este acuerdo en propuesta»
+  // (`/reuniones/[id]`). No cambian nada de este formulario —la propuesta se crea exactamente
+  // igual, por la única puerta que existe—; sólo dicen adónde volver al terminar, para que la
+  // reunión pueda enlazar el acuerdo con la propuesta que se acaba de crear (ver la cabecera de
+  // `app/reuniones/[id]/page.tsx`).
+  const reunionId = params.get('reunion');
+  const acuerdoId = params.get('acuerdo');
   const { sesion, cargando } = useSesion();
 
   const [problema, setProblema] = useState<ProblemaDetalle | undefined>(undefined);
@@ -54,8 +61,13 @@ function Formulario(): ReactNode {
           plan: planParaEnviar,
         }),
     );
-    if (resultado.estado === 'hecho') router.push(`/propuestas/${resultado.valor.id}`);
-    else if (resultado.estado === 'fallo') setError(resultado.error);
+    if (resultado.estado === 'hecho') {
+      router.push(
+        reunionId !== null && acuerdoId !== null
+          ? `/reuniones/${reunionId}?propuesta-creada=${resultado.valor.id}&acuerdo=${acuerdoId}`
+          : `/propuestas/${resultado.valor.id}`,
+      );
+    } else if (resultado.estado === 'fallo') setError(resultado.error);
   }
 
   // No se propone sin problema (PRODUCT §4). Y en vez de un error, se ofrece crearlo.
@@ -77,6 +89,12 @@ function Formulario(): ReactNode {
       {problema !== undefined && (
         <p className="suave">
           Responde a: <Link href={`/problemas/${problemaId}`}>{problema.titulo}</Link>
+        </p>
+      )}
+      {reunionId !== null && (
+        <p className="suave">
+          Viene de un acuerdo de reunión: al guardar, vuelve a{' '}
+          <Link href={`/reuniones/${reunionId}`}>esa reunión</Link> ya enlazada.
         </p>
       )}
       <h1>Escribir una propuesta</h1>

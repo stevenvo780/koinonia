@@ -354,6 +354,17 @@ const TRAMOS: readonly Tramo[] = [
         pista: 'los grupos y hasta dónde llega cada uno',
       },
       {
+        // Entre «Círculos» y «Normas» a propósito: es donde PRODUCT.md §4 la ubica en la tabla de
+        // las 14 pantallas, y el mismo orden separa lo que YA es estructura de gobierno (círculos,
+        // reglas) de lo que es apenas insumo para ella. No va en «Escribir»: convocar y publicar un
+        // acta no son textos que decidan nada por sí mismos, son la constancia de lo que pasó
+        // presencialmente — el principio del proyecto es que esa constancia es una herramienta más,
+        // no el sistema de gobierno, así que tampoco encabeza el recorrido numerado.
+        href: '/reuniones',
+        texto: 'Reuniones',
+        pista: 'lo presencial, con orden del día y lo que quedó acordado',
+      },
+      {
         href: '/normas',
         texto: 'Las reglas del juego',
         pista: 'cómo se decide acá y con qué plazos',

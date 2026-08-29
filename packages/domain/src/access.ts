@@ -108,6 +108,10 @@ export type Action =
   | 'deliberation:contribute'
   | 'deliberation:advance-stage'
   | 'deliberation:read-authorship'
+  | 'meeting:read'
+  | 'meeting:convene'
+  | 'meeting:publish-minutes'
+  | 'meeting:link-agreement'
   | 'constitution:read'
   | 'constitution:found'
   | 'constitution:propose-reform'
@@ -151,6 +155,10 @@ export const ACTIONS: readonly Action[] = [
   'deliberation:contribute',
   'deliberation:advance-stage',
   'deliberation:read-authorship',
+  'meeting:read',
+  'meeting:convene',
+  'meeting:publish-minutes',
+  'meeting:link-agreement',
   'constitution:read',
   'constitution:found',
   'constitution:propose-reform',
@@ -183,6 +191,7 @@ export type ResourceKind =
   | 'proposal'
   | 'decision'
   | 'deliberation'
+  | 'meeting'
   | 'constitution'
   | 'initiative'
   | 'task'
@@ -365,6 +374,38 @@ const RULES: Readonly<Record<Action, Rule>> = {
     deniedDuringStage: undefined,
   },
   'deliberation:contribute': CIRCLE_MEMBER,
+
+  // ─── Reuniones (PRODUCT §4) ────────────────────────────────────────────────────────────────
+  // Cualquiera lee: una convocatoria y un acta son públicas, igual que un problema o una
+  // propuesta. `problem:create` es la referencia deliberada para `meeting:convene`: convocar es
+  // un acto operativo (§4 fila 1 de GOVERNANCE, «decide quien tiene el encargo»), no un
+  // procedimiento que exija facilitación, y no está atado al propio círculo por la misma razón
+  // que `problem:create` no lo está — quien convoca puede nombrar el círculo competente sin
+  // pertenecer a él, igual que quien abre un problema.
+  //
+  // Publicar el acta y enlazar el acuerdo con la propuesta que salió de él son horizontales, y la
+  // referencia deliberada ahí es `proposal:amend`/`evidence:retract`: el mismo rol no da acceso a
+  // lo ajeno. Quien convocó es quien responde por lo que se publica como constancia de lo que
+  // pasó; otra persona del mismo círculo, con el mismo rol, no puede escribir el acta de una
+  // reunión que no convocó.
+  'meeting:read': OPEN,
+  /*
+   * `CIRCLE_MEMBER` y no `MEMBER`, y lo encontró la revisión independiente: con `MEMBER` a secas
+   * cualquier persona autenticada podía convocar una reunión a nombre de un círculo al que NO
+   * pertenece. Sólo se comprobaba que tuviera cuenta.
+   *
+   * No es un detalle de higiene. Una reunión convocada aparece en la pantalla del círculo, con su
+   * orden del día, y lo que ahí se acuerde puede convertirse en propuesta del sistema: convocar es
+   * un acto de gobierno del círculo, no un mensaje. Alguien de fuera podía citar a un órgano al que
+   * no pertenece y meterle puntos en el orden del día.
+   *
+   * Publicar el acta y enlazar acuerdos ya exigían ser quien convocó (`ownerOnly`), así que el
+   * agujero estaba sólo en la puerta de entrada — que es justo por donde importa.
+   */
+  'meeting:convene': CIRCLE_MEMBER,
+  'meeting:publish-minutes': { ...MEMBER, ownerOnly: true },
+  'meeting:link-agreement': { ...MEMBER, ownerOnly: true },
+
   'deliberation:advance-stage': {
     roles: ['facilitator', 'guarantees'],
     authenticated: true,
