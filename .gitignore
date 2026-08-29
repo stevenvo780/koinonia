@@ -57,3 +57,5 @@ next-env.d.ts
 # correo real de contacto y el estado de los defectos abiertos — cosas que sirven a quien opera esto
 # y que no tienen por qué viajar en un repositorio público. Se queda en la carpeta de trabajo.
 /ACCESO-PRUEBAS.md
+# Borrador del mensaje para el grupo de la facultad: es tuyo y del momento, no del proyecto.
+/MENSAJE-GRUPO.txt
