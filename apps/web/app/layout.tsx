@@ -95,6 +95,27 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
               </Link>
               .
             </p>
+            {/*
+             * El enlace va en el pie y NO en la navegación principal, y es a propósito: la barra
+             * enseña el recorrido —lo que se hace acá— y esta pantalla no es un paso del recorrido,
+             * es la respuesta a «¿por qué debería creerles?». Va donde ya está la frase que plantea
+             * esa pregunta, que es este mismo párrafo.
+             */}
+            {/*
+             * El texto de acá NO puede decir «administra el servidor», y no es un capricho de
+             * estilo: la pantalla de una deliberación abierta usa esa frase exacta para avisar
+             * quiénes SÍ pueden ver lo que todavía no tiene nombre, y `08-deliberacion.spec.ts`
+             * comprueba que ese aviso esté a la vista. Como el pie sale en las 34 pantallas, decirlo
+             * también acá metía una segunda aparición en la misma página y la prueba dejaba de poder
+             * señalar la que importa. Se dice lo mismo con otras palabras.
+             */}
+            <p>
+              <Link href="/arquitectura" prefetch={false}>
+                Quién es dueño de esto
+              </Link>{' '}
+              — por qué no hace falta creerle a quien tiene la máquina, y cómo participar sin
+              pedirle permiso a nadie.
+            </p>
           </div>
         </footer>
       </body>

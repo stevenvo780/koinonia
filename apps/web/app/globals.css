@@ -3346,3 +3346,129 @@ main h4 {
     margin-top: 0;
   }
 }
+
+/* ═══ «Quién es dueño de esto» — el dibujo de los testigos ══════════════════════════════════════
+ *
+ * Todo en SVG dentro del marcado y pintado con las mismas variables que el resto: cero bytes de red
+ * y un solo sitio donde cambia el color si cambia la marca. El dibujo lleva `role="img"` con título
+ * y descripción, así que quien no lo ve recibe la misma explicación en palabras — no un hueco.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+.dibujo-testigos {
+  margin: var(--e6) 0;
+}
+
+.dibujo-testigos svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.dibujo-testigos figcaption {
+  margin-top: var(--e3);
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.d-servidor {
+  fill: var(--acento-tenue);
+  stroke: var(--acento);
+  stroke-width: 1.5;
+}
+
+.d-testigo {
+  fill: var(--papel-alto);
+  stroke: var(--linea-fuerte);
+  stroke-width: 1;
+}
+
+.d-verificador {
+  fill: var(--papel-hondo);
+  stroke: var(--linea-fuerte);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.d-linea {
+  fill: none;
+  stroke: var(--linea-fuerte);
+  stroke-width: 1;
+}
+
+/* El texto del dibujo va en la de sistema: a 12-13 px es la que se lee, como en el resto del marco. */
+.dibujo-testigos text {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  text-anchor: middle;
+}
+
+.d-tt {
+  fill: var(--tinta);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.d-tp {
+  fill: var(--tinta-suave);
+  font-size: 11.5px;
+}
+
+.d-regla {
+  fill: var(--acento);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Los cuatro tipos de testigo: lista de definiciones con el filete al margen, como una norma. */
+.tipos-testigo {
+  margin: var(--e5) 0;
+}
+
+.tipos-testigo dt {
+  margin-top: var(--e4);
+  padding-left: var(--e3);
+  border-left: 3px solid var(--acento);
+  color: var(--tinta);
+  font-family: var(--serifa);
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.tipos-testigo dd {
+  margin: var(--e1) 0 0;
+  padding-left: calc(var(--e3) + 3px);
+  color: var(--tinta-suave);
+}
+
+.formas-participar > li {
+  margin-bottom: var(--e4);
+}
+
+.cierre-arquitectura {
+  margin-top: var(--e6);
+}
+
+/*
+ * El dibujo se sale de la medida de lectura. `--medida` son 64 caracteres, que es lo cómodo para
+ * un párrafo y demasiado angosto para un esquema con cuatro columnas: dentro de esa caja los
+ * rótulos quedaban a 8 px reales. Un dibujo no se lee renglón a renglón, así que no le aplica la
+ * medida de la prosa. En pantalla ancha se ensancha hasta el carril entero; en el teléfono no hay
+ * nada que ensanchar y se queda como está.
+ */
+@media (min-width: 64rem) {
+  .pagina-prosa .dibujo-testigos {
+    width: min(52rem, 100%);
+    max-width: none;
+  }
+}
+
+.d-punta {
+  fill: var(--linea-fuerte);
+}
