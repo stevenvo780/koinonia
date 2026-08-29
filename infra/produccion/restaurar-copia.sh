@@ -124,11 +124,58 @@ contar_tablas_base() {
     "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema','pg_toast');"
 }
 
+# `copia-de-seguridad.sh` corre `pg_dump` SIN `--no-owner` ni `--no-acl`: el volcado ya trae, para
+# cada objeto de cada schema, las sentencias `ALTER … OWNER TO koinonia_ddl` y `GRANT … TO
+# koinonia_app` que estaban en vigor en el momento de la copia — las de la migración 0003 y las que
+# se le sumaron después (0004, 0005, 0006, 0008, 0010, 0011, 0013). `pg_restore`, para poder
+# EJECUTAR esas sentencias, necesita que los roles a los que apuntan ya existan en el destino; si no
+# existen no falla la restauración entera, pero SALTA esas sentencias puntuales con un aviso — y lo
+# que queda es un esquema restaurado sin dueño propio y sin un solo privilegio de `koinonia_app`,
+# que es exactamente el fallo que este script existe para dejar de producir. Por eso se crean acá,
+# ANTES de restaurar, con los mismos atributos que fija la 0003 y sin contraseña (eso lo resuelve el
+# arranque de la API con `KOINONIA_DB_APP_PASSWORD`, no este script — ver `services/api/src/db/
+# roles.ts`). En modo `--produccion` los roles casi siempre ya existen — son del clúster, no de la
+# base, y `DROP DATABASE` no los toca — así que ahí esto normalmente no hace nada; lo que sí hace
+# falta siempre es el contenedor descartable del modo aislado, que arranca sin un solo rol propio.
+asegurar_roles_de_aplicacion() {
+  local contenedor="$1" base="$2" usuario="$3"
+  docker exec -i "$contenedor" psql -U "$usuario" -d "$base" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'koinonia_ddl') THEN
+    CREATE ROLE koinonia_ddl NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'koinonia_app') THEN
+    CREATE ROLE koinonia_app LOGIN;
+  END IF;
+END $$;
+SQL
+}
+
+# Qué le quedó de verdad a `koinonia_app` sobre `governance.event`, preguntado al catálogo después de
+# restaurar — exactamente lo mismo que audita `auditAppGrants()` en producción (`services/api/src/db/
+# roles.ts`), pero desde el propio script: la restauración que este fichero hace tiene que quedar
+# probada por sí sola, no sólo confiada a que alguien corra después las pruebas de integración.
+# `array_remove(…, NULL)` en este orden fijo hace que el resultado sea comparable con `[` como texto:
+# si falta uno o sobra uno, la cadena ya no es exactamente "SELECT,INSERT".
+privilegios_app_sobre_event() {
+  local contenedor="$1" base="$2" usuario="$3"
+  docker exec "$contenedor" psql -U "$usuario" -d "$base" -t -A -c "
+    SELECT array_to_string(array_remove(ARRAY[
+      CASE WHEN has_table_privilege('koinonia_app', 'governance.event', 'SELECT')   THEN 'SELECT'   END,
+      CASE WHEN has_table_privilege('koinonia_app', 'governance.event', 'INSERT')   THEN 'INSERT'   END,
+      CASE WHEN has_table_privilege('koinonia_app', 'governance.event', 'UPDATE')   THEN 'UPDATE'   END,
+      CASE WHEN has_table_privilege('koinonia_app', 'governance.event', 'DELETE')   THEN 'DELETE'   END,
+      CASE WHEN has_table_privilege('koinonia_app', 'governance.event', 'TRUNCATE') THEN 'TRUNCATE' END
+    ], NULL), ',');
+  "
+}
+
 # ============================== MODO AISLADO ==============================
 restaurar_aislado() {
   verificar_huella
 
-  local sufijo ruta_temp_en_contenedor esperadas encontradas
+  local sufijo ruta_temp_en_contenedor esperadas encontradas privilegios
   # nombre_temp NO es `local`, a propósito: `limpiar_aislado` corre desde el trap de
   # EXIT, que dispara recién cuando el SCRIPT ENTERO termina — es decir, después de
   # que esta función ya retornó. Una variable `local` ya estaría fuera de alcance en
@@ -162,13 +209,20 @@ restaurar_aislado() {
 
   esperar_postgres "$nombre_temp"
   docker exec "$nombre_temp" psql -U postgres -d postgres -c "CREATE DATABASE koinonia;" >/dev/null
+  # Contenedor recién nacido: no tiene ni un rol propio de Koinonía. Sin esto, `pg_restore` de abajo
+  # saltaría en silencio cada `ALTER … OWNER TO` y cada `GRANT … TO koinonia_app` del volcado.
+  asegurar_roles_de_aplicacion "$nombre_temp" koinonia postgres
 
   docker cp "$ARCHIVO_ABS" "${nombre_temp}:${ruta_temp_en_contenedor}"
 
   esperadas="$(printf '%s\n' "$(contar_tablas_volcado "$nombre_temp" "$ruta_temp_en_contenedor")")"
   registro "el volcado trae ${esperadas} tablas. Restaurando..."
 
-  docker exec "$nombre_temp" pg_restore -U postgres -d koinonia --no-owner --no-privileges "$ruta_temp_en_contenedor" || {
+  # SIN `--no-owner` ni `--no-privileges`: el volcado ya trae el dueño y los privilegios reales de la
+  # base de origen (ver el comentario de `asegurar_roles_de_aplicacion`), y con los roles ya creados
+  # arriba `pg_restore` los puede aplicar tal cual. Suprimirlos era, precisamente, lo que dejaba la
+  # base restaurada sin un solo privilegio de `koinonia_app`.
+  docker exec "$nombre_temp" pg_restore -U postgres -d koinonia "$ruta_temp_en_contenedor" || {
     error "pg_restore terminó con errores. Revisá la salida de arriba."
     exit 1
   }
@@ -180,6 +234,16 @@ restaurar_aislado() {
   fi
 
   registro "verificación OK: ${encontradas} tablas restauradas, igual a las ${esperadas} del volcado."
+
+  registro "comprobando los privilegios de koinonia_app sobre governance.event..."
+  privilegios="$(privilegios_app_sobre_event "$nombre_temp" koinonia postgres)"
+  if [ "$privilegios" != "SELECT,INSERT" ]; then
+    error "koinonia_app quedó con «${privilegios:-ninguno}» sobre governance.event; tiene que ser exactamente SELECT,INSERT."
+    error "la restauración perdió (o esta copia nunca tuvo) los privilegios de la migración 0003. La API se negaría a arrancar contra esta base, y con razón."
+    exit 1
+  fi
+  registro "privilegios OK: koinonia_app tiene exactamente SELECT, INSERT sobre governance.event."
+
   registro "conteo de filas por tabla (para mirar que no esté todo en cero cuando no debería):"
   docker exec "$nombre_temp" psql -U postgres -d koinonia -t -A -F ' | ' -c "
     SELECT schemaname || '.' || relname, n_live_tup
@@ -235,7 +299,7 @@ restaurar_produccion() {
   fi
   registro "copia de emergencia OK (${emergencia}). Si algo sale mal, restaurá desde ahí."
 
-  local esperadas encontradas
+  local esperadas encontradas privilegios
   # ruta_temp_en_contenedor NO es `local`, por la misma razón que en restaurar_aislado:
   # `limpiar_prod` corre desde el trap de EXIT, que dispara después de que esta
   # función ya retornó, y necesita seguir viendo esta variable en ese momento.
@@ -269,10 +333,16 @@ restaurar_produccion() {
     error "recuperala a mano desde la copia de emergencia: ${emergencia}"
     error "  docker exec ${CONTENEDOR} psql -U ${USUARIO_PG} -d postgres -c \"CREATE DATABASE \\\"${BASE}\\\" WITH TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';\""
     error "  docker cp ${emergencia} ${CONTENEDOR}:/tmp/recuperacion-emergencia.dump"
-    error "  docker exec ${CONTENEDOR} pg_restore -U ${USUARIO_PG} -d ${BASE} --no-owner --no-privileges /tmp/recuperacion-emergencia.dump"
+    error "  docker exec ${CONTENEDOR} pg_restore -U ${USUARIO_PG} -d ${BASE} /tmp/recuperacion-emergencia.dump"
     error "la API sigue detenida a propósito. No la levantes hasta terminar esta recuperación."
     exit 1
   fi
+
+  # Los roles son del clúster, no de esta base: el DROP DATABASE de arriba no los tocó y esto casi
+  # siempre no hace nada. Se llama de todos modos porque es la misma garantía que en modo aislado, y
+  # porque es exactamente lo barato que hace falta para no volver a depender de que nadie los haya
+  # borrado a mano entre una restauración y la siguiente.
+  asegurar_roles_de_aplicacion "$CONTENEDOR" "$BASE" "$USUARIO_PG"
 
   docker cp "$ARCHIVO_ABS" "${CONTENEDOR}:${ruta_temp_en_contenedor}"
   limpiar_prod() {
@@ -283,7 +353,10 @@ restaurar_produccion() {
   esperadas="$(contar_tablas_volcado "$CONTENEDOR" "$ruta_temp_en_contenedor")"
   registro "el volcado trae ${esperadas} tablas. Restaurando sobre '${BASE}'..."
 
-  docker exec "$CONTENEDOR" pg_restore -U "$USUARIO_PG" -d "$BASE" --no-owner --no-privileges "$ruta_temp_en_contenedor" || {
+  # SIN `--no-owner` ni `--no-privileges`: ver el comentario de `asegurar_roles_de_aplicacion` más
+  # arriba en el fichero. Esas dos banderas eran, exactamente, lo que dejaba `koinonia_app` sin
+  # SELECT ni INSERT sobre `governance.event` después de restaurar — y a la API negándose a arrancar.
+  docker exec "$CONTENEDOR" pg_restore -U "$USUARIO_PG" -d "$BASE" "$ruta_temp_en_contenedor" || {
     error "pg_restore terminó con errores. La base '${BASE}' puede haber quedado a medio restaurar."
     error "la copia de emergencia sigue en ${emergencia} por si hace falta volver atrás."
     exit 1
@@ -298,6 +371,16 @@ restaurar_produccion() {
   fi
 
   registro "verificación OK: ${encontradas} tablas restauradas, igual a las ${esperadas} del volcado."
+
+  registro "comprobando los privilegios de koinonia_app sobre governance.event..."
+  privilegios="$(privilegios_app_sobre_event "$CONTENEDOR" "$BASE" "$USUARIO_PG")"
+  if [ "$privilegios" != "SELECT,INSERT" ]; then
+    error "koinonia_app quedó con «${privilegios:-ninguno}» sobre governance.event; tiene que ser exactamente SELECT,INSERT."
+    error "la API se negaría a arrancar contra esta base — y con razón. NO corras 'docker start ${API_CONTENEDOR}' hasta resolver esto."
+    error "la copia de emergencia sigue en ${emergencia} por si hace falta volver atrás."
+    exit 1
+  fi
+  registro "privilegios OK: koinonia_app tiene exactamente SELECT, INSERT sobre governance.event."
   echo
   echo "############################################################"
   echo "#  Restauración completa. La API SIGUE DETENIDA a propósito. #"
