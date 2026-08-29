@@ -62,11 +62,19 @@ rsync -a --delete \
   --exclude dist --exclude '**/dist' \
   --exclude '.next' --exclude '**/.next' \
   --exclude '*.tsbuildinfo' \
+  --exclude '.claude' \
+  --exclude 'playwright-report' --exclude 'test-results' \
   /ruta/a/koinonia/ root@167.114.118.213:/opt/koinonia/repo/
 ```
 
 (`--delete` importa: sin él, un fichero borrado en el commit nuevo seguiría en `/opt/koinonia/repo`
 y podría colarse en el build.)
+
+`--exclude '.claude'` no es cosmético. Si se trabaja con árboles de trabajo de Git auxiliares, esa
+carpeta llega a pesar **varios gigabytes** —copias enteras del repositorio, con sus `node_modules`—
+y el `rsync` se va de minutos a mucho más, subiendo por la red algo que el build no mira. Con las
+exclusiones puestas, `/opt/koinonia/repo` pesa unos 90 MB; conviene mirarlo con `du -sh` después de
+sincronizar, porque si sale un número muy distinto es que se coló algo.
 
 ### 2.2. Construir las dos imágenes
 
