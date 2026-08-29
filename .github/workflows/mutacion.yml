@@ -12,10 +12,32 @@ name: Mutación
 #
 #   ámbito   | antes   | ahora   | qué pasó
 #   ---------|---------|---------|------------------------------------------------------------------
-#   GLOBAL   | 62,10 % | 73,68 % |
+#   GLOBAL   | 62,10 % | 73,68 % | (sobre crypto + tally + reglas; `permisos`/`delegacion` no existían)
 #   reglas   | 76,30 % | 89,50 % | **pasa el umbral**; `ballot.ts` 58,42 → 96,56
 #   tally    | 48,95 % | 65,61 % | cinco de diez escrutadores por encima del 94 %
 #   crypto   | 77,34 % | 77,34 % | sin tocar
+#
+# 2026-08-29 — el pliego pide mutación sobre «votación, permisos, quórums, delegación, máquinas de
+# estado, ledger, integridad»; `permisos` (autorización, `access.ts`) y `delegacion`
+# (`delegation.ts` + `delegation-graph.ts`) NUNCA habían estado en `AMBITOS`, ni siquiera en la
+# corrida nocturna completa. Medidos ahora, cada uno solo (`KOINONIA_MUTAR=permisos` /
+# `KOINONIA_MUTAR=delegacion`), contra el mismo umbral de 85 %:
+#
+#   ámbito     | mutantes | puntuación | qué pasó
+#   -----------|----------|------------|------------------------------------------------------------
+#   permisos   |      291 |    99,66 % | **pasa el umbral**; sólo 1 mutante vivo, DEMOSTRADO
+#              |          |            | equivalente (comentado en `access.ts` junto a la línea)
+#   delegacion |      490 |    96,33 % | **pasa el umbral**; los que sobreviven —comentados uno por
+#              |          |            | uno en `delegation.ts`/`delegation-graph.ts`— son guardas
+#              |          |            | defensivas redundantes o valores que el código calcula y
+#              |          |            | nunca vuelve a leer; ninguno es deuda de prueba
+#
+# Los dos ya están en la unión por defecto (`AMBITOS.permisos` + `AMBITOS.delegacion`, sin
+# `KOINONIA_MUTAR`), así que la próxima corrida nocturna completa los incluye. El GLOBAL de la tabla
+# de arriba (73,68 %) queda desactualizado en lo que mide —era sobre tres ámbitos, ahora la corrida
+# por defecto son cinco—; no se recalcula aquí a mano para no reportar un número que esta corrida no
+# midió. Lo próximo que corra `workflow_dispatch` sin `ambito` (o el cron nocturno) deja el GLOBAL
+# real de los cinco en el informe subido como artefacto.
 #
 # Dentro de `tally`, lo que ya está hecho y lo que falta:
 #
@@ -38,8 +60,9 @@ name: Mutación
 # `packages/domain` sin relación con el motivo del rojo. Se engancha el día que la puntuación pase
 # de 85 %, y ese día el guardián sí protege algo en vez de estorbar.
 #
-# `KOINONIA_MUTAR=reglas` **ya está por encima de 85 %**: es el primer ámbito que se puede enganchar
-# a los PR sin que estorbe, en cuanto se quiera separar el trabajo por ámbitos.
+# `KOINONIA_MUTAR=reglas`, `=permisos` y `=delegacion` **ya están por encima de 85 %** cada uno por
+# su cuenta: son los ámbitos que se pueden enganchar a los PR sin que estorben, en cuanto se quiera
+# separar el trabajo por ámbitos en vez de esperar a que crypto y tally también pasen.
 
 on:
   schedule:
@@ -48,7 +71,7 @@ on:
   workflow_dispatch:
     inputs:
       ambito:
-        description: 'Ámbito a mutar: vacío (todo), crypto, tally o reglas'
+        description: 'Ámbito a mutar: vacío (todo), crypto, tally, reglas, permisos o delegacion'
         required: false
         default: ''
 
@@ -58,7 +81,7 @@ concurrency:
 
 jobs:
   mutacion:
-    name: Stryker · ${{ inputs.ambito || 'crypto + tally + reglas' }}
+    name: Stryker · ${{ inputs.ambito || 'crypto + tally + reglas + permisos + delegacion' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

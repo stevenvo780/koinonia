@@ -617,6 +617,12 @@ export function authorize(actor: Actor, action: Action, resource: ResourceRef): 
         'el material privado no declara lectores; la ausencia de política nunca concede acceso',
       );
     }
+    // `actor.memberId === undefined` es defensivo y hoy INALCANZABLE: en la matriz, `readerOnly`
+    // sólo lo lleva `PRIVATE_READER_IN_CIRCLE`, y esa regla es siempre `authenticated: true`. La
+    // comprobación de arriba ya lanzó `NOT_AUTHENTICATED` antes de llegar acá si `memberId` faltaba
+    // (§10, mutación sobre `permisos`: mutante demostrado equivalente, no deuda de prueba). Queda
+    // escrito y no se borra porque documenta la invariante que lo vuelve inalcanzable —el día que
+    // una regla con `readerOnly` no exija identidad, este disyunto vuelve a hacer falta de verdad.
     if (actor.memberId === undefined || !resource.authorizedReaders.includes(actor.memberId)) {
       throw new UnauthorizedError(
         'NOT_A_READER',

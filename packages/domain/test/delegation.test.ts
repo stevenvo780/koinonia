@@ -10,6 +10,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertDelegationGrantable,
+  assertDelegationRevocable,
+  assertNoDelegationInSecretBallot,
   type Ballot,
   type BallotId,
   buildDecisionConfig,
@@ -24,19 +27,24 @@ import {
   type Delegation,
   type DelegationScope,
   delegationId,
+  delegationSlot,
   delegationWeightResolver,
   type Electorate,
   ENGINE_VERSION,
   type Fraction,
+  hasActiveDelegationsFor,
   type Instant,
   instant,
   normalizedHerfindahl,
   ratio,
   resolveDelegation,
+  revokeIn,
   toFractionString,
   topicId,
   type TopicId,
+  vigentDelegations,
 } from '../src/index.js';
+import { PreconditionError } from '../src/errors.js';
 import {
   buildElectorate,
   CIRCLE_MAIN,
@@ -190,6 +198,17 @@ function weightsByVoter(
 }
 
 const M = memberIdAt;
+
+/** Corre `fn`, exige que rechace con `PreconditionError` y devuelve el error para inspeccionarlo. */
+function rejects(fn: () => void): PreconditionError {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof PreconditionError) return error;
+    throw error;
+  }
+  throw new Error('se esperaba que la comprobación rechazara, y no lo hizo');
+}
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // C.2 — vigencia
@@ -801,5 +820,470 @@ describe('INV-21 — la suma de pesos nunca excede el censo', () => {
     const total = effective.reduce((s, b) => s + b.weight, 0);
     expect(total).toBeLessThanOrEqual(electorate.censusSize);
     expect(ratio(total, electorate.censusSize).num).toBeLessThanOrEqual(60n);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// `capWeight` — el suelo del suelo
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('`capWeight` — el suelo del suelo es 1 (errata E-40)', () => {
+  it('con censo chico, `⌊cap·N⌋` da 0 y el suelo lo sube a 1', async () => {
+    // `buildDecisionConfig` ya rechaza al abrir un censo tan chico que el tope dé menos de 2
+    // (`DELEGATION_CAP_TOO_SMALL`), así que la única manera legítima de ejercitar este suelo es la
+    // que el propio comentario de `capWeight` describe: un `configHash` fabricado a mano. Se
+    // construye una config VÁLIDA y se le manipula sólo el campo que hace falta, sin pasar de nuevo
+    // por la validación — exactamente la protección que la función dice ofrecer.
+    const config = await configFor(await buildElectorate(20));
+    const manipulado: DecisionConfig = {
+      ...config,
+      electorate: { ...config.electorate, censusSize: 5 }, // cap 1/10 ⇒ 0.5, trunca a 0
+    };
+    expect(capWeight(manipulado)).toBe(1);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// PASO 1 — filtros propios de las papeletas directas (D.3.b, INV-02)
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('PASO 1 — filtros propios de las papeletas directas', () => {
+  it('una papeleta de quien no está en el padrón congelado nunca cuenta (INV-02)', async () => {
+    const config = await configFor(await buildElectorate(20));
+    // M(99) no pertenece al padrón de 10 miembros: su papeleta «directa» no debe bloquear nada.
+    const cast = ballots([{ voter: 0 }, { voter: 99 }]);
+    const pesos = weightsByVoter(config, cast, []);
+    expect(pesos[M(99)]).toBeUndefined();
+    expect(pesos[M(0)]).toBe(1);
+  });
+
+  it('el instante del cierre pertenece al DESPUÉS: emitida justo en `closedAt` no cuenta', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const cast = [ballot({ voter: 0, at: CLOSES_AT }, 0)];
+    expect(weightsByVoter(config, cast, [])[M(0)]).toBeUndefined();
+  });
+
+  it('un milisegundo antes del cierre, sí cuenta', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const cast = [ballot({ voter: 0, at: instant(CLOSES_AT - 1) }, 0)];
+    expect(weightsByVoter(config, cast, [])[M(0)]).toBe(1);
+  });
+
+  it('dos papeletas del mismo votante: gana la de mayor `seq`, sin importar el ORDEN de llegada', async () => {
+    const config = await configFor(await buildElectorate(20));
+    // `ballot(spec, índice)` deriva `seq = 100 + índice`: la de mayor `seq` (índice 5) llega
+    // PRIMERO en el arreglo, y la de menor `seq` (índice 1) llega DESPUÉS. Si el criterio fuera «la
+    // última que llega» en vez de «la de mayor `seq`», este caso daría la papeleta equivocada.
+    const cast = [ballot({ voter: 0 }, 5), ballot({ voter: 0 }, 1)];
+    const [ultima] = delegationWeightResolver([])(config, cast, CLOSES_AT);
+    expect(ultima?.seq).toBe(105);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// PASO 3 — `cycleMembers` sólo lleva ciclos, ninguna otra razón de silencio
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('PASO 3 — `cycleMembers` no se confunde con otras razones de silencio', () => {
+  it('quien queda sin asignar por PROFUNDIDAD no entra en `cycleMembers`', async () => {
+    const config = await configFor(await buildElectorate(20), { maxDepth: 1 });
+    // Cadena de 2 aristas con `maxDepth = 1`: profundidad excedida, no hay ciclo.
+    const resolution = resolveDelegation(config, ballots([{ voter: 2 }]), chain(0, 2), CLOSES_AT);
+    expect(resolution.unassigned.find((u) => u.member === M(0))?.reason).toBe('depth-exceeded');
+    expect(resolution.cycleMembers).toEqual([]);
+  });
+
+  it('quien queda sin asignar por CADENA MUERTA no entra en `cycleMembers`', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const resolution = resolveDelegation(
+      config,
+      ballots([]),
+      grants([{ from: 0, to: 1 }]), // 1 nunca vota ni delega: la cadena muere sin desembocadura
+      CLOSES_AT,
+    );
+    expect(resolution.unassigned.find((u) => u.member === M(0))?.reason).toBe('chain-dead-end');
+    expect(resolution.cycleMembers).toEqual([]);
+  });
+
+  it('un ciclo real SÍ entra en `cycleMembers`', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const resolution = resolveDelegation(
+      config,
+      ballots([]),
+      grants([
+        { from: 0, to: 1 },
+        { from: 1, to: 0 },
+      ]),
+      CLOSES_AT,
+    );
+    expect(resolution.cycleMembers).toEqual([M(0), M(1)]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// PASO 5 — desempate por `grantedSeq`, y a igual `seq` por delegador
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('PASO 5 — el desempate mira el `grantedSeq` de verdad, no el orden del delegador', () => {
+  it('con `grantedSeq` EMPATADO, se devuelve al delegador de mayor id', async () => {
+    const config = await configFor(await buildElectorate(20)); // cap 2
+    // M(1) y M(2) delegan con el MISMO `grantedSeq`: 1 (propio) + 2 (carried) = 3 > cap(2), se
+    // devuelve exactamente uno. El criterio de C.2/C.5.b.2 para el empate es `delegationId`
+    // descendente sobre el delegador, no el orden en que las delegaciones llegaron al arreglo.
+    const resolution = resolveDelegation(
+      config,
+      ballots([{ voter: 0 }]),
+      grants([
+        { from: 1, to: 0, seq: 5 },
+        { from: 2, to: 0, seq: 5 },
+      ]),
+      CLOSES_AT,
+    );
+    expect(resolution.returnedByCap).toEqual([M(2)]);
+  });
+
+  it('con `grantedSeq` DISTINTO, manda el `seq` aunque contradiga el orden por id', async () => {
+    const config = await configFor(await buildElectorate(20)); // cap 2
+    // M(1) es el de MAYOR `seq` (más reciente) pero MENOR id; M(3) es el de MENOR `seq` pero mayor
+    // id. Si el desempate mirara el id en vez del `seq`, devolvería a M(3) primero; C.5.b.2 exige
+    // devolver primero al más RECIENTE, que aquí es M(1).
+    const resolution = resolveDelegation(
+      config,
+      ballots([{ voter: 0 }]),
+      grants([
+        { from: 1, to: 0, seq: 11 },
+        { from: 2, to: 0, seq: 3 },
+        { from: 3, to: 0, seq: 7 },
+      ]),
+      CLOSES_AT,
+    );
+    // weightOf(0) sería 4 (1 + 3 carried); cap 2 ⇒ se devuelven 2, en orden de `seq` descendente.
+    expect(resolution.returnedByCap).toEqual([M(1), M(3)]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// `unassigned` sale ordenado, aunque cada motivo se añada en un PASO distinto
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('`unassigned` — el orden final es por miembro, no por el PASO que lo añadió', () => {
+  it('un motivo añadido en el PASO 5 (cap-returned) no queda al final del arreglo', async () => {
+    const config = await configFor(await buildElectorate(20)); // cap 2
+    // M(1)/M(2) se resuelven y uno se devuelve por tope en el PASO 5 (al final, en inserción); los
+    // demás miembros sin delegación se añaden antes, en el PASO 3, en orden de padrón. El resultado
+    // final tiene que quedar ORDENADO por id, no en el orden en que cada PASO empujó su motivo.
+    const resolution = resolveDelegation(
+      config,
+      ballots([{ voter: 0 }]),
+      grants([
+        { from: 1, to: 0, seq: 5 },
+        { from: 2, to: 0, seq: 5 },
+      ]),
+      CLOSES_AT,
+    );
+    const orden = resolution.unassigned.map((u) => u.member);
+    expect(orden).toEqual([...orden].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    // Y de verdad hay una entrada de cap-returned mezclada entre las de no-delegation: si no lo
+    // estuviera, la prueba de arriba pasaría trivialmente sin probar nada.
+    expect(resolution.unassigned.some((u) => u.reason === 'cap-returned')).toBe(true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// `delegationWeightResolver` — su propio filtro (no sólo el PASO 1 de `resolveDelegation`)
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('`delegationWeightResolver` descarta lo que el PASO 1 ya descartó', () => {
+  it('una papeleta de quien el PASO 1 excluyó no aparece en las `EffectiveBallot[]`', async () => {
+    const config = await configFor(await buildElectorate(20));
+    // M(99) no está en el padrón: `resolveDelegation` nunca la pone en `weightOf`, y el resolutor
+    // tiene que respetar esa ausencia y no colarla con un peso inventado.
+    const cast = ballots([{ voter: 0 }, { voter: 99 }]);
+    const effective = delegationWeightResolver([])(config, cast, CLOSES_AT);
+    expect(effective.map((b) => b.voter)).toEqual([M(0)]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// EX ANTE — `assertDelegationGrantable`, probado directamente contra el dominio
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('EX ANTE — `assertDelegationGrantable`', () => {
+  it('DELEGATION_DISABLED: no se concede sobre una decisión abierta sin delegación (INV-32)', async () => {
+    const config = await configFor(await buildElectorate(20), { enabled: false });
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], grant({ from: 0, to: 1 }, 0));
+    });
+    expect(error.code).toBe('DELEGATION_DISABLED');
+    expect(error.message).toBe(
+      'esta decisión se abrió sin delegación: aceptar la concesión y no resolverla haría que un ' +
+        'voto delegado simplemente no existiera (INV-32)',
+    );
+  });
+
+  it('SELF_DELEGATION: delegar en uno mismo no es delegar', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], grant({ from: 0, to: 0 }, 0));
+    });
+    expect(error.code).toBe('SELF_DELEGATION');
+    expect(error.message).toBe('delegar en uno mismo no es delegar: si querés votar, votá');
+  });
+
+  it('DELEGATOR_NOT_IN_CENSUS: quien no está en el padrón no tiene voto que delegar (A.1)', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], grant({ from: 999, to: 0 }, 0));
+    });
+    expect(error.code).toBe('DELEGATOR_NOT_IN_CENSUS');
+    expect(error.message).toBe(
+      'quien no está en el padrón congelado no tiene voto que delegar (A.1)',
+    );
+  });
+
+  it('DELEGATE_NOT_IN_CENSUS: no se delega en quien no está en el padrón', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], grant({ from: 0, to: 999 }, 0));
+    });
+    expect(error.code).toBe('DELEGATE_NOT_IN_CENSUS');
+    expect(error.message).toBe(
+      'no se delega en quien no está en el padrón congelado: la arista nacería muerta (C.3 PASO 2)',
+    );
+  });
+
+  it('DUPLICATE_DELEGATION: el mismo `delegationId` no entra dos veces al log', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const existente = grant({ from: 0, to: 1 }, 7);
+    // Mismo índice ⇒ mismo `delegationId`; otro delegante y delegado por completo.
+    const candidata = grant({ from: 2, to: 3 }, 7);
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [existente], candidata);
+    });
+    expect(error.code).toBe('DUPLICATE_DELEGATION');
+    expect(error.message).toBe(`la delegación ${candidata.delegationId} ya existe en este log`);
+  });
+
+  it('DELEGATION_BORN_REVOKED: una concesión no trae ya su propia revocación', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const candidata = grant({ from: 0, to: 1, revokedAt: instant(T0) }, 0);
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], candidata);
+    });
+    expect(error.code).toBe('DELEGATION_BORN_REVOKED');
+    expect(error.message).toBe(
+      'una concesión no puede traer ya su propia revocación: revocar es un acto posterior y propio',
+    );
+  });
+
+  it('DELEGATION_EXPIRY_INVALID: la vigencia tiene que ser un intervalo no vacío (C.1.a)', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const at = instant(T0);
+    const candidata = grant({ from: 0, to: 1, at, expiresAt: at }, 0); // vacío: expiresAt === grantedAt
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], candidata);
+    });
+    expect(error.code).toBe('DELEGATION_EXPIRY_INVALID');
+    expect(error.message).toBe(
+      'la vigencia debe ser un intervalo no vacío: `grantedAt < expiresAt` (C.1.a)',
+    );
+  });
+
+  it('DELEGATION_VALIDITY_EXCEEDED: no hay delegación perpetua, el tope es un semestre', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const at = instant(T0);
+    const candidata = grant({ from: 0, to: 1, at, expiresAt: instant(at + SEMESTER + 1) }, 0);
+    const error = rejects(() => {
+      assertDelegationGrantable(config, [], candidata);
+    });
+    expect(error.code).toBe('DELEGATION_VALIDITY_EXCEEDED');
+    expect(error.message).toBe(
+      'no existe la delegación perpetua: la vigencia máxima es un semestre y la renovación es ' +
+        'explícita, jamás automática (C.1.a)',
+    );
+  });
+
+  it('DELEGATION_WOULD_CREATE_CYCLE: nadie de los dos votaría (C.4.a)', async () => {
+    const config = await configFor(await buildElectorate(20));
+    const existentes = grants([{ from: 1, to: 0, at: instant(T0) }]);
+    const candidata = grant({ from: 0, to: 1, at: instant(T0 + 1000) }, 1);
+    const error = rejects(() => {
+      assertDelegationGrantable(config, existentes, candidata);
+    });
+    expect(error.code).toBe('DELEGATION_WOULD_CREATE_CYCLE');
+    expect(error.message).toBe(
+      'esa persona ya te delega a vos (directamente o a través de una cadena): si delegás en ' +
+        'ella, ninguno de los dos votaría (C.4.a)',
+    );
+  });
+
+  it('DELEGATION_CAP_REACHED: dice a cuántos representaría YA, el tope y el censo exactos', async () => {
+    const config = await configFor(await buildElectorate(20)); // cap 1/10 ⇒ 2
+    const existentes = grants([{ from: 1, to: 0, seq: 1 }]);
+    const candidata = grant({ from: 2, to: 0, seq: 2 }, 1);
+    const error = rejects(() => {
+      assertDelegationGrantable(config, existentes, candidata);
+    });
+    expect(error.code).toBe('DELEGATION_CAP_REACHED');
+    expect(error.message).toBe(
+      'esa persona ya representaría a 2 miembros y el tope de concentración es 2 votos sobre un ' +
+        'censo de 20 (C.5)',
+    );
+  });
+
+  it('una concesión que cumple todo no lanza nada', async () => {
+    const config = await configFor(await buildElectorate(20));
+    expect(() => {
+      assertDelegationGrantable(config, [], grant({ from: 0, to: 1 }, 0));
+    }).not.toThrow();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// EX ANTE — `assertDelegationRevocable` y `revokeIn`
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('EX ANTE — `assertDelegationRevocable`', () => {
+  it('UNKNOWN_DELEGATION: no se revoca lo que no existe en el log', () => {
+    const idInexistente = delegationId(hex32(0xf000));
+    const error = rejects(() => assertDelegationRevocable([], idInexistente, instant(T0)));
+    expect(error.code).toBe('UNKNOWN_DELEGATION');
+    expect(error.message).toBe(`la delegación ${idInexistente} no existe en este log`);
+  });
+
+  it('DELEGATION_ALREADY_REVOKED: no se revoca dos veces', () => {
+    const revocada = grant({ from: 0, to: 1, revokedAt: instant(T0 + 500) }, 0);
+    const error = rejects(() =>
+      assertDelegationRevocable([revocada], revocada.delegationId, instant(T0 + 900)),
+    );
+    expect(error.code).toBe('DELEGATION_ALREADY_REVOKED');
+    expect(error.message).toBe(
+      `la delegación ${revocada.delegationId} ya fue revocada en ${String(revocada.revokedAt)}`,
+    );
+  });
+
+  it('DELEGATION_REVOKED_BEFORE_GRANT: no se revoca un mandato antes de haberlo dado', () => {
+    const vigente = grant({ from: 0, to: 1, at: instant(T0) }, 0);
+    const error = rejects(() =>
+      assertDelegationRevocable([vigente], vigente.delegationId, vigente.grantedAt),
+    );
+    expect(error.code).toBe('DELEGATION_REVOKED_BEFORE_GRANT');
+    expect(error.message).toBe('no se revoca un mandato antes de haberlo dado');
+  });
+
+  it('una revocación válida devuelve la delegación encontrada', () => {
+    const vigente = grant({ from: 0, to: 1, at: instant(T0) }, 0);
+    expect(assertDelegationRevocable([vigente], vigente.delegationId, instant(T0 + 10))).toBe(
+      vigente,
+    );
+  });
+});
+
+describe('`revokeIn` — aplica la revocación sin mutar el registro recibido', () => {
+  it('marca sólo la delegación indicada; el resto queda intacto, y el arreglo original también', () => {
+    const original = grants([
+      { from: 0, to: 1 },
+      { from: 2, to: 3 },
+    ]);
+    const objetivo = original[0]!;
+    const otra = original[1]!;
+    const at = instant(T0 + 1000);
+    const resultado = revokeIn(original, objetivo.delegationId, at);
+
+    expect(resultado.find((d) => d.delegationId === objetivo.delegationId)?.revokedAt).toBe(at);
+    expect(resultado.find((d) => d.delegationId === otra.delegationId)?.revokedAt).toBeUndefined();
+    // El arreglo ORIGINAL no se tocó: ninguna de sus entradas quedó con `revokedAt`.
+    expect(original.every((d) => d.revokedAt === undefined)).toBe(true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// `hasActiveDelegationsFor`, `vigentDelegations` y `delegationSlot`
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('`hasActiveDelegationsFor` — ¿hay alguna vigente en el ámbito de ESTA decisión? (ADR-0030)', () => {
+  it('sin ninguna delegación, `false`', async () => {
+    const config = await configFor(await buildElectorate(20));
+    expect(hasActiveDelegationsFor(config, [], instant(T0 + 1))).toBe(false);
+  });
+
+  it('con una vigente EN el ámbito, `true`', async () => {
+    const config = await configFor(await buildElectorate(20), { topics: [TOPIC_A] });
+    const delegaciones = grants([{ from: 0, to: 1, scope: ON_TOPIC_A, at: instant(T0) }]);
+    expect(hasActiveDelegationsFor(config, delegaciones, instant(T0 + 1))).toBe(true);
+  });
+
+  it('con una vigente pero FUERA del ámbito (otro tema), `false`', async () => {
+    const config = await configFor(await buildElectorate(20), { topics: [TOPIC_A] });
+    const delegaciones = grants([
+      { from: 0, to: 1, scope: { kind: 'topic', topicId: TOPIC_B }, at: instant(T0) },
+    ]);
+    expect(hasActiveDelegationsFor(config, delegaciones, instant(T0 + 1))).toBe(false);
+  });
+});
+
+describe('`assertNoDelegationInSecretBallot` — la compuerta dura de ADR-0030 / C.7.a', () => {
+  it('fuera del voto secreto, no comprueba nada: nunca lanza', async () => {
+    const config = await configFor(await buildElectorate(20));
+    expect(config.privacy).not.toBe('secret-ballot');
+    expect(() => {
+      assertNoDelegationInSecretBallot(config, grants([{ from: 0, to: 1 }]), instant(T0 + 1));
+    }).not.toThrow();
+  });
+
+  it('SECRET_BALLOT_WITH_DELEGATION: secreto con `delegation.enabled` es la puerta trasera del ADR', async () => {
+    const config = {
+      ...(await configFor(await buildElectorate(20))),
+      privacy: 'secret-ballot' as const,
+    };
+    const error = rejects(() => {
+      assertNoDelegationInSecretBallot(config, [], instant(T0 + 1));
+    });
+    expect(error.code).toBe('SECRET_BALLOT_WITH_DELEGATION');
+    expect(error.message).toBe(
+      'un voto secreto con delegación es un voto secreto con una puerta trasera pública y ' +
+        'verificable: al coaccionador le basta con exigirte que delegues en él (C.7.a / ADR-0030)',
+    );
+  });
+
+  it('SECRET_BALLOT_WITH_ACTIVE_DELEGATIONS: la forma FUERTE, con el conteo exacto de vigentes', async () => {
+    const base = await configFor(await buildElectorate(20), { enabled: false });
+    const config = { ...base, privacy: 'secret-ballot' as const };
+    const delegaciones = grants([{ from: 0, to: 1, at: instant(T0) }]);
+    const error = rejects(() => {
+      assertNoDelegationInSecretBallot(config, delegaciones, instant(T0 + 1));
+    });
+    expect(error.code).toBe('SECRET_BALLOT_WITH_ACTIVE_DELEGATIONS');
+    expect(error.message).toBe(
+      'hay 1 delegación(es) vigentes en el ámbito de esta decisión y el voto es secreto: no se ' +
+        'abre con la delegación inerte —quien delegó creería haber participado sin haberlo ' +
+        'hecho—; hay que avisar a esas personas de que voten en persona (ADR-0030)',
+    );
+  });
+
+  it('secreto, sin delegación habilitada y sin ninguna vigente: se reduce a C.7.a, no lanza', async () => {
+    const base = await configFor(await buildElectorate(20), { enabled: false });
+    const config = { ...base, privacy: 'secret-ballot' as const };
+    expect(() => {
+      assertNoDelegationInSecretBallot(config, [], instant(T0 + 1));
+    }).not.toThrow();
+  });
+});
+
+describe('`vigentDelegations` — para el registro público de C.7.b, sin filtrar por ámbito', () => {
+  it('sólo las vigentes en `at`, sean del ámbito que sean', () => {
+    const vigente = grant({ from: 0, to: 1, scope: ON_TOPIC_A, at: instant(T0) }, 0);
+    const caducada = grant({ from: 2, to: 3, at: instant(T0), expiresAt: instant(T0 + 100) }, 1);
+    const resultado = vigentDelegations([vigente, caducada], instant(T0 + 200));
+    expect(resultado).toEqual([vigente]);
+  });
+});
+
+describe('`delegationSlot` — la casilla `(delegante, ámbito)` en forma de texto', () => {
+  it('combina el delegante y la clave de ámbito con `|`', () => {
+    const global = grant({ from: 0, to: 1, scope: GLOBAL }, 0);
+    expect(delegationSlot(global)).toBe(`${M(0)}|global`);
+    const enTema = grant({ from: 0, to: 1, scope: ON_TOPIC_A }, 1);
+    expect(delegationSlot(enTema)).toBe(`${M(0)}|topic:${TOPIC_A}`);
   });
 });

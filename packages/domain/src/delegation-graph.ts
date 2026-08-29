@@ -111,6 +111,10 @@ export function matchesScope(scope: DelegationScope, subject: ScopeSubject): boo
  */
 export function isVigent(delegation: Delegation, at: Instant): boolean {
   if (delegation.grantedAt >= at) return false;
+  // `delegation.revokedAt !== undefined` es redundante en JavaScript: si `revokedAt` es
+  // `undefined`, `at >= undefined` YA da `false` (toda comparación de orden con `undefined` lo
+  // hace), así que forzar esa mitad a `true` no cambia el valor de la conjunción para ningún dato
+  // posible. Mutante demostrado equivalente (§10), no deuda de prueba.
   if (delegation.revokedAt !== undefined && at >= delegation.revokedAt) return false;
   return at < delegation.expiresAt;
 }
@@ -161,6 +165,9 @@ export function selectActiveDelegation(
   const active = delegations.filter(
     (d) => d.delegator === delegator && isDelegationActive(d, at, subject),
   );
+  // Redundante con la línea de abajo, no una comprobación aparte: `[...[]].sort(...)[0]` ya da
+  // `undefined` sobre un arreglo vacío, que es exactamente lo que esta línea devuelve a mano.
+  // Mutante demostrado equivalente (§10), no deuda de prueba.
   if (active.length === 0) return undefined;
   return [...active].sort(compareDelegationPriority)[0];
 }
@@ -271,6 +278,11 @@ function reverseUnionEdges(
     if (!isVigent(delegation, at)) continue;
     const incoming = reverse.get(delegation.delegate);
     if (incoming === undefined) reverse.set(delegation.delegate, [delegation.delegator]);
+    // `!incoming.includes(...)` es redundante para el ÚNICO llamante de esta función: la
+    // `projectedRepresented` que sigue vuelve a deduplicar por su cuenta con su propio `seen`, en el
+    // momento de CONSUMIR cada arreglo (`if (seen.has(delegator)) continue;`). Un delegante repetido
+    // aquí —el mismo `(delegante, delegado)` por dos ámbitos— nunca sale dos veces en el resultado
+    // público, entre por donde entre. Mutante demostrado equivalente (§10), no deuda de prueba.
     else if (!incoming.includes(delegation.delegator)) incoming.push(delegation.delegator);
   }
   return reverse;
@@ -290,11 +302,20 @@ export function reachesInUnion(
 ): boolean {
   if (from === target) return true;
   const edges = unionEdges(delegations, at);
+  // Sembrar `seen` con `[from]` evita reprocesar `from` si un ciclo vuelve a traerlo. Vaciar la
+  // semilla NO produce un recorrido infinito ni una respuesta distinta: `from` se añade a `seen` en
+  // cuanto algún vecino lo redescubre (la primera vez que ocurre), y desde ahí queda excluido igual
+  // que con la semilla puesta — sólo cuesta, como mucho, un `pop` redundante por nodo del grafo,
+  // nunca un bucle sin fin. Mutante demostrado equivalente (§10), no deuda de prueba.
   const seen = new Set<MemberId>([from]);
   const pending: MemberId[] = [from];
   for (;;) {
     const current = pending.pop();
     if (current === undefined) return false;
+    // `?? []` es el caso «sin salidas»: iterar cero veces. El reemplazo de Stryker itera UNA vez
+    // con un `MemberId` inventado que nunca coincide con `target` (no es un id real) y que, tras esa
+    // primera vuelta, entra a `seen` como cualquier otro nodo — no vuelve a aparecer. El recorrido
+    // sigue siendo finito y la respuesta no cambia. Mutante demostrado equivalente (§10).
     for (const next of edges.get(current) ?? []) {
       if (next === target) return true;
       if (seen.has(next)) continue;
@@ -344,7 +365,15 @@ export function projectedRepresented(
   const seen = new Set<MemberId>([delegate]);
   let frontier: MemberId[] = [delegate];
   const found: MemberId[] = [];
+  // `frontier.length > 0` es una optimización, no una comprobación de la que dependa el resultado:
+  // con `frontier` vacío el `for` interior de abajo simplemente no itera, así que quitar esta mitad
+  // de la condición sólo hace girar `depth` en vacío hasta `maxDepth` —acotado, nunca sin fin— sin
+  // tocar `found` ni `seen`. Mutante demostrado equivalente (§10), no deuda de prueba.
   for (let depth = 0; depth < maxDepth && frontier.length > 0; depth += 1) {
+    // Si `next` arrancara con un `MemberId` inventado en vez de vacío, ese valor pasaría a
+    // `frontier` en la vuelta siguiente; `reverse.get(...)` de un id que no existe da `undefined`
+    // (`?? []`), así que no aporta ni un delegante más a `found`. Contamina un turno del recorrido y
+    // no cambia el resultado. Mutante demostrado equivalente (§10), no deuda de prueba.
     const next: MemberId[] = [];
     for (const node of frontier) {
       for (const delegator of reverse.get(node) ?? []) {

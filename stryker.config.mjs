@@ -6,19 +6,27 @@
  *
  * El ámbito no es «todo el repositorio»: es donde la mutación **paga**, que es el código denso en
  * decisiones y pobre en efectos —umbrales, fronteras de ventana, operadores estrictos—. §10 lo fija
- * en `packages/crypto`, `packages/domain/src/tally/**` y los cinco ficheros de reglas de `domain`.
- * `contracts` es casi todo tipos, que Stryker no muta; en `apps/web` las mutaciones caen sobre
- * marcado y no informan de nada.
+ * en `packages/crypto`, `packages/domain/src/tally/**`, los cinco ficheros de reglas de `domain`, la
+ * autorización (`access.ts`) y la delegación (`delegation.ts`, `delegation-graph.ts`). `contracts`
+ * es casi todo tipos, que Stryker no muta; en `apps/web` las mutaciones caen sobre marcado y no
+ * informan de nada.
  *
- * ⚠ Los umbrales de §10 son **85 % de fallo** en los tres ámbitos vigilados. Aquí se pone 85 y no se
+ * ⚠ Los umbrales de §10 son **85 % de fallo** en todos los ámbitos vigilados. Aquí se pone 85 y no se
  * baja. Si el número queda por debajo, lo que hay que entregar es la lista de mutantes que
  * sobreviven —que es justo la información que se buscaba—, no un umbral más cómodo.
  *
+ * Sin `KOINONIA_MUTAR`, la corrida por defecto es la unión de los cinco: `crypto` + `tally` +
+ * `reglas` + `permisos` + `delegacion`. `permisos` y `delegacion` faltaban aquí —el pliego los pide
+ * expresamente («votación, permisos, quórums, delegación, máquinas de estado, ledger, integridad») y
+ * hasta ahora ninguna corrida, ni la nocturna completa, los tocaba—.
+ *
  * `KOINONIA_MUTAR` acota el ámbito para una corrida concreta sin tocar este fichero:
  *
- *     KOINONIA_MUTAR=crypto pnpm run mutation      # sólo packages/crypto
- *     KOINONIA_MUTAR=tally  pnpm run mutation      # sólo packages/domain/src/tally/**
- *     KOINONIA_MUTAR=reglas pnpm run mutation      # quorum, window, state-machine, electorate, ballot
+ *     KOINONIA_MUTAR=crypto     pnpm run mutation   # sólo packages/crypto
+ *     KOINONIA_MUTAR=tally      pnpm run mutation   # sólo packages/domain/src/tally/**
+ *     KOINONIA_MUTAR=reglas     pnpm run mutation   # quorum, window, state-machine, electorate, ballot
+ *     KOINONIA_MUTAR=permisos   pnpm run mutation   # autorización del dominio: access.ts
+ *     KOINONIA_MUTAR=delegacion pnpm run mutation   # democracia líquida: delegation(-graph).ts
  */
 
 const AMBITOS = {
@@ -31,12 +39,29 @@ const AMBITOS = {
     'packages/domain/src/electorate.ts',
     'packages/domain/src/ballot.ts',
   ],
+  // La autorización HORIZONTAL (§4 de GOVERNANCE.md) vive entera en esta matriz: mutar un `===` por
+  // un `!==` en `ownerOnly`/`subjectOnly` es exactamente la escalada horizontal que el módulo existe
+  // para impedir, y sólo la mutación lo confirma —la cobertura de líneas no distingue «se comprobó
+  // el dueño» de «se comprobó lo contrario y por casualidad dio igual».
+  permisos: ['packages/domain/src/access.ts'],
+  // C.2–C.5: ámbito, vigencia, recorrido de cadenas, ciclos y tope de concentración. El pliego lo
+  // nombra en la cabecera del propio módulo: «una delegación mal modelada no produce un error
+  // visible: produce un resultado plausible y falso». Los dos ficheros van juntos porque
+  // `delegation.ts` es pura orquestación sobre las primitivas de `delegation-graph.ts` — separarlos
+  // en dos ámbitos repartiría los mismos escenarios de prueba entre dos corridas sin ganar nada.
+  delegacion: ['packages/domain/src/delegation.ts', 'packages/domain/src/delegation-graph.ts'],
 };
 
 const elegido = process.env['KOINONIA_MUTAR'];
 const mutate =
   elegido === undefined || elegido === ''
-    ? [...AMBITOS.crypto, ...AMBITOS.tally, ...AMBITOS.reglas]
+    ? [
+        ...AMBITOS.crypto,
+        ...AMBITOS.tally,
+        ...AMBITOS.reglas,
+        ...AMBITOS.permisos,
+        ...AMBITOS.delegacion,
+      ]
     : (AMBITOS[elegido] ??
       (() => {
         throw new Error(
@@ -68,7 +93,7 @@ export default {
   jsonReporter: { fileName: 'reports/mutation/mutation.json' },
   clearTextReporter: { allowColor: false, maxTestsToLog: 3 },
 
-  // §10: 85 % de fallo en los tres ámbitos vigilados. NO se baja.
+  // §10: 85 % de fallo en todos los ámbitos vigilados. NO se baja.
   thresholds: { high: 95, low: 85, break: 85 },
 
   timeoutMS: 60_000,

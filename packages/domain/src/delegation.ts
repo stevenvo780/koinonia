@@ -73,6 +73,10 @@ export function capWeight(config: DecisionConfig): number {
   const census = BigInt(config.electorate.censusSize);
   const { num, den } = config.delegation.cap;
   const floor = (num * census) / den;
+  // `floor < 1n` y `floor <= 1n` dan el MISMO resultado para todo `floor` entero no negativo: en
+  // `floor === 1n` la primera cae al `else` y devuelve `Number(1n)`, que también es `1`. Las dos
+  // ramas convergen exactamente en el único punto donde discreparían. Mutante demostrado
+  // equivalente (§10, mutación sobre `delegacion`), no deuda de prueba.
   return floor < 1n ? 1 : Number(floor);
 }
 
@@ -152,6 +156,13 @@ export function resolveDelegation(
     if (!census.has(ballot.voter)) continue; // INV-02: inelegible nunca cuenta.
     if (ballot.castAt >= closedAt) continue; // D.3.b: el cierre pertenece al después.
     const previous = direct.get(ballot.voter);
+    // El criterio de desempate (`seq` mayor) protege contra un log fabricado con dos papeletas
+    // directas del mismo votante — la misma defensa redundante que los dos filtros de arriba. Pero
+    // a partir de acá `direct` sólo se vuelve a leer con `.has(...)` (PASO 2, PASO 3): la papeleta
+    // CONCRETA que queda guardada nunca se vuelve a mirar, sólo si HAY alguna. El desempate no tiene
+    // ningún efecto observable en `DelegationResolution` ni en `EffectiveBallot[]` —que emite una
+    // entrada por papeleta de ENTRADA, no por votante—; mutar `>` a `>=`, `<=` o la condición entera
+    // no cambia ninguna salida pública. Mutante demostrado equivalente (§10), no deuda de prueba.
     if (previous === undefined || ballot.seq > previous.seq) direct.set(ballot.voter, ballot);
   }
 
@@ -165,6 +176,11 @@ export function resolveDelegation(
     const active = delegations.filter(
       (d) => d.delegator === member.memberId && isDelegationActive(d, closedAt, subject),
     );
+    // Las dos líneas siguientes se defienden MUTUAMENTE: si `active` está vacío, `[0]` de un
+    // arreglo vacío ya da `undefined` y la de abajo lo atrapa igual; si `active` no está vacío,
+    // `[0]` de un `sort` sobre un arreglo no vacío nunca es `undefined`. Quitar cualquiera de las
+    // dos deja a la otra cubriendo exactamente el mismo caso: son dos guardas para el mismo hecho,
+    // no dos hechos distintos. Mutante demostrado equivalente (§10), no deuda de prueba.
     if (active.length === 0) continue;
     const chosen = [...active].sort(compareDelegationPriority)[0];
     if (chosen === undefined) continue;
@@ -255,6 +271,10 @@ export function resolveDelegation(
   const returnedByCap: MemberId[] = [];
   for (const terminal of sortIds([...carried.keys()])) {
     const bucket = carried.get(terminal);
+    // Inalcanzable: `terminal` viene literalmente de `carried.keys()`, así que `carried.get(terminal)`
+    // no puede dar `undefined`. TypeScript no lo sabe —`Map.get` siempre tipa `V | undefined`—, pero
+    // el propio bucle lo hace imposible en tiempo de ejecución. Mutante demostrado equivalente
+    // (§10), no deuda de prueba.
     if (bucket === undefined) continue;
     // Se devuelve primero la delegación MÁS RECIENTE: es la marginal que empujó por encima del
     // tope y la que recibió la advertencia al concederse. FIFO castigaría a quien delegó hace
@@ -323,6 +343,11 @@ export function delegationWeightResolver(delegations: readonly Delegation[]): We
         payload: ballot.payload,
         weight,
         seq: ballot.seq,
+        // `?? []` es inalcanzable: `weight` (arriba) ya exigió que `ballot.voter` esté en
+        // `weightOf`, y PASO 4/PASO 6 pueblan `weightOf` y `onBehalfOf` con EXACTAMENTE las mismas
+        // claves (`direct.keys()` y `assignment.terminal` en los dos, a la vez). Toda clave de
+        // `weightOf` es también clave de `onBehalfOf`. Mutante demostrado equivalente (§10), no
+        // deuda de prueba.
         onBehalfOf: resolution.onBehalfOf.get(ballot.voter) ?? [],
       });
     }
