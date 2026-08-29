@@ -3472,3 +3472,114 @@ main h4 {
 .d-punta {
   fill: var(--linea-fuerte);
 }
+
+/* ═══ La presentación de la portada, para quien llega sin cuenta ════════════════════════════════
+ *
+ * Dos bloques y ninguna floritura: el recorrido en cinco pasos y las tres cosas que sostienen la
+ * promesa. La restricción de siempre —cero imágenes, cero tipografías de red— aquí no estorba: lo
+ * que convence en esta pantalla es que las frases sean ciertas y cortas, no que haya una ilustración.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+.presenta-recorrido,
+.presenta-pilares {
+  margin-top: var(--e6);
+}
+
+/* ── El recorrido: una columna de pasos numerados con su hilo al margen ─────────────────────── */
+.pasos-publicos {
+  list-style: none;
+  margin: var(--e4) 0 0;
+  padding: 0;
+}
+
+.pasos-publicos > li {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e3);
+  margin: 0;
+  padding-bottom: var(--e4);
+}
+
+/*
+ * El hilo que une un paso con el siguiente: es lo que dice «esto tiene orden» sin escribirlo. No lo
+ * lleva el último, que es donde el recorrido termina.
+ */
+.pasos-publicos > li:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 1.75rem;
+  bottom: 0;
+  left: 0.875rem;
+  width: 1px;
+  background: var(--linea-fuerte);
+}
+
+.pasos-publicos .paso-numero {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--acento);
+  color: var(--papel-alto);
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1;
+  /* Por encima del hilo, que si no le cruza por detrás y se ve el filete dentro del círculo. */
+  position: relative;
+  z-index: 1;
+}
+
+.pasos-publicos .paso-cuerpo {
+  display: block;
+  min-width: 0;
+}
+
+.pasos-publicos .paso-cuerpo > strong {
+  display: block;
+  font-family: var(--serifa);
+  font-size: 1.0625rem;
+}
+
+.pasos-publicos .paso-detalle {
+  display: block;
+  color: var(--tinta-suave);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+/* ── Los tres pilares ───────────────────────────────────────────────────────────────────────── */
+.pilares {
+  list-style: none;
+  margin: var(--e4) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--e4);
+}
+
+@media (min-width: 64rem) {
+  .pilares {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.pilares > li {
+  margin: 0;
+  padding: var(--e4);
+  border: 1px solid var(--linea);
+  border-top: 3px solid var(--acento);
+  border-radius: var(--radio-2);
+  background: var(--papel-alto);
+}
+
+.pilares > li > strong {
+  display: block;
+  margin-bottom: var(--e2);
+  font-family: var(--serifa);
+  font-size: 1.0625rem;
+}
