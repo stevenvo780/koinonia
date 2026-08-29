@@ -55,6 +55,7 @@ import {
   eventId,
   type Fraction,
   fraction,
+  type GradeEntry,
   type GradeId,
   type GradeScale,
   hash as toHash,
@@ -73,6 +74,7 @@ import {
   proposalId,
   type QuorumConfig,
   type Score,
+  type ScoreEntry,
   type StratumKey,
   stratumKey,
   type StratumValue,
@@ -779,54 +781,86 @@ function encBallotPayload(payload: BallotPayload): JsonObject {
         ...(payload.objection === undefined ? {} : { objection: encObjection(payload.objection) }),
       };
     case 'score': {
-      // `null` es «sin opinión» y **no** es `0` (B.5.a). El perfil canónico admite `null`, así que
-      // viaja tal cual: convertirlo a 0 al serializar hundiría en silencio a las opciones menos
-      // leídas, que es justo el sesgo que INV-50 vigila.
-      const scores: Record<string, JsonValue> = {};
-      for (const option of Object.keys(payload.scores).sort()) {
-        scores[option] = payload.scores[option as OptionId] ?? null;
-      }
+      // Es una LISTA de pares `{option, value}`, nunca `{[opción]: nota}`, por dos razones del
+      // perfil canónico del ledger (`packages/crypto/src/canonical.ts`), no una preferencia de
+      // estilo:
+      //
+      //  1. `keyPattern` exige que toda clave de objeto empiece por letra. Un `OptionId` es 32
+      //     hexadecimales al azar — cerca del 62 % empieza por dígito — así que usarlo de clave
+      //     revienta el hasheo la mayoría de las veces, no en un caso raro.
+      //  2. `allowNull` es `false`. `null` («sin opinión», B.5.a) no se puede escribir de ninguna
+      //     forma, ni siquiera como valor de una clave bien formada.
+      //
+      // El dominio (`BallotPayload`, `ballot.ts`) ya trae esta forma —la opción ausente de la
+      // lista es «sin opinión»—, así que aquí sólo hace falta ordenar por opción, para que la
+      // misma papeleta hashee siempre igual sin importar en qué orden llegaron las notas por HTTP.
+      const scores = [...payload.scores]
+        .sort((a, b) => (a.option < b.option ? -1 : a.option > b.option ? 1 : 0))
+        .map((entry): JsonObject => ({ option: entry.option, value: entry.value }));
       return { kind: payload.kind, scores };
     }
     case 'ranking':
       return { kind: payload.kind, order: [...payload.order] };
     case 'grades': {
-      const grades: Record<string, JsonValue> = {};
-      for (const option of Object.keys(payload.grades).sort()) {
-        const grade = payload.grades[option as OptionId];
-        if (grade !== undefined) grades[option] = grade;
-      }
+      // Misma razón que `score` arriba, sin el problema del `null`: `grades` ya era parcial —una
+      // opción sin mención simplemente no aparece—, así que sólo hacía falta dejar de usar la
+      // opción como clave.
+      const grades = [...payload.grades]
+        .sort((a, b) => (a.option < b.option ? -1 : a.option > b.option ? 1 : 0))
+        .map((entry): JsonObject => ({ option: entry.option, grade: entry.grade }));
       return { kind: payload.kind, grades };
     }
   }
 }
 
-function decScores(source: JsonObject, path: string): Readonly<Record<OptionId, Score | null>> {
-  const out: Record<OptionId, Score | null> = {};
-  for (const key of Object.keys(source)) {
-    const value = source[key];
-    if (value === null) {
-      out[optionId(key)] = null;
-      continue;
-    }
-    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 5) {
-      throw new DecisionCodecError(`${path}.${key}`, 'la puntuación es un entero de 0 a 5 o null');
-    }
-    out[optionId(key)] = value as Score;
-  }
-  return out;
+/** Un par `{option, ...}` bien formado en `source[index]`, o el rechazo con su ruta exacta. */
+function pairAt(source: readonly JsonValue[], index: number, where: string): JsonObject {
+  const item = source[index];
+  if (!isObject(item)) throw new DecisionCodecError(where, 'se esperaba un objeto {option, …}');
+  return item;
 }
 
-function decGrades(source: JsonObject, path: string): Readonly<Partial<Record<OptionId, GradeId>>> {
-  const out: Partial<Record<OptionId, GradeId>> = {};
-  for (const key of Object.keys(source)) {
-    const value = source[key];
-    if (typeof value !== 'string') {
-      throw new DecisionCodecError(`${path}.${key}`, 'una mención es el identificador de un grado');
-    }
-    out[optionId(key)] = value as GradeId;
+/** Que ninguna opción aparezca dos veces en la lista — el dominio también lo exige (INV-12). */
+function assertNoRepeatedOption(options: readonly OptionId[], path: string): void {
+  const seen = new Set<OptionId>();
+  for (const option of options) {
+    if (seen.has(option))
+      throw new DecisionCodecError(path, `la opción ${option} aparece más de una vez`);
+    seen.add(option);
   }
-  return out;
+}
+
+function decScores(source: readonly JsonValue[], path: string): readonly ScoreEntry[] {
+  const entries = source.map((_, index) => {
+    const where = `${path}[${String(index)}]`;
+    const pair = pairAt(source, index, where);
+    const option = optionId(str(pair, 'option', where));
+    const value = int(pair, 'value', where);
+    if (value < 0 || value > 5) {
+      throw new DecisionCodecError(`${where}.value`, 'la puntuación es un entero de 0 a 5');
+    }
+    return { option, value: value as Score };
+  });
+  assertNoRepeatedOption(
+    entries.map((entry) => entry.option),
+    path,
+  );
+  return entries;
+}
+
+function decGrades(source: readonly JsonValue[], path: string): readonly GradeEntry[] {
+  const entries = source.map((_, index) => {
+    const where = `${path}[${String(index)}]`;
+    const pair = pairAt(source, index, where);
+    const option = optionId(str(pair, 'option', where));
+    const grade = str(pair, 'grade', where) as GradeId;
+    return { option, grade };
+  });
+  assertNoRepeatedOption(
+    entries.map((entry) => entry.option),
+    path,
+  );
+  return entries;
 }
 
 function decBallotPayload(source: JsonObject, path: string): BallotPayload {
@@ -851,11 +885,11 @@ function decBallotPayload(source: JsonObject, path: string): BallotPayload {
       };
     }
     case 'score':
-      return { kind, scores: decScores(obj(source, 'scores', path), `${path}.scores`) };
+      return { kind, scores: decScores(arr(source, 'scores', path), `${path}.scores`) };
     case 'ranking':
       return { kind, order: strArray(source, 'order', path).map(optionId) };
     case 'grades':
-      return { kind, grades: decGrades(obj(source, 'grades', path), `${path}.grades`) };
+      return { kind, grades: decGrades(arr(source, 'grades', path), `${path}.grades`) };
   }
 }
 

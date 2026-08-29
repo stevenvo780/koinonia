@@ -342,6 +342,21 @@ function yaVotasteEnEstaRonda(state: DecisionState, quien: MemberId): boolean {
   return state.ballots.some((b) => b.voter === quien && b.round === state.round);
 }
 
+/**
+ * La escala de menciones congelada al abrir, sólo cuando el método es valoración por menciones.
+ *
+ * Sin esto la pantalla de la papeleta no tiene de dónde sacar los identificadores de mención
+ * (`excelente`, `rechazar`…) que tiene que mandar de vuelta: son parte de `DecisionConfig.method`,
+ * que se congela al abrir y puede traer una escala distinta de la neutra por defecto si quien abrió
+ * la votación mandó la suya (`configuracion.escala`, `packages/contracts/src/metodos.ts`).
+ */
+export function escalaDeMencionesDto(
+  config: DecisionConfig | undefined,
+): { readonly id: string; readonly etiqueta: string }[] | undefined {
+  if (config?.method.kind !== 'majority-judgment') return undefined;
+  return config.method.scale.grades.map((grado) => ({ id: grado.id, etiqueta: grado.label }));
+}
+
 export function decisionDetalleDto(
   id: string,
   state: DecisionState,
@@ -353,6 +368,7 @@ export function decisionDetalleDto(
   const config = state.config;
   const enPadron =
     quien !== undefined && (config?.electorate.members.some((m) => m.memberId === quien) ?? false);
+  const escalaDeMenciones = escalaDeMencionesDto(config);
   return {
     ...decisionResumenDto(id, state, titulo),
     cuerpoVersion: cuerpo,
@@ -360,6 +376,7 @@ export function decisionDetalleDto(
     puedoDecidir: enPadron && state.status === 'Open',
     yaVotaste: quien !== undefined && yaVotasteEnEstaRonda(state, quien),
     objeciones: [...objecionesEnPie(state)],
+    ...(escalaDeMenciones === undefined ? {} : { escalaDeMenciones }),
     ...(enPadron
       ? {}
       : {
@@ -427,24 +444,55 @@ function pasoDto(step: DecisionResult['proof']['steps'][number]): PasoTraza {
   return { id: step.id, explicacion, datos };
 }
 
-function tablaDto(tabla: DecisionResult['proof']['tables'][number]): TablaTraza {
+/**
+ * Una tabla de la traza, con las personas dichas por su nombre y no por su identificador.
+ *
+ * `alias` cubre el padrón congelado ENTERO —cada miembro, con su alias o con «Alguien que ya no
+ * está» si desde entonces se dio de baja—, así que una celda se traduce si y sólo si es alguien de
+ * ese padrón. Cualquier otra celda se deja intacta a propósito: los tickets del sorteo también son
+ * cadenas hexadecimales y son justamente lo que hay que enseñar para poder comprobar el reparto.
+ *
+ * Hacía falta porque el sorteo —que sí se puede abrir hoy— arma sus tablas «Personas seleccionadas»
+ * y «Suplentes por estrato» con `MemberId` en crudo (`packages/domain/src/tally/sortition.ts`), y
+ * esta función los copiaba tal cual a la pantalla: 32 hex donde tenía que ir un nombre. El motor
+ * hace bien en trabajar con identificadores; traducirlos es tarea de esta frontera, que es la que
+ * tiene el padrón a mano. `aliasDe`, en `app.ts`, ya existía exactamente para esto.
+ */
+function tablaDto(
+  tabla: DecisionResult['proof']['tables'][number],
+  alias: ReadonlyMap<string, string>,
+): TablaTraza {
+  const enPersonas = (celda: string | number): string | number =>
+    typeof celda === 'string' ? (alias.get(celda) ?? celda) : celda;
+
   if (tabla.title === 'Objeciones' && tabla.columns[0] === 'Objeción') {
     return {
       titulo: tabla.title,
       columnas: ['Referencia', ...tabla.columns.slice(1)],
-      filas: tabla.rows.map((fila, indice) => [`Objeción ${String(indice + 1)}`, ...fila.slice(1)]),
+      filas: tabla.rows.map((fila, indice) => [
+        `Objeción ${String(indice + 1)}`,
+        ...fila.slice(1).map(enPersonas),
+      ]),
     };
   }
   return {
     titulo: tabla.title,
     columnas: [...tabla.columns],
-    filas: tabla.rows.map((fila) => [...fila]),
+    filas: tabla.rows.map((fila) => fila.map(enPersonas)),
   };
 }
 
+/**
+ * El resultado de una decisión, tal como lo lee la pantalla.
+ *
+ * `alias` es el padrón congelado de ESA decisión, no el de hoy: quien salió sorteado salió del
+ * padrón que estaba vigente al abrir, y es ése el que hay que consultar para ponerle nombre. Ver
+ * `tablaDto`, que es quien lo usa.
+ */
 export function resultadoDto(
   resultado: DecisionResult,
   titulo: string,
+  alias: ReadonlyMap<string, string>,
   iniciativaId?: string,
 ): ResultadoDecision {
   return {
@@ -455,7 +503,7 @@ export function resultadoDto(
     desenlaceEnPalabras: DESENLACE_EN_PALABRAS[desenlaceDe(resultado.outcome)],
     relato: relatoDe(resultado),
     pasos: resultado.proof.steps.map(pasoDto),
-    tablas: resultado.proof.tables.map(tablaDto),
+    tablas: resultado.proof.tables.map((tabla) => tablaDto(tabla, alias)),
     participacion: {
       emitidas: resultado.turnout.cast,
       representadas: resultado.turnout.represented,

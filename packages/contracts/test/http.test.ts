@@ -104,6 +104,41 @@ describe('contrato HTTP de propuestas e iniciativas', () => {
     ).toBeUndefined();
   });
 
+  it('escalaDeMenciones es opcional, y cuando viene trae id + etiqueta por mención', () => {
+    const base = {
+      id,
+      propuestaId: id,
+      titulo: 'Valorar cuatro propuestas de reforma',
+      estado: 'Open' as const,
+      metodo: 'majority-judgment' as const,
+      abreEn: 1_700_000_000_000,
+      cierraEn: 1_700_003_600_000,
+      huellaVersion: huella,
+      podianDecidir: 5,
+      seManifestaron: 0,
+      queHaceFaltaParaQuePase: 'La mejor mención mayoritaria.',
+      cuerpoVersion: 'El texto de la propuesta.',
+      puedoDecidir: true,
+      yaVotaste: false,
+    };
+
+    // Ausente: una decisión que no es de valoración por menciones, o una en borrador sin
+    // configuración congelada todavía.
+    expect(decisionDetalle.parse(base).escalaDeMenciones).toBeUndefined();
+
+    const conEscala = decisionDetalle.parse({
+      ...base,
+      escalaDeMenciones: [
+        { id: 'excelente', etiqueta: 'Excelente' },
+        { id: 'rechazar', etiqueta: 'Rechazar' },
+      ],
+    });
+    expect(conEscala.escalaDeMenciones).toEqual([
+      { id: 'excelente', etiqueta: 'Excelente' },
+      { id: 'rechazar', etiqueta: 'Rechazar' },
+    ]);
+  });
+
   it('acepta la iniciativa creada y enlaza opcionalmente el resultado', () => {
     const iniciativa = {
       id,

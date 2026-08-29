@@ -1175,22 +1175,22 @@ describe('B.8 — `metric`: `more-pairwise-wins` y `higher-min-margin` con perfi
     });
   });
 
-  it('con una sola opción, `higher-min-margin` no tiene con quién compararse y devuelve 0', async () => {
-    // La rama `margins.length === 0 ? 0 : Math.min(...margins)`: con una sola opción el
-    // conjunto de márgenes queda vacío y `Math.min()` sin argumentos daría `Infinity`, que
-    // envenenaría la comparación. Mata el mutante `margins.length === 0` → `false`.
-    const cfg = await configSchulze(
-      { ...METHOD, tieBreak: { cascade: ['higher-min-margin', 'lexicographic-hash'] } },
-      [A],
-      3,
-    );
-    const tally = await tallyCondorcetSchulze(
-      cfg,
-      effective([
-        { kind: 'ranking', order: [A] },
-        { kind: 'ranking', order: [A] },
-      ]),
-    );
-    expect(tally.outcome).toStrictEqual({ kind: 'winner', option: A, tieBroken: false });
+  it('con una sola opción no se abre: el motor se niega antes de que haya desempate', async () => {
+    // Este test defendía la rama `margins.length === 0 ? 0 : Math.min(...margins)` de
+    // `condorcet-schulze.ts`, construyendo una decisión de una sola opción. Ya no se puede: esa
+    // configuración se rechaza al construirla, porque con una sola opción gana esa aunque todo el
+    // mundo la rechace, y el desenlace salía `approved`. Se reprodujo de punta a punta contra
+    // PostgreSQL real antes de poner la guarda.
+    //
+    // Así que lo que se defiende acá pasó a ser la invariante que vuelve esa rama inalcanzable, que
+    // es más fuerte que lo que se defendía antes: mientras esto falle al construir, `margins` no
+    // puede quedar vacío. La rama se queda escrita, y dice por qué, en el sitio.
+    await expect(
+      configSchulze(
+        { ...METHOD, tieBreak: { cascade: ['higher-min-margin', 'lexicographic-hash'] } },
+        [A],
+        3,
+      ),
+    ).rejects.toMatchObject({ code: 'CONFIG_MULTI_METHOD_NEEDS_TWO_OPTIONS' });
   });
 });

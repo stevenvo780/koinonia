@@ -297,6 +297,15 @@ export interface ConfigOptions {
   readonly proposalVersionHash?: Hash;
   readonly constituentAct?: ConstituentAct;
   readonly circleId?: CircleId;
+  /**
+   * Las opciones sobre las que se decide. Por omisión, la única propuesta.
+   *
+   * Se pasa acá y no se sustituye después de construir, porque `buildDecisionConfig` valida: los
+   * métodos que comparan opciones entre sí no se dejan abrir con una sola (ver
+   * `MULTI_METHOD_NEEDS_TWO_OPTIONS`), así que una config «base» con la opción por omisión y las
+   * opciones de verdad puestas encima ni siquiera llega a construirse.
+   */
+  readonly options?: readonly OptionId[];
 }
 
 /** `arbConfig(electorate, method)` del catálogo E.0, en su forma constructiva. */
@@ -310,7 +319,7 @@ export async function buildConfig(options: ConfigOptions): Promise<DecisionConfi
     proposalVersionHash: options.proposalVersionHash ?? PROPOSAL_V1,
     circleId: options.circleId ?? CIRCLE_MAIN,
     topics: [],
-    options: [OPTION_MAIN],
+    options: options.options ?? [OPTION_MAIN],
     electorate: options.electorate,
     method,
     quorum: options.quorum ?? NO_QUORUM,

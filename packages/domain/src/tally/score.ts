@@ -59,8 +59,10 @@ export function scoreProfiles(
       if (ballot.payload.kind !== 'score') {
         throw new InvalidBallotForMethod(ballot.payload.kind, config.method.kind);
       }
-      const value = ballot.payload.scores[option];
-      if (value === null || value === undefined) continue;
+      // La opción ausente de la lista es «sin opinión» (B.5.a): `.find` no encuentra nada y se
+      // ignora, exactamente como se ignoraba antes una clave ausente o puesta en `null`.
+      const value = ballot.payload.scores.find((entry) => entry.option === option)?.value;
+      if (value === undefined) continue;
       histogram[value] = (histogram[value] ?? 0) + ballot.weight;
       coverage += ballot.weight;
       sum += value * ballot.weight;

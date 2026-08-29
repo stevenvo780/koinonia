@@ -21,16 +21,21 @@
  * ═══ Nueve visibles, cinco abribles, y por qué se dice ═══
  *
  * Cuatro métodos —puntuación, voto por rondas, valoración por menciones y comparación por pares—
- * exigen una papeleta que hoy no cruza la red: `emitirPapeleta` en `@koinonia/contracts` sólo tiene
- * ramas para sí/no, abstención y consentimiento. Abrir una votación con uno de ellos crearía una
- * votación **que nadie puede responder**, en un historial que no se corrige ni se borra.
+ * EXISTEN para comparar varias salidas entre sí, y `abrirDecision` (`service.ts`) construye toda
+ * votación con **una sola opción** (la propuesta misma). Abrir una votación con uno de ellos hoy
+ * sería fingir una elección que no existe: la respuesta ya se sabría de antemano.
+ *
+ * Antes había una segunda razón, y ya no la hay: `emitirPapeleta` (`@koinonia/contracts`) sólo
+ * transportaba tres clases de papeleta —sí/no, abstención, consentimiento—, así que ni siquiera
+ * hubiera habido por dónde responder. Esa frontera ya tiene las seis clases que el motor necesita;
+ * lo único que sigue faltando es que una decisión se pueda abrir sobre más de una opción.
  *
  * La salida fácil sería esconderlos. No se esconden: quien abre tiene derecho a saber que existen y
  * para qué sirven, y esconderlos convertiría un hueco medible en un hueco invisible. Se muestran, no
  * se dejan elegir, y se dice por qué con todas las letras. `tests/unit/metodos-en-pantalla.test.ts`
- * comprueba contra el dominio y contra el contrato que esos cuatro son exactamente los que no tienen
- * papeleta que cruce la red, así que el día que la rama que falta aparezca, la prueba cae y nombra
- * el fichero de esta pantalla que hay que revisar.
+ * comprueba contra el dominio y contra el contrato que la red transporta lo que cada método exige;
+ * la razón por la que estos cuatro siguen sin abrirse vive sólo en `../metodos-en-palabras.ts`, sin
+ * invariante de dominio que la respalde — es una decisión de producto.
  *
  * ═══ La configuración: lo que se pregunta y lo que no ═══
  *
@@ -285,8 +290,8 @@ function Formulario(): ReactNode {
 
         {!sePuedeAbrirHoy(metodo) && (
           <Aviso tipo="atencion" titulo="Con esta regla no se puede abrir">
-            Elegí otra de la lista. Abrirla igual dejaría una votación que nadie puede responder, y
-            lo escrito en el historial no se borra.
+            Elegí otra de la lista. Esta regla compara varias salidas entre sí, y hoy la votación se
+            abriría sobre un único texto: el resultado ya se sabría de antemano.
           </Aviso>
         )}
 

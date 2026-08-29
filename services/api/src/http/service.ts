@@ -120,6 +120,7 @@ import {
   recordMeToo,
   replay,
   recordResult,
+  type Score,
   replayProblem,
   retractEvidence,
   stratumKey,
@@ -1267,7 +1268,7 @@ export async function listarDecisiones(deps: ServicioDeps): Promise<readonly Dec
 
 /** Lo que la interfaz manda como respuesta a una papeleta. */
 export interface RespuestaPapeleta {
-  readonly tipo: 'binary' | 'abstain' | 'consent';
+  readonly tipo: 'binary' | 'abstain' | 'consent' | 'score' | 'ranking' | 'grades';
   readonly aprueba?: boolean | undefined;
   readonly postura?: 'consent' | 'concern' | 'object' | undefined;
   readonly objecion?:
@@ -1277,6 +1278,16 @@ export interface RespuestaPapeleta {
         readonly enmiendaPropuesta?: string | undefined;
       }
     | undefined;
+  /**
+   * Una nota (0 a 5) por opción puntuada. La opción que no aparece es «sin opinión»: no cuenta
+   * como cero (B.5.a). Es una LISTA, no un mapa con la opción de clave — ver `payloadDePapeleta`.
+   */
+  readonly puntuaciones?:
+    readonly { readonly opcion: string; readonly valor: number }[] | undefined;
+  /** El orden de preferencia, de la que más se prefiere a la que menos. */
+  readonly orden?: readonly string[] | undefined;
+  /** Una mención (de la escala congelada al abrir) por opción valorada. */
+  readonly menciones?: readonly { readonly opcion: string; readonly mencion: string }[] | undefined;
 }
 
 /**
@@ -1320,6 +1331,30 @@ export function payloadDePapeleta(
         },
       };
     }
+    case 'score':
+      // `BallotPayload['score'].scores` (dominio) es exactamente esta forma —una LISTA de pares
+      // `{option, value}`—, no un mapa con la opción de clave: un `OptionId` de clave rompería el
+      // perfil canónico del historial las más de las veces (empieza por dígito ~62 % de las veces,
+      // y `null` está prohibido del todo). «Sin opinión» es la opción que no viene en
+      // `puntuaciones`, y por eso no hay nada que traducir: la lista del contrato ya es la lista
+      // del dominio, opción por opción.
+      return {
+        kind: 'score',
+        scores: (respuesta.puntuaciones ?? []).map((entrada) => ({
+          option: optionId(entrada.opcion),
+          value: entrada.valor as Score,
+        })),
+      };
+    case 'ranking':
+      return { kind: 'ranking', order: (respuesta.orden ?? []).map((opcion) => optionId(opcion)) };
+    case 'grades':
+      return {
+        kind: 'grades',
+        grades: (respuesta.menciones ?? []).map((entrada) => ({
+          option: optionId(entrada.opcion),
+          grade: entrada.mencion as GradeId,
+        })),
+      };
   }
 }
 

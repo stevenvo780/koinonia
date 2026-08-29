@@ -14,6 +14,24 @@
  *
  * Y en las dos papeletas va, siempre, **qué hace falta para que esto pase**. La disputa de una
  * asamblea es casi siempre sobre el denominador; decirlo antes de votar la elimina.
+ *
+ * ═══ Puntuar, ordenar y valorar por menciones ═══
+ *
+ * Los otros tres formularios que dibuja esta pantalla —puntuación, orden de preferencia y valoración
+ * por menciones— cargan una honestidad propia: hoy toda decisión se abre sobre un único texto
+ * (`abrirDecision` en `service.ts` construye `options: [optionId(propuestaId)]`), así que puntuar y
+ * valorar por menciones puntúan y valoran ESE texto —tiene sentido por sí solo, y por eso se dibujan
+ * sin aviso—, pero ordenar no puede ofrecer más que confirmar que se prefiere ese texto a no
+ * responder nada, y la pantalla lo dice así en vez de simular una elección que todavía no existe.
+ * `../abrir` no deja ABRIR una votación nueva con estos cuatro métodos —comparan varias salidas, y
+ * con una sola el resultado ya se sabría de antemano—, pero una decisión así puede existir igual (una
+ * ya abierta desde antes de esa regla, o abierta por fuera de esta pantalla), y por eso esta pantalla
+ * sí sabe responderla: negarle la papeleta a un voto que el motor cuenta de verdad sería peor que el
+ * caso raro que evita.
+ *
+ * Ninguna de las tres manda `null` para «sin opinión»: el historial lo prohíbe (`packages/crypto`,
+ * A.1.1.2). La opción que no aparece en la lista es la que no tiene opinión — ver `responder` más
+ * abajo y `payloadDePapeleta` en `services/api/src/http/service.ts`.
  */
 
 import Link from 'next/link';
@@ -27,10 +45,13 @@ import { Ficha, Medidor, Meta, Plazo } from '../../../components/piezas';
 import { PlanEjecucionVisible } from '../../../components/plan-ejecucion';
 import { useAccionUnica } from '../../../lib/acciones';
 import { cuando, enviar, traer } from '../../../lib/api';
-import { enPalabras, nombreDelMetodo, porQueTodaviaNo } from '../metodos-en-palabras';
+import { enPalabras, nombreDelMetodo } from '../metodos-en-palabras';
 
 type Postura = 'consent' | 'concern' | 'object';
 type Binario = 'si' | 'no' | 'abstengo';
+/** «» significa «sin opinión»: una declaración válida de la papeleta de puntuación, no una casilla
+ *  vacía — se manda como lista sin esa opción, nunca como un valor nulo. */
+type PuntuacionElegida = '' | '0' | '1' | '2' | '3' | '4' | '5';
 
 /**
  * Lo que bloquea la decisión, y —para quien facilita— cómo se desatasca.
@@ -228,6 +249,12 @@ export default function Decision(): ReactNode {
   const [binario, setBinario] = useState<Binario>('si');
   const [argumento, setArgumento] = useState('');
   const [objetivo, setObjetivo] = useState('');
+  // '' es «sin opinión» para puntuar: una declaración válida (queda fuera del cálculo), no una
+  // casilla que alguien olvidó llenar.
+  const [puntuacion, setPuntuacion] = useState<PuntuacionElegida>('');
+  // '' sólo dura hasta que la decisión carga: el efecto de más abajo la fija en la primera mención
+  // de la escala apenas hay una escala que mirar, así que siempre hay una elegida para enviar.
+  const [mencion, setMencion] = useState('');
 
   const recargar = useCallback(() => {
     setError(undefined);
@@ -236,21 +263,67 @@ export default function Decision(): ReactNode {
 
   useEffect(recargar, [recargar]);
 
+  /*
+   * NO se preselecciona ninguna mención, y el motivo merece quedar escrito porque antes SÍ se
+   * preseleccionaba y se argumentaba bien.
+   *
+   * El argumento era: `missingGradePolicy` rechaza por defecto la papeleta entera si falta una
+   * mención (B.7.b), y ese rechazo es cierto pero inútil para quien sólo se olvidó de tocar un
+   * botón; así que dejar elegida la primera de la escala evita el problema en la raíz, igual que
+   * «Sí» arranca elegido en la papeleta binaria.
+   *
+   * El paralelo con «Sí» es lo que no se sostiene. Una papeleta binaria ofrece dos respuestas
+   * simétricas, y «Sí» es la postura que la propuesta ya defiende. Una escala de menciones está
+   * ORDENADA: tiene una mejor y una peor, y `escalaDeMenciones[0]` es la mejor. Preseleccionarla
+   * convierte «se me olvidó tocar un botón» en «le di la calificación más alta», en una votación,
+   * en un historial que no se puede corregir. Un rechazo que la persona ve y arregla es mejor que
+   * un voto máximo que nunca quiso emitir.
+   *
+   * Y el rechazo tampoco llega a pasar: el botón de enviar está bloqueado mientras no haya mención
+   * elegida (ver más abajo), así que la papeleta incompleta ni sale. Eso cubre de paso el caso en
+   * que la escala no cargue —sin escala no hay nada que elegir, luego `mencion` sigue vacía y el
+   * botón sigue bloqueado—, que antes mandaba `menciones: []` y traía un 422 desconcertante.
+   */
+
   async function responder(evento: SyntheticEvent): Promise<void> {
     evento.preventDefault();
     setErrorEnvio(undefined);
     setEnviado(false);
     if (decision === undefined) return;
+    const formularioDeEsteMetodo = enPalabras(decision.metodo).formulario;
     const respuesta =
-      enPalabras(decision.metodo).formulario === 'consentimiento'
+      formularioDeEsteMetodo === 'consentimiento'
         ? {
             tipo: 'consent' as const,
             postura,
             ...(postura === 'object' ? { objecion: { argumento, objetivoDanado: objetivo } } : {}),
           }
-        : binario === 'abstengo'
-          ? { tipo: 'abstain' as const }
-          : { tipo: 'binary' as const, aprueba: binario === 'si' };
+        : formularioDeEsteMetodo === 'puntuacion'
+          ? {
+              tipo: 'score' as const,
+              // La única opción de hoy es la propuesta misma: `abrirDecision` la registra con ese
+              // mismo identificador (`optionId(propuestaId)`). «Sin opinión» es la lista VACÍA, no
+              // un valor nulo — el historial no admite `null` (A.1.1.2) y una opción ausente de la
+              // lista ya significa exactamente eso.
+              puntuaciones:
+                puntuacion === ''
+                  ? []
+                  : [{ opcion: decision.propuestaId, valor: Number(puntuacion) }],
+            }
+          : formularioDeEsteMetodo === 'menciones'
+            ? {
+                tipo: 'grades' as const,
+                menciones: mencion === '' ? [] : [{ opcion: decision.propuestaId, mencion }],
+              }
+            : formularioDeEsteMetodo === 'ordenamiento'
+              ? {
+                  tipo: 'ranking' as const,
+                  // Hoy la decisión tiene una sola opción: el único orden posible es ésa.
+                  orden: [decision.propuestaId],
+                }
+              : binario === 'abstengo'
+                ? { tipo: 'abstain' as const }
+                : { tipo: 'binary' as const, aprueba: binario === 'si' };
 
     const resultado = await ejecutar(
       'papeleta',
@@ -306,15 +379,22 @@ export default function Decision(): ReactNode {
    * Qué papeleta le toca a este método.
    *
    * Antes esto era `decision.metodo === 'sociocratic-consent'`, y todo lo que no fuera eso recibía
-   * el sí/no. Con dos métodos en el sistema la simplificación era exacta; con nueve dejó de serlo y
-   * pasó a ser un error que sólo se ve al enviar: una votación de deliberación aleatoria —donde
-   * **nadie llena una papeleta**— mostraba «¿Estás de acuerdo con este texto?», y cualquier
-   * respuesta se estrellaba contra el motor, que para ese método no admite ninguna clase de
-   * papeleta. Ahora la papeleta la decide el método, en un solo sitio y con las cuatro salidas
-   * posibles dichas. Ver `../metodos-en-palabras.ts`.
+   * el sí/no. Con dos métodos en el sistema la simplificación era exacta; con nueve dejó de serlo:
+   * una votación de deliberación aleatoria —donde **nadie llena una papeleta**— mostraba «¿Estás de
+   * acuerdo con este texto?», y cualquier respuesta se estrellaba contra el motor, que para ese
+   * método no admite ninguna clase de papeleta. Ahora la papeleta la decide el método, en un solo
+   * sitio y con las seis formas posibles dichas. Ver `../metodos-en-palabras.ts`.
    */
   const formulario = enPalabras(decision.metodo).formulario;
   const consentimiento = formulario === 'consentimiento';
+  /**
+   * Si esta papeleta es de menciones y todavía no hay ninguna elegida.
+   *
+   * Vale también cuando la escala no cargó: sin escala no hay botones que tocar, así que `mencion`
+   * se queda vacía y el envío sigue bloqueado en vez de mandar `menciones: []` y volver con un 422
+   * que no le dice nada a nadie. Ver el bloque largo junto a los `useState` de la papeleta.
+   */
+  const faltaLaMencion = formulario === 'menciones' && mencion === '';
   const cerrada = decision.estado !== 'Open';
 
   return (
@@ -440,19 +520,6 @@ export default function Decision(): ReactNode {
           </Aviso>
         )}
 
-        {/*
-         * El caso que antes terminaba en un rechazo del motor sin explicación: el método existe, el
-         * motor lo cuenta, y la respuesta que pide no tiene todavía por dónde entrar. Se dice, con
-         * la misma frase que usa la pantalla de abrir, en vez de ofrecer un sí/no que iba a fallar.
-         */}
-        {!cerrada && decision.puedoDecidir && formulario === 'todavia-no' && (
-          <Aviso tipo="atencion" titulo="Esta votación todavía no se puede responder">
-            {porQueTodaviaNo(decision.metodo)} Mientras tanto no se pierde nada: el texto y el plan
-            siguen acá, y quien cuida el procedimiento puede cerrarla y volver a abrirla con una
-            regla que sí se pueda responder.
-          </Aviso>
-        )}
-
         {!cerrada && (
           <ObjecionesEnPie
             decisionId={decision.id}
@@ -469,9 +536,9 @@ export default function Decision(): ReactNode {
           />
         )}
 
-        {!cerrada && decision.puedoDecidir && (consentimiento || formulario === 'binaria') && (
+        {!cerrada && decision.puedoDecidir && formulario !== 'sin-papeleta' && (
           <form onSubmit={(e) => void responder(e)} noValidate>
-            {consentimiento ? (
+            {consentimiento && (
               <>
                 <fieldset className="opciones">
                   <legend>¿Alguien objeta?</legend>
@@ -574,7 +641,9 @@ export default function Decision(): ReactNode {
                   </div>
                 )}
               </>
-            ) : (
+            )}
+
+            {formulario === 'binaria' && (
               <fieldset className="opciones">
                 <legend>¿Estás de acuerdo con este texto?</legend>
                 <div className="opcion">
@@ -621,6 +690,81 @@ export default function Decision(): ReactNode {
               </fieldset>
             )}
 
+            {formulario === 'puntuacion' && (
+              <fieldset className="opciones">
+                <legend>¿Qué nota le ponés a este texto?</legend>
+                <p className="suave" id="ayuda-puntuacion">
+                  De 0 a 5. Dejarlo en «sin opinión» no cuenta como un cero: queda fuera del
+                  cálculo.
+                </p>
+                {(['0', '1', '2', '3', '4', '5'] as const).map((nota) => (
+                  <div className="opcion" key={nota}>
+                    <input
+                      type="radio"
+                      id={`puntuacion-${nota}`}
+                      name="puntuacion"
+                      checked={puntuacion === nota}
+                      onChange={() => {
+                        setPuntuacion(nota);
+                      }}
+                      aria-describedby="ayuda-puntuacion"
+                    />
+                    <label htmlFor={`puntuacion-${nota}`}>{nota}</label>
+                  </div>
+                ))}
+                <div className="opcion">
+                  <input
+                    type="radio"
+                    id="puntuacion-sin-opinion"
+                    name="puntuacion"
+                    checked={puntuacion === ''}
+                    onChange={() => {
+                      setPuntuacion('');
+                    }}
+                    aria-describedby="ayuda-puntuacion"
+                  />
+                  <label htmlFor="puntuacion-sin-opinion">Sin opinión</label>
+                </div>
+              </fieldset>
+            )}
+
+            {formulario === 'menciones' && (
+              <fieldset className="opciones">
+                <legend>¿Qué mención le ponés a este texto?</legend>
+                {decision.escalaDeMenciones === undefined ||
+                decision.escalaDeMenciones.length === 0 ? (
+                  // No debería pasar con una decisión abierta de verdad —la escala se congela al
+                  // abrir—, pero fallar visible y no silencioso es mejor que dibujar botones vacíos.
+                  <p className="suave">
+                    Todavía no se pudo cargar la escala de menciones. Volvé a intentar en un rato.
+                  </p>
+                ) : (
+                  decision.escalaDeMenciones.map((grado) => (
+                    <div className="opcion" key={grado.id}>
+                      <input
+                        type="radio"
+                        id={`mencion-${grado.id}`}
+                        name="mencion"
+                        checked={mencion === grado.id}
+                        onChange={() => {
+                          setMencion(grado.id);
+                        }}
+                      />
+                      <label htmlFor={`mencion-${grado.id}`}>{grado.etiqueta}</label>
+                    </div>
+                  ))
+                )}
+              </fieldset>
+            )}
+
+            {formulario === 'ordenamiento' && (
+              <p className="suave">
+                Hoy esta votación tiene un solo texto sobre la mesa, así que tu papeleta sólo dice
+                que lo preferís a no responder nada. El día que haya más de una salida entre las que
+                elegir, acá vas a poder ordenarlas de la que más se prefiere a la que menos.
+              </p>
+            )}
+
             {decision.yaVotaste && !enviado && (
               <p className="suave">
                 Ya respondiste esta votación. Por tu propio secreto de voto no repetimos acá cuál
@@ -628,7 +772,18 @@ export default function Decision(): ReactNode {
               </p>
             )}
 
-            <button className="boton" type="submit" disabled={enCurso !== undefined}>
+            {faltaLaMencion && (
+              <p className="suave" id="falta-mencion">
+                Elegí una mención para poder enviar tu respuesta.
+              </p>
+            )}
+
+            <button
+              className="boton"
+              type="submit"
+              disabled={enCurso !== undefined || faltaLaMencion}
+              {...(faltaLaMencion ? { 'aria-describedby': 'falta-mencion' } : {})}
+            >
               {enCurso === 'papeleta'
                 ? 'Enviando…'
                 : decision.yaVotaste

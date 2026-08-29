@@ -135,6 +135,13 @@ function metric(
       const margins = options
         .map((_, j) => (d[i]?.[j] ?? 0) - (d[j]?.[i] ?? 0))
         .filter((_, j) => j !== i);
+      // `margins` queda vacío sólo con UNA opción, y eso hoy es INALCANZABLE: `validateDecisionConfig`
+      // se niega a construir una decisión de condorcet-schulze con menos de dos
+      // (`MULTI_METHOD_NEEDS_TWO_OPTIONS`), porque con una sola gana esa aunque todos la rechacen.
+      // El `=== 0` queda escrito y no se borra porque documenta la invariante que lo vuelve
+      // inalcanzable, y porque `Math.min()` sin argumentos devuelve `Infinity`: el día que la
+      // guarda de la configuración se afloje, esta rama es lo único entre eso y un desempate
+      // envenenado (§10, mutante demostrado equivalente, no deuda de prueba).
       return margins.length === 0 ? 0 : Math.min(...margins);
     }
     default:

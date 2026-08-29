@@ -209,15 +209,79 @@ function iniciativaConHistoria(): InitiativeState {
   };
 }
 
+/** El resultado de un sorteo: sus tablas traen `MemberId` en crudo, que es lo que hay que traducir. */
+function resultadoDeSorteo(): DecisionResult {
+  return {
+    ...resultadoConObjecion(),
+    outcome: { kind: 'approved' },
+    proof: {
+      narrative: 'La muestra se repartió por cuotas exactas.',
+      steps: [],
+      tables: [
+        {
+          title: 'Personas seleccionadas',
+          columns: ['Miembro', 'Ticket'],
+          rows: [
+            [SORTEADA, 'f'.repeat(64)],
+            [BAJA, 'e'.repeat(64)],
+          ],
+        },
+      ],
+    },
+  };
+}
+
+const SORTEADA = 'aa11bb22cc33dd44ee55ff6677889900';
+const BAJA = '11aa22bb33cc44dd55ee66ff77889900';
+
 describe('presentación pública de objeciones', () => {
   it('conserva la prueba sin exponer identificadores internos en la interfaz', () => {
-    const dto = resultadoDto(resultadoConObjecion(), 'Ampliar el horario de la sala de estudio');
+    const dto = resultadoDto(
+      resultadoConObjecion(),
+      'Ampliar el horario de la sala de estudio',
+      new Map(),
+    );
     expect(dto.pasos[0]?.explicacion).toBe('Queda 1 objeción admitida sin integrar.');
     expect(dto.tablas[0]?.columnas[0]).toBe('Referencia');
     expect(dto.tablas[0]?.filas[0]?.[0]).toBe('Objeción 1');
     expect(JSON.stringify(dto)).not.toContain(OBJECTION_ID);
     // El resultado dice de qué es: un veredicto sin su asunto no se puede citar ni discutir.
     expect(dto.titulo).toBe('Ampliar el horario de la sala de estudio');
+  });
+
+  it('a quien salió sorteado lo nombra, no lo identifica con 32 hex', () => {
+    // El sorteo SÍ se puede abrir hoy, y `packages/domain/src/tally/sortition.ts` arma sus tablas
+    // con `MemberId` en crudo. El motor hace bien; traducirlos es tarea de esta frontera. Antes
+    // esta función los copiaba tal cual y la pantalla enseñaba 32 hex donde va un nombre.
+    const dto = resultadoDto(
+      resultadoDeSorteo(),
+      'Quién integra el panel',
+      new Map([[SORTEADA, 'Ana del círculo de Ética']]),
+    );
+
+    expect(dto.tablas[0]?.filas[0]?.[0]).toBe('Ana del círculo de Ética');
+    expect(JSON.stringify(dto)).not.toContain(SORTEADA);
+
+    // El ticket NO se traduce ni se esconde: también es hexadecimal, pero es justo lo que permite
+    // comprobar el reparto por cuenta propia. Traducir «toda cadena hexadecimal» lo habría borrado.
+    expect(dto.tablas[0]?.filas[0]?.[1]).toBe('f'.repeat(64));
+  });
+
+  it('quien se dio de baja después del sorteo tampoco aparece como identificador', () => {
+    // El padrón se congela al abrir; el de hoy puede haber perdido gente. Sin este caso, alguien
+    // dado de baja se quedaría sin traducir y volvería a salir en crudo — el mismo defecto por la
+    // puerta de atrás. Quien completa el mapa es `aliasDelPadron`, en `app.ts`.
+    const dto = resultadoDto(
+      resultadoDeSorteo(),
+      'Quién integra el panel',
+      new Map([
+        [SORTEADA, 'Ana del círculo de Ética'],
+        [BAJA, 'Alguien que ya no está'],
+      ]),
+    );
+
+    expect(dto.tablas[0]?.filas[1]?.[0]).toBe('Alguien que ya no está');
+    expect(JSON.stringify(dto)).not.toContain(BAJA);
   });
 });
 

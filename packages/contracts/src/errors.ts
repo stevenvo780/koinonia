@@ -43,6 +43,12 @@ export type ApiError = z.infer<typeof apiError>;
  * tendría dos caras.
  */
 export const MENSAJES: Readonly<Record<string, string>> = {
+  // ── Cómo se puede abrir una votación ────────────────────────────────────────────────────────
+  // El error de dominio trae los nombres técnicos de los métodos; acá se dice qué pasa y qué hacer.
+  CONFIG_MULTI_METHOD_NEEDS_TWO_OPTIONS:
+    'Esa forma de votar sirve para elegir ENTRE varias propuestas, y acá hay una sola: ganaría esa ' +
+    'aunque todo el mundo la rechazara. Para decidir sobre una sola propuesta usá una votación de ' +
+    'sí o no, o el consentimiento.',
   // ── Autorización ────────────────────────────────────────────────────────────────────────────
   UNAUTHORIZED_NOT_AUTHENTICATED:
     'Para hacer esto hay que entrar con el correo institucional. Tu borrador se conserva.',

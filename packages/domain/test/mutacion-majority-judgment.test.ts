@@ -315,8 +315,20 @@ describe('B.7 — `usableGradeBallots` y `majorityJudgmentProfiles`: contratos y
     // anula y el motor procesaría papeletas binarias como si fueran de mención.
     const c = await cfg();
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
     ]);
     const binaria = withWeight(2, { kind: 'binary', approve: true }, 1, 3);
     expect(() => usableGradeBallots(c, [...ballots, binaria])).toThrow(InvalidBallotForMethod);
@@ -350,8 +362,20 @@ describe('B.7 — `usableGradeBallots` y `majorityJudgmentProfiles`: contratos y
     // escrutinio. Aquí exigimos el lanzamiento explícito.
     const c = await cfg();
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: 'fantasma' as typeof EXCELLENT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: 'fantasma' as typeof EXCELLENT },
+        ],
+      },
     ]);
     expect(() => majorityJudgmentProfiles(c, ballots)).toThrow(PreconditionError);
     expect(codigoDe(() => majorityJudgmentProfiles(c, ballots))).toBe('UNKNOWN_GRADE');
@@ -365,7 +389,18 @@ describe('B.7 — `usableGradeBallots` y `majorityJudgmentProfiles`: contratos y
     // `histogram[0] = 2`.
     const c = await cfg();
     const pesados: EffectiveBallot[] = [
-      withWeight(1, { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } }, 2, 2),
+      withWeight(
+        1,
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        2,
+        2,
+      ),
     ];
     const profiles = majorityJudgmentProfiles(c, pesados);
     const perfilA = profiles.find((p) => p.option === A);
@@ -382,10 +417,22 @@ describe('B.7 — `usableGradeBallots` y `majorityJudgmentProfiles`: contratos y
     // `mjCompare`. Aquí verificamos que `W` (suma del histograma) es idéntica para todas.
     const c = await cfg();
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-      { kind: 'grades', grades: { [A]: GOOD } },
-      { kind: 'grades', grades: { [A]: GOOD } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: GOOD },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: GOOD },
+        ],
+      },
+      { kind: 'grades', grades: [{ option: A, grade: GOOD }] },
+      { kind: 'grades', grades: [{ option: A, grade: GOOD }] },
     ]);
     const profiles = majorityJudgmentProfiles(c, ballots);
     const Ws = profiles.map((p) => p.histogram.reduce((s, n) => s + n, 0));
@@ -434,8 +481,8 @@ describe('B.7 — `tallyMajorityJudgment`: rechazo por ausencia total de mencion
     // si alguna prueba lo mirara.
     const c = await cfg();
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT } },
+      { kind: 'grades', grades: [{ option: A, grade: EXCELLENT }] },
+      { kind: 'grades', grades: [{ option: A, grade: EXCELLENT }] },
     ]);
     const tally = await tallyMajorityJudgment(c, ballots);
     expect(tally.outcome).toStrictEqual({ kind: 'rejected', reason: 'threshold-not-met' });
@@ -466,8 +513,20 @@ describe('B.7 — `tallyMajorityJudgment`: rechazo por ausencia total de mencion
     // papeletas buenas que «salve» el escrutinio.
     const mixtas = [
       ...effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
       ]),
       withWeight(2, { kind: 'binary', approve: true }, 1, 3),
     ];
@@ -494,11 +553,41 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: INSUFFICIENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
       ]),
     );
 
@@ -557,9 +646,27 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: INSUFFICIENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: INSUFFICIENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: GOOD } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: INSUFFICIENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: INSUFFICIENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: GOOD },
+          ],
+        },
       ]),
     );
     // A: hist [0,0,0,2,1] W=3, target=1, cum: 3→2 (>1) ⇒ maj=3 (Insuficiente).
@@ -588,7 +695,15 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     const c = await cfg();
     const tally = await tallyMajorityJudgment(
       c,
-      effective([{ kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } }]),
+      effective([
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+      ]),
     );
     expect(tally.tables[0]?.columns).toStrictEqual([
       'Opción',
@@ -608,9 +723,27 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -628,9 +761,27 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -646,9 +797,21 @@ describe('B.7 — `tallyMajorityJudgment`: la demostración completa de la rama 
     // evidencia (`politicaDeMencionAusente` y `descartadasPorIncompletas`).
     const c = await cfg();
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-      { kind: 'grades', grades: { [A]: GOOD } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: GOOD },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: GOOD },
+        ],
+      },
+      { kind: 'grades', grades: [{ option: A, grade: GOOD }] },
     ]);
     const tally = await tallyMajorityJudgment(c, ballots);
     // `papeletas` cuenta las que ENTRARON en el cálculo (`usable.length`), no el total
@@ -734,9 +897,27 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
     const identicas = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: REJECT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: REJECT },
+          ],
+        },
       ]),
     );
     expect(identicas.outcome).toStrictEqual({ kind: 'winner', option: A, tieBroken: true });
@@ -747,9 +928,27 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
     //     A: [2,0,1,0,0]  B: [2,0,0,1,0]  — W=3, target=1, ambas maj=0 (Excelente).
     //     Tras retirar un Excelente a cada una: A maj=2 (Aceptable), B maj=3 (Insuficiente).
     const urnaSeparable: readonly EffectiveBallot['payload'][] = [
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: ACCEPTABLE, [B]: INSUFFICIENT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: ACCEPTABLE },
+          { option: B, grade: INSUFFICIENT },
+        ],
+      },
     ];
     const perfiles = majorityJudgmentProfiles(c, effective(urnaSeparable));
     // Prueba de que el caso es el que se dice: empatan en la PRIMERA mención mayoritaria…
@@ -777,9 +976,27 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
     // legal los distingue del original. Este test fija esa equivalencia por escrito y falla si
     // alguien la rompe —por ejemplo, si una regla empezara a filtrar de más y vaciara la lista—.
     const urna: readonly EffectiveBallot['payload'][] = [
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: GOOD, [B]: GOOD } },
-      { kind: 'grades', grades: { [A]: REJECT, [B]: REJECT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: GOOD },
+          { option: B, grade: GOOD },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: REJECT },
+          { option: B, grade: REJECT },
+        ],
+      },
     ];
     const soloHash = await cfg({ ...METHOD, tieBreak: { cascade: ['lexicographic-hash'] } });
     const base = await tallyMajorityJudgment(soloHash, effective(urna));
@@ -817,9 +1034,27 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: REJECT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: REJECT },
+          ],
+        },
       ]),
     );
     expect(tally.outcome).toStrictEqual({ kind: 'winner', option: A, tieBroken: true });
@@ -841,10 +1076,31 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
       effective([
         {
           kind: 'grades',
-          grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT, [D]: EXCELLENT },
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+            { option: C, grade: EXCELLENT },
+            { option: D, grade: EXCELLENT },
+          ],
         },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: GOOD, [C]: GOOD, [D]: GOOD } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: REJECT, [C]: REJECT, [D]: REJECT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: GOOD },
+            { option: C, grade: GOOD },
+            { option: D, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: REJECT },
+            { option: C, grade: REJECT },
+            { option: D, grade: REJECT },
+          ],
+        },
       ]),
     );
     const orden = await lexicographicHashOrder(c.decisionId, [A, B, C, D]);
@@ -865,19 +1121,39 @@ describe('B.7 — la cascada de `tieBreak` sólo actúa TRAS Balinski–Laraki',
     const urna: readonly EffectiveBallot['payload'][] = [
       {
         kind: 'grades',
-        grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT, [D]: EXCELLENT },
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+          { option: C, grade: EXCELLENT },
+          { option: D, grade: EXCELLENT },
+        ],
       },
       {
         kind: 'grades',
-        grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT, [D]: EXCELLENT },
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+          { option: C, grade: EXCELLENT },
+          { option: D, grade: EXCELLENT },
+        ],
       },
       {
         kind: 'grades',
-        grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT, [D]: EXCELLENT },
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+          { option: C, grade: EXCELLENT },
+          { option: D, grade: EXCELLENT },
+        ],
       },
       {
         kind: 'grades',
-        grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT, [D]: EXCELLENT },
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+          { option: C, grade: EXCELLENT },
+          { option: D, grade: EXCELLENT },
+        ],
       },
     ];
     const tally = await tallyMajorityJudgment(c, effective(urna));
@@ -905,9 +1181,27 @@ describe('B.7 — el rastreo del desempate por eliminación sucesiva: empates y 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: INSUFFICIENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
       ]),
     );
     expect(tally.outcome).toStrictEqual({ kind: 'winner', option: A, tieBroken: false });
@@ -922,9 +1216,30 @@ describe('B.7 — el rastreo del desempate por eliminación sucesiva: empates y 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT, [C]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+            { option: C, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+            { option: C, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+            { option: C, grade: EXCELLENT },
+          ],
+        },
       ]),
     );
     // Todos con hist [3, 0, 0, 0, 0], maj=0. Tres empatadas en mención mayoritaria.
@@ -956,9 +1271,27 @@ describe('B.7 — el rastreo del desempate por eliminación sucesiva: empates y 
     // ganador.
     const c = await cfg();
     const urna: readonly EffectiveBallot['payload'][] = [
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-      { kind: 'grades', grades: { [A]: ACCEPTABLE, [B]: INSUFFICIENT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: EXCELLENT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: ACCEPTABLE },
+          { option: B, grade: INSUFFICIENT },
+        ],
+      },
     ];
     const tally = await tallyMajorityJudgment(c, effective(urna));
     expect(tally.outcome).toStrictEqual({ kind: 'winner', option: A, tieBroken: false });
@@ -983,9 +1316,27 @@ describe('B.7 — el rastreo del desempate por eliminación sucesiva: empates y 
     const tally = await tallyMajorityJudgment(
       c,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');

@@ -30,9 +30,22 @@ describe('integración de los nuevos métodos con DecisionResult', () => {
       3,
     );
     const ballots = [
-      { voter: memberIdAt(0), scores: { [A]: 5 as const, [B]: 2 as const } },
-      { voter: memberIdAt(1), scores: { [A]: 4 as const, [B]: 3 as const } },
-      { voter: memberIdAt(2), scores: { [A]: null, [B]: 3 as const } },
+      {
+        voter: memberIdAt(0),
+        scores: [
+          { option: A, value: 5 as const },
+          { option: B, value: 2 as const },
+        ],
+      },
+      {
+        voter: memberIdAt(1),
+        scores: [
+          { option: A, value: 4 as const },
+          { option: B, value: 3 as const },
+        ],
+      },
+      // A queda sin puntuar: es «sin opinión», no un cero (B.5.a).
+      { voter: memberIdAt(2), scores: [{ option: B, value: 3 as const }] },
     ].map(({ voter, scores }, index) => ({
       ballotId: ballotIdAt(index + 1),
       decisionId: config.decisionId,
@@ -106,9 +119,27 @@ describe('integración de los nuevos métodos con DecisionResult', () => {
     const mj = await tallyDecision({
       config: mjConfig,
       ballots: cast(mjConfig, [
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: REJECT } },
-        { kind: 'grades', grades: { [A]: GOOD, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: REJECT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: GOOD },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
       ]),
       closedAt: mjConfig.window.closesAt,
       computedFromSeq: 3,

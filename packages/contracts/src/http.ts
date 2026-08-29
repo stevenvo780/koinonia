@@ -772,6 +772,32 @@ export const POSTURA_EN_PALABRAS: Readonly<Record<PosturaConsentimiento, string>
   object: 'Objeto',
 };
 
+/**
+ * Techo de cuántas opciones puede traer una papeleta de puntuación, orden o menciones.
+ *
+ * No es una opinión sobre cuántas opciones puede tener una decisión: es sólo el límite del
+ * tamaño del cuerpo de la petición. 50 sobra por mucho a la gobernanza de este instituto y evita
+ * que un cuerpo malformado obligue a recorrer un arreglo sin fin.
+ */
+const MAX_OPCIONES_EN_PAPELETA = 50;
+
+/**
+ * Rechaza una opción repetida dentro de la misma papeleta.
+ *
+ * Vive acá y no en el dominio (`packages/domain/src/ballot.ts`) porque en la RED es un error de
+ * FORMA —dos entradas con la misma opción no es «una lista con una forma rara», es un dato mal
+ * construido— y `packages/contracts/test/mensajes-de-validacion.test.ts` exige que ese error se
+ * detecte antes de reenviar nada del cuerpo del cliente en la respuesta.
+ */
+function sinOpcionRepetida(entradas: readonly { readonly opcion: string }[]): boolean {
+  return new Set(entradas.map((entrada) => entrada.opcion)).size === entradas.length;
+}
+
+/** La misma regla que `sinOpcionRepetida`, para cuando la opción ES el elemento (el `orden`). */
+function sinRepetidos(ids: readonly string[]): boolean {
+  return new Set(ids).size === ids.length;
+}
+
 export const emitirPapeleta = z.object({
   requestId,
   /** Versión del texto que la persona tenía a la vista. El servidor la compara con la vigente. */
@@ -792,6 +818,52 @@ export const emitirPapeleta = z.object({
           enmiendaPropuesta: z.string().max(4000).optional(),
         })
         .optional(),
+    }),
+    /**
+     * Puntuación (0 a 5) por opción, para el método de puntuación.
+     *
+     * Es una LISTA de pares `{opcion, valor}`, no un mapa con la opción de clave. Un `OptionId` es
+     * 32 caracteres hexadecimales al azar —cerca del 62 % empieza por dígito— y el perfil canónico
+     * del historial exige que toda clave de objeto empiece por letra
+     * (`packages/crypto/src/canonical.ts`); un mapa así revienta el hasheo la mayoría de las
+     * veces, no en un caso raro. La opción que NO aparece en la lista es «sin opinión»: no cuenta
+     * como cero (B.5.a), y no hace falta nombrarla con un valor nulo —el perfil canónico tampoco
+     * admite `null` como valor de nada—.
+     */
+    z.object({
+      tipo: z.literal('score'),
+      puntuaciones: z
+        .array(z.object({ opcion: opaqueId, valor: z.number().int().min(0).max(5) }).strict())
+        .max(MAX_OPCIONES_EN_PAPELETA)
+        .refine(sinOpcionRepetida, 'Cada opción sólo puede puntuarse una vez.'),
+    }),
+    /**
+     * Orden de preferencia, de la opción que más se prefiere a la que menos: la papeleta que
+     * comparten el voto por rondas y la comparación por pares (los dos exigen la misma clase de
+     * papeleta, `ranking`, según `acceptedPayloadKinds` de `@koinonia/domain`).
+     */
+    z.object({
+      tipo: z.literal('ranking'),
+      orden: z
+        .array(opaqueId)
+        .min(1, 'El orden no puede quedar vacío: elegí al menos una opción.')
+        .max(MAX_OPCIONES_EN_PAPELETA)
+        .refine(sinRepetidos, 'Cada opción sólo puede aparecer una vez en el orden.'),
+    }),
+    /**
+     * Una mención por opción, para la valoración por menciones.
+     *
+     * Misma forma de lista que `score`, por la misma razón del `keyPattern`. El identificador de
+     * la mención (`excelente`, `rechazar`…) es el que declaró quien abrió la votación al fijar la
+     * escala —`GET /decisiones/:id` la trae en `escalaDeMenciones`—, no un identificador opaco del
+     * sistema: por eso es una cadena corta, no un `opaqueId`.
+     */
+    z.object({
+      tipo: z.literal('grades'),
+      menciones: z
+        .array(z.object({ opcion: opaqueId, mencion: z.string().min(1).max(32) }).strict())
+        .max(MAX_OPCIONES_EN_PAPELETA)
+        .refine(sinOpcionRepetida, 'Cada opción sólo puede valorarse una vez.'),
     }),
   ]),
 });
@@ -868,6 +940,16 @@ export const decisionDetalle = decisionResumen.extend({
    * texto sí es público —una objeción existe para poder responderse—, la firma no.
    */
   objeciones: z.array(objecionEnPie).default([]),
+  /**
+   * La escala de menciones congelada al abrir, sólo presente cuando el método es valoración por
+   * menciones.
+   *
+   * Sin esto la pantalla no puede dibujar los botones de la papeleta de menciones: el
+   * identificador de cada mención (`excelente`, `rechazar`…) es parte de la configuración que se
+   * congela al abrir —no lo inventa la pantalla— y puede no ser la escala neutra por defecto si
+   * quien abrió la votación mandó la suya propia (`configuracion.escala`, `metodos.ts`).
+   */
+  escalaDeMenciones: z.array(z.object({ id: z.string(), etiqueta: z.string() })).optional(),
 });
 export type DecisionDetalle = z.infer<typeof decisionDetalle>;
 

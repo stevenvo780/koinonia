@@ -1,5 +1,4 @@
 import {
-  buildDecisionConfig,
   type DecisionConfig,
   type DecisionMethod,
   type EffectiveBallot,
@@ -34,9 +33,7 @@ export async function multiConfig(
   options: readonly OptionId[],
   memberCount: number,
 ): Promise<DecisionConfig> {
-  const base = await buildConfig({ electorate: await buildElectorate(memberCount), method });
-  const { configHash: _oldHash, ...draft } = base;
-  return buildDecisionConfig({ ...draft, options });
+  return buildConfig({ electorate: await buildElectorate(memberCount), method, options });
 }
 
 export function effective(

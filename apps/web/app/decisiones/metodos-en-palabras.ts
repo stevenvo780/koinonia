@@ -15,40 +15,33 @@
  * y si admite delegación. Si mañana el catálogo renombra un método, la pantalla lo dice renombrado
  * sin tocar este fichero.
  *
- * ═══ LO MÁS IMPORTANTE DE ESTE FICHERO: qué se puede responder hoy ═══
+ * ═══ Dos preguntas distintas, y sólo una las confunde a las dos ═══
  *
- * El motor de `@koinonia/domain` sabe contar los nueve métodos. **La red no sabe transportar las
- * nueve papeletas.** `emitirPapeleta` (packages/contracts/src/http.ts) sólo tiene tres ramas —
- * `binary`, `abstain` y `consent`—, y `RespuestaPapeleta` en `services/api/src/http/service.ts`
- * repite exactamente esas tres. Cruzando eso con `acceptedPayloadKinds(method)` del dominio queda
- * esto:
+ * «¿Se puede RESPONDER este método?» y «¿se puede ABRIR una votación nueva con este método?» solían
+ * tener la misma respuesta, porque las dos estaban bloqueadas por la misma causa: `emitirPapeleta`
+ * (`packages/contracts/src/http.ts`) sólo transportaba tres clases de papeleta —`binary`, `abstain`,
+ * `consent`— y puntuación, voto por rondas, valoración por menciones y comparación por pares exigen
+ * `score`, `ranking` o `grades` (`acceptedPayloadKinds` en `@koinonia/domain`), ninguna de las tres.
  *
- *   · umbral (mayoría simple, mayoría reforzada, unanimidad) → admite `binary`/`abstain` → SÍ pasa.
- *   · acuerdo interno                                        → admite `consent`          → SÍ pasa.
- *   · deliberación aleatoria                                 → no admite NINGUNA papeleta, por
- *     diseño: el sorteo es el mecanismo, nadie llena nada.   → no hace falta que pase.
- *   · puntuación, voto por rondas, valoración por menciones, comparación por pares → exigen
- *     `score`, `ranking` o `grades`, y **ninguna de las tres cruza la red hoy**.
+ * Esa frontera ya tiene las seis clases que el motor necesita —ver `emitirPapeleta` y
+ * `payloadDePapeleta` en `services/api/src/http/service.ts`—, así que la primera pregunta ya es sí
+ * para los nueve (el sorteo no necesita papeleta ninguna, por diseño). La segunda sigue siendo no
+ * para esos cuatro, y por una razón que no tiene nada que ver con la red: `abrirDecision`
+ * (`service.ts`) construye toda votación con **una sola opción**
+ * (`options: [optionId(input.propuestaId)]`, la propuesta misma), y esos cuatro métodos EXISTEN para
+ * comparar varias salidas entre sí. Puntuar, ordenar o valorar por menciones una única opción no es
+ * una votación reñida: es un formulario cuya respuesta ya se sabe de antemano, y abrir una así sería
+ * fingir una elección que no existe. El día que una decisión se pueda abrir con más de una opción,
+ * `sePuedeAbrirHoy` deja de excluir a estos cuatro sin que haga falta tocar ninguna otra pantalla.
  *
- * Y hay una segunda razón, independiente de la red: `abrirDecision` en `service.ts` construye la
- * votación con **una sola opción** (`options: [optionId(input.propuestaId)]`, la propuesta misma).
- * Puntuar, ordenar o valorar por menciones con una única opción no es una votación reñida: es un
- * formulario sin contenido.
- *
- * Consecuencia para la pantalla, y es una decisión de producto, no un detalle: abrir una votación
- * con uno de esos cuatro métodos crearía una votación **que nadie puede responder**, en un historial
- * que no se corrige ni se borra. Así que la pantalla los muestra —quien abre tiene derecho a saber
- * que existen y para qué sirven— y no deja abrirlos, diciendo por qué con estas mismas palabras.
- *
- * `tests/unit/metodos-en-pantalla.test.ts` protege ese reparto. **No importa este fichero**, y no es
- * un descuido: `apps/web` no declara `"type": "module"`, así que bajo el `NodeNext` de
- * `tsconfig.check.json` —el que compila `tests/**`— cualquier fichero suyo se lee como CommonJS y
- * `verbatimModuleSyntax` lo rechaza; importarlo desde ahí rompe el `typecheck` del repositorio
- * entero. Es la misma razón por la que `vitest.config.ts` dice que `apps/web` no tiene suite
- * unitaria. Lo que esa prueba comprueba es el HECHO del que cuelga este reparto —qué papeleta admite
- * cada método y cuáles cruzan la red— y lleva escrita a mano la lista de los cuatro bloqueados, así
- * que el día que alguien añada al contrato la rama que falta, la prueba cae y su mensaje nombra este
- * fichero.
+ * `tests/unit/metodos-en-pantalla.test.ts` protege la PRIMERA pregunta contra el dominio y el
+ * contrato — qué papeleta admite cada método y cuáles cruzan la red—; la segunda es una decisión de
+ * producto sin invariante de dominio que comprobar, así que vive sólo acá. **No importa este
+ * fichero**, y no es un descuido: `apps/web` no declara `"type": "module"`, así que bajo el
+ * `NodeNext` de `tsconfig.check.json` —el que compila `tests/**`— cualquier fichero suyo se lee como
+ * CommonJS y `verbatimModuleSyntax` lo rechaza; importarlo desde ahí rompe el `typecheck` del
+ * repositorio entero. Es la misma razón por la que `vitest.config.ts` dice que `apps/web` no tiene
+ * suite unitaria.
  */
 
 import {
@@ -59,22 +52,29 @@ import {
 } from '@koinonia/contracts';
 
 /**
- * Qué formulario dibuja la pantalla de la papeleta, y si se puede dibujar alguno.
+ * Qué formulario dibuja la pantalla de la papeleta.
  *
- * No es `FormaPapeleta` del catálogo: aquélla describe la papeleta **ideal** del método, ésta
- * describe lo que la pantalla puede poner delante de alguien hoy sin mentirle. `todavia-no` es la
- * diferencia entre las dos, y existir tiene todo el sentido: el día que desaparezca, desaparece
- * junto con la rama del contrato que falta.
+ * No es `FormaPapeleta` del catálogo: aquélla nombra la papeleta que el motor espera; ésta nombra
+ * el formulario concreto que `apps/web/app/decisiones/[id]/page.tsx` sabe dibujar para esa papeleta.
+ * Las dos coinciden uno a uno para los nueve métodos — la red ya transporta las seis clases que el
+ * motor exige —, y por eso cada entrada de abajo repite el mismo valor que su `formasPapeleta[0]`
+ * del catálogo. Que se pueda DIBUJAR el formulario no dice si esta pantalla deja ABRIR una votación
+ * nueva con ese método: eso lo decide `sePuedeAbrirHoy`, más abajo, por una razón completamente
+ * distinta.
  */
 export type FormularioDePapeleta =
   /** Sí / No / me abstengo, sobre un único texto. */
   | 'binaria'
   /** Sin objeción / tengo una reserva / objeto, con la objeción por escrito. */
   | 'consentimiento'
+  /** Una nota de 0 a 5 por opción, o «sin opinión». */
+  | 'puntuacion'
+  /** Las opciones ordenadas de la que más se prefiere a la que menos. */
+  | 'ordenamiento'
+  /** Una mención por opción, elegida de la escala congelada al abrir. */
+  | 'menciones'
   /** No hay nada que llenar: lo que decide es el sorteo. */
-  | 'sin-papeleta'
-  /** El método existe y se cuenta, pero la respuesta todavía no tiene por dónde entrar. */
-  | 'todavia-no';
+  | 'sin-papeleta';
 
 /** Lo que hay que decirle a alguien sobre un método antes de que lo elija. */
 export interface MetodoEnPalabras {
@@ -153,7 +153,7 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
     queLlenaLaGente:
       'Una nota de 0 a 5 para cada salida. Puntuar no es ordenar: dos salidas pueden llevarse la ' +
       'misma nota, y dejar una en blanco significa «no opino», no cero.',
-    formulario: 'todavia-no',
+    formulario: 'puntuacion',
   },
   irv: {
     cuandoConviene:
@@ -166,7 +166,7 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
     queLlenaLaGente:
       'Las salidas ordenadas, de la que más se prefiere a la que menos. Ordenar no es elegir una: ' +
       'hay que decir también qué va segundo, porque de eso vive el método.',
-    formulario: 'todavia-no',
+    formulario: 'ordenamiento',
   },
   'majority-judgment': {
     cuandoConviene:
@@ -179,7 +179,7 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
     queLlenaLaGente:
       'Una mención por salida, elegida de una escala fijada al abrir —de «Excelente» a «Rechazar»—. ' +
       'Quien deja una salida sin mención pierde la papeleta entera, así que hay que valorarlas todas.',
-    formulario: 'todavia-no',
+    formulario: 'menciones',
   },
   'condorcet-schulze': {
     cuandoConviene:
@@ -194,7 +194,7 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
     queLlenaLaGente:
       'Las salidas ordenadas, de la que más se prefiere a la que menos. Lo que no se ordena queda ' +
       'empatado en el último lugar: nunca se le inventa un orden a nadie.',
-    formulario: 'todavia-no',
+    formulario: 'ordenamiento',
   },
   'deliberative-sortition': {
     cuandoConviene:
@@ -229,7 +229,7 @@ export function descripcionDelMetodo(id: IdMetodo): string {
   return METODOS_DISPONIBLES[id].descripcion;
 }
 
-/** La forma de papeleta que el catálogo declara. Es lo ideal, no siempre lo alcanzable. */
+/** La forma de papeleta que el catálogo declara. Coincide con `enPalabras(id).formulario`. */
 export function formaIdealDePapeleta(id: IdMetodo): FormaPapeleta | undefined {
   return METODOS_DISPONIBLES[id].formasPapeleta[0];
 }
@@ -240,27 +240,46 @@ export function admiteDelegacion(id: IdMetodo): boolean {
 }
 
 /**
- * Si hoy se puede abrir una votación con este método sin dejarla sin respuesta posible.
+ * Los cuatro métodos que EXISTEN para comparar varias salidas entre sí, y por eso no dicen nada
+ * útil sobre la única opción que `abrirDecision` sabe construir hoy.
  *
- * `false` **no** significa «el método está mal» ni «el motor no lo sabe contar»: significa que la
- * papeleta que exige todavía no cruza la red. Ver la cabecera del fichero.
+ * Está escrita a mano y no derivada de `formulario` (que ya no distingue estos cuatro de los
+ * cinco restantes: los nueve tienen una papeleta real). Es la lista que cuelga de una decisión de
+ * producto, no de un hecho del dominio — el día que una decisión pueda abrirse con más de una
+ * opción, se vacía esta lista y con ella se abre la puerta a los cuatro, sin tocar nada más de
+ * este fichero.
+ */
+const METODOS_QUE_COMPARAN_OPCIONES: readonly IdMetodo[] = [
+  'score',
+  'irv',
+  'majority-judgment',
+  'condorcet-schulze',
+];
+
+/**
+ * Si hoy se puede abrir una votación con este método.
+ *
+ * `false` **no** significa «el método está mal», «el motor no lo sabe contar» ni «la papeleta no
+ * cruza la red» —las tres cosas ya son ciertas para los nueve—: significa que este método compara
+ * varias salidas y `abrirDecision` sólo sabe abrir sobre una. Ver la cabecera del fichero.
  */
 export function sePuedeAbrirHoy(id: IdMetodo): boolean {
-  return EN_PALABRAS[id].formulario !== 'todavia-no';
+  return !METODOS_QUE_COMPARAN_OPCIONES.includes(id);
 }
 
 /**
  * Por qué todavía no, dicho para quien abre y no para quien programa.
  *
- * Son dos motivos y los dos son ciertos a la vez. Se dicen los dos porque resolver sólo uno no
- * habilitaría el método, y prometer lo contrario sería mentir sobre cuánto falta.
+ * Un solo motivo, no dos: hasta hace poco había otro —la papeleta no cruzaba la red—, y prometer
+ * los dos a la vez cuando sólo queda uno sería mentir sobre cuánto falta. Ver
+ * `docs/OBJETIVO.md` para el estado completo del incremento.
  */
 export function porQueTodaviaNo(id: IdMetodo): string {
   return (
-    `«${nombreDelMetodo(id)}» pide una papeleta que la votación todavía no sabe recibir, así que ` +
-    `quien entrara a responder no encontraría dónde hacerlo. Y hay una segunda razón: hoy una ` +
-    `votación se abre sobre un solo texto, y este método sólo dice algo cuando hay varias salidas ` +
-    `que comparar. Las dos cosas se resuelven fuera de esta pantalla; el día que estén, el método ` +
-    `se habilita acá sin cambiar nada de lo que ves.`
+    `«${nombreDelMetodo(id)}» existe para comparar varias salidas entre sí, y hoy toda votación ` +
+    `se abre sobre un único texto. Con una sola opción sobre la mesa, la respuesta ya se sabe de ` +
+    `antemano, así que abrir la votación así sería fingir una elección que no existe. El día que ` +
+    `una decisión se pueda abrir con más de una opción, este método se habilita acá sin cambiar ` +
+    `nada de lo que ves.`
   );
 }

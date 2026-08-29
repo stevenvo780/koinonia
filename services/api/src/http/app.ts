@@ -1360,7 +1360,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       cerrada.state.config?.proposalId ?? '',
       cerrada.state.proposalVersionHash ?? '',
     );
-    return resultadoDto(cerrada.resultado, tituloCerrada, cerrada.iniciativaId);
+    const aliasCerrada = await aliasDelPadron(cerrada.state.config?.electorate.members ?? []);
+    return resultadoDto(cerrada.resultado, tituloCerrada, aliasCerrada, cerrada.iniciativaId);
   });
 
   app.post('/decisiones/:id/ratificar', async (request, reply) => {
@@ -1385,7 +1386,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       found.state.config?.proposalId ?? '',
       found.state.proposalVersionHash ?? '',
     );
-    return resultadoDto(found.resultado, titulo, found.iniciativaId);
+    const alias = await aliasDelPadron(found.state.config?.electorate.members ?? []);
+    return resultadoDto(found.resultado, titulo, alias, found.iniciativaId);
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -1410,6 +1412,22 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Como `aliasDe`, pero sin huecos: devuelve una entrada por CADA miembro del padrón congelado.
+   *
+   * `aliasDe` sólo trae a quien sigue en el padrón de hoy. Para las tablas de un resultado eso no
+   * alcanza: una decisión vieja pudo sortear a alguien que después se dio de baja, y dejar su
+   * identificador sin traducir sería justo lo que se quiere evitar. Quien ya no está se dice como
+   * en el resto del producto, con la misma frase.
+   */
+  async function aliasDelPadron(
+    miembros: readonly { readonly memberId: string }[],
+  ): Promise<ReadonlyMap<string, string>> {
+    const ids = miembros.map((miembro) => miembro.memberId);
+    const encontrados = await aliasDe(ids);
+    return new Map(ids.map((id) => [id, encontrados.get(id) ?? 'Alguien que ya no está']));
   }
 
   async function delegacionesDto(

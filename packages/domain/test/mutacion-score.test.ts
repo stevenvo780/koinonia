@@ -157,8 +157,20 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
     // devuelve `undefined` sin lanzar nada.
     const cfg = await configScore();
     const ballot = efectivas([
-      { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-      { kind: 'score', scores: { [A]: 4, [B]: 3 } },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 3 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 4 },
+          { option: B, value: 3 },
+        ],
+      },
     ]);
     const intrusa = papeletaConPeso(2, { kind: 'binary', approve: true }, 1, 3);
     expect(() => scoreProfiles(cfg, [...ballot, intrusa])).toThrow(InvalidBallotForMethod);
@@ -178,17 +190,17 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
     await expect(tallyScore(cfgSM, [])).rejects.toThrow('tallyScore exige método score');
   });
 
-  it('`null` se IGNORA: la cobertura NO lo incluye y el histograma se queda en seis casillas', async () => {
-    // Mata el mutante L63:29 (la guarda `value === null || value === undefined`) en su forma
-    // más visible: con un elector que puntúa `null` en A, A no debería ver incrementada su
-    // cobertura. Si el mutante cuela, la cobertura de A sube a 1/2 y, dependiendo de
-    // `minCoverage`, puede cambiar la elegibilidad.
+  it('la opción AUSENTE de la lista se IGNORA: la cobertura NO la incluye y el histograma se queda en seis casillas', async () => {
+    // Mata el mutante L63:29 (la guarda `value === undefined`, tras `.find(...)?.value`) en su
+    // forma más visible: con un elector que no puntúa A —A no aparece en su lista de notas—, A no
+    // debería ver incrementada su cobertura. Si el mutante cuela, la cobertura de A sube a 1/2 y,
+    // dependiendo de `minCoverage`, puede cambiar la elegibilidad.
     const cfg = await configScore(METHOD_GANADOR, [A, B], 2);
     const profiles = scoreProfiles(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
       ]),
     );
     const perfilA = profiles.find((p) => p.option === A);
@@ -203,17 +215,22 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
     expect(perfilB?.median).toBe(3);
   });
 
-  it('`undefined` en `scores[option]` también se ignora: la cobertura NO lo cuenta', async () => {
-    // El mutante L63:29 (columna del SEGUNDO operando) sólo es observable si la papeleta
-    // lleva un `undefined` real —el camino válido usa `Score | null`, pero la mutación puede
-    // aflorar si el log tiene basura. Aquí se construye una papeleta «corrupta» y se verifica
-    // que el motor laTrata como si la clave no estuviera.
+  it('un `value: undefined` de verdad —una entrada corrupta, no ausente— también se ignora', async () => {
+    // El mutante L63:29 (columna del SEGUNDO operando de `value === undefined`) sólo es
+    // observable si `.find(...)` ENCUENTRA la entrada y su `value` es `undefined` de verdad —el
+    // camino válido usa `Score`, sin `undefined` posible en el tipo, pero un log corrupto podría
+    // tenerlo—. Es distinto de que la opción esté simplemente AUSENTE de la lista (eso ya lo prueba
+    // el caso de arriba, con la clave omitida): acá la entrada SÍ está, con un valor que no debería
+    // poder existir, y el motor tiene que tratarla igual que si no estuviera.
     const cfg = await configScore(METHOD_GANADOR, [A, B], 2);
     const corrupta = {
       voter: memberIdAt(2),
       payload: {
         kind: 'score',
-        scores: { [A]: undefined, [B]: 3 },
+        scores: [
+          { option: A, value: undefined },
+          { option: B, value: 3 },
+        ],
       },
       weight: 1,
       seq: 3,
@@ -221,8 +238,20 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
     } as unknown as EffectiveBallot;
     const profiles = scoreProfiles(cfg, [
       ...efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 4, [B]: 3 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 4 },
+            { option: B, value: 3 },
+          ],
+        },
       ]),
       corrupta,
     ]);
@@ -237,10 +266,54 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
     // voto de 5 contra un voto de 5 con peso doble produzcan sumas distintas.
     const cfg = await configScore(METHOD_GANADOR, [A, B], 4);
     const ballots: EffectiveBallot[] = [
-      papeletaConPeso(0, { kind: 'score', scores: { [A]: 5, [B]: 3 } }, 2, 1),
-      papeletaConPeso(1, { kind: 'score', scores: { [A]: 5, [B]: 3 } }, 1, 2),
-      papeletaConPeso(2, { kind: 'score', scores: { [A]: 4, [B]: 3 } }, 1, 3),
-      papeletaConPeso(3, { kind: 'score', scores: { [A]: 4, [B]: 3 } }, 1, 4),
+      papeletaConPeso(
+        0,
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        2,
+        1,
+      ),
+      papeletaConPeso(
+        1,
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        1,
+        2,
+      ),
+      papeletaConPeso(
+        2,
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 4 },
+            { option: B, value: 3 },
+          ],
+        },
+        1,
+        3,
+      ),
+      papeletaConPeso(
+        3,
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 4 },
+            { option: B, value: 3 },
+          ],
+        },
+        1,
+        4,
+      ),
     ];
     const profiles = scoreProfiles(cfg, ballots);
     const perfilA = profiles.find((p) => p.option === A);
@@ -273,7 +346,8 @@ describe('scoreProfiles — la aritmética exacta y las papeletas inválidas', (
 describe('B.5 — la demostración de la puntuación en su rama ganadora', () => {
   it('caso canónico: la demostración completa, paso a paso', async () => {
     // 4 electores, 2 opciones, A gana por su mediana con cobertura 3/4. Sólo A llega a la
-    // cobertura: B tiene 3 nulls y nunca suma. El paso S2 publica la mediana del ganador y
+    // cobertura: B queda sin puntuar en 3 de las 4 papeletas y nunca suma. El paso S2 publica la
+    // mediana del ganador y
     // el aviso de desempate (no, no hubo empate); la tabla publica los histogramas casilla
     // por casilla; el párrafo dice en una sola frase lo que el cálculo hizo. Cambiar una
     // sola palabra de cualquiera de esos tres elementos tiene que romper la prueba.
@@ -281,10 +355,10 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: null } },
-        { kind: 'score', scores: { [A]: 5, [B]: null } },
-        { kind: 'score', scores: { [A]: 5, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        { kind: 'score', scores: [{ option: A, value: 5 }] },
+        { kind: 'score', scores: [{ option: A, value: 5 }] },
+        { kind: 'score', scores: [{ option: A, value: 5 }] },
+        { kind: 'score', scores: [] },
       ]),
     );
 
@@ -340,10 +414,28 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.steps[0]?.claim).toBe(
@@ -360,10 +452,28 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.tables[0]?.columns).toStrictEqual([
@@ -389,10 +499,28 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 0, [B]: 0 } },
-        { kind: 'score', scores: { [A]: 1, [B]: 2 } },
-        { kind: 'score', scores: { [A]: 2, [B]: 4 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 0 },
+            { option: B, value: 0 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 1 },
+            { option: B, value: 2 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 2 },
+            { option: B, value: 4 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.tables[0]?.rows).toStrictEqual([
@@ -408,10 +536,16 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.outcome).toStrictEqual({ kind: 'rejected', reason: 'threshold-not-met' });
@@ -434,10 +568,16 @@ describe('B.5 — la demostración de la puntuación en su rama ganadora', () =>
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.tables[0]?.columns).toStrictEqual([
@@ -477,10 +617,34 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 1, [B]: 3 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 1 },
+            { option: B, value: 3 },
+          ],
+        },
       ]),
     );
     // A histograma [0,1,0,0,0,3]. mediana 5 (target=1; accumulated en 5 = 4 > 1).
@@ -498,10 +662,34 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 4 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 4 },
+          ],
+        },
       ]),
     );
     // A: histograma [0,0,0,0,0,4]; cobertura 4; suma 20; media 5/1.
@@ -538,10 +726,34 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 0, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 3, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 0 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 3 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
       ]),
     );
     // A: histograma [1,0,0,1,0,2]; cobertura 4; suma 13; media 13/4.
@@ -579,11 +791,41 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 0, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 0, [B]: 0 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 0 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 0 },
+            { option: B, value: 0 },
+          ],
+        },
       ]),
     );
     // A: histograma [2,0,0,0,0,3]; cobertura 5; suma 15; media 3/1; mediana 5.
@@ -617,10 +859,34 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
       ]),
     );
     // A y B: histograma idéntico [0,0,0,0,0,4]; cobertura 4; suma 20; media 5/1; mediana 5.
@@ -655,10 +921,34 @@ describe('B.5.d — la cascada de desempate, regla por regla', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 4 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 4 },
+          ],
+        },
       ]),
     );
     // Misma mediana 5, A=5/1, B=19/4. A gana por media.
@@ -680,10 +970,16 @@ describe('B.5 — la media exacta se publica como fracción irreducible, nunca d
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 3, [B]: 1 } },
-        { kind: 'score', scores: { [A]: 3, [B]: null } },
-        { kind: 'score', scores: { [A]: 3, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 3 },
+            { option: B, value: 1 },
+          ],
+        },
+        { kind: 'score', scores: [{ option: A, value: 3 }] },
+        { kind: 'score', scores: [{ option: A, value: 3 }] },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.tables[0]?.rows).toStrictEqual([
@@ -704,10 +1000,10 @@ describe('B.5 — la media exacta se publica como fracción irreducible, nunca d
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
       ]),
     );
     expect(tally.tables[0]?.rows).toStrictEqual([
@@ -741,7 +1037,18 @@ describe('scoreProfiles — la forma del perfil publicado', () => {
     // cambian. Aquí se enumera el contrato del `ScoreProfile` para que cualquier cambio sea
     // visible.
     const cfg = await configScore();
-    const [perfil] = scoreProfiles(cfg, efectivas([{ kind: 'score', scores: { [A]: 5, [B]: 3 } }]));
+    const [perfil] = scoreProfiles(
+      cfg,
+      efectivas([
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+      ]),
+    );
     const claves = Object.keys(perfil as ScoreProfile).sort();
     expect(claves).toStrictEqual(
       ['coverage', 'eligible', 'histogram', 'median', 'option', 'sum'].sort(),
@@ -759,10 +1066,10 @@ describe('B.5 — la demostración cuando NINGUNA opción alcanza la cobertura m
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.outcome).toStrictEqual({ kind: 'rejected', reason: 'threshold-not-met' });
@@ -806,10 +1113,7 @@ describe('B.5 — la demostración cuando NINGUNA opción alcanza la cobertura m
     // El mutante L157:23 'sin datos' → "" publicaría una columna vacía. La afirmación sobre
     // la cadena exacta evita eso.
     const cfg = await configScore();
-    const tally = await tallyScore(
-      cfg,
-      efectivas([{ kind: 'score', scores: { [A]: null, [B]: null } }]),
-    );
+    const tally = await tallyScore(cfg, efectivas([{ kind: 'score', scores: [] }]));
     const filaA = tally.tables[0]?.rows[0];
     expect(filaA?.[2]).toBe('sin datos');
   });
@@ -837,10 +1141,34 @@ describe('B.5 — el desempate determinista final por hash', () => {
       4,
     );
     const ballots = efectivas([
-      { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-      { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-      { kind: 'score', scores: { [A]: 5, [B]: 5 } },
-      { kind: 'score', scores: { [A]: 5, [B]: 5 } },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+        ],
+      },
     ]);
     const t1 = await tallyScore(cfg, ballots);
     const t2 = await tallyScore(cfg, ballots);
@@ -866,10 +1194,42 @@ describe('B.5 — el desempate determinista final por hash', () => {
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -897,8 +1257,20 @@ describe('tallyScore — los precondiciones del escrutinio', () => {
     const cfg = await configScore();
     const ballots = [
       ...efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
       ]),
       papeletaConPeso(2, { kind: 'binary', approve: true }, 1, 3),
     ];
@@ -932,10 +1304,28 @@ describe('B.5 — `supportingSeqs` y la coherencia entre pasos, tabla y narrativ
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.steps[0]?.supportingSeqs).toStrictEqual([]);
@@ -949,10 +1339,28 @@ describe('B.5 — `supportingSeqs` y la coherencia entre pasos, tabla y narrativ
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -968,10 +1376,28 @@ describe('B.5 — `supportingSeqs` y la coherencia entre pasos, tabla y narrativ
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -989,10 +1415,28 @@ describe('B.5 — `supportingSeqs` y la coherencia entre pasos, tabla y narrativ
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: null } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [] },
       ]),
     );
     expect(tally.outcome.kind).toBe('winner');
@@ -1030,10 +1474,42 @@ describe('B.5 — el respaldo de `chooseScoreWinner` cuando la cascada se agota 
     const tally = await tallyScore(
       cfg,
       efectivas([
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
-        { kind: 'score', scores: { [A]: 3, [B]: 3, [C]: 3, [D]: 3 } },
-        { kind: 'score', scores: { [A]: 0, [B]: 0, [C]: 0, [D]: 0 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 3 },
+            { option: B, value: 3 },
+            { option: C, value: 3 },
+            { option: D, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 0 },
+            { option: B, value: 0 },
+            { option: C, value: 0 },
+            { option: D, value: 0 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 5 },
+            { option: C, value: 5 },
+            { option: D, value: 5 },
+          ],
+        },
       ]),
     );
     // Las cuatro opciones son indistinguibles en TODO: misma mediana, misma media, mismo
@@ -1061,10 +1537,42 @@ describe('B.5 — el respaldo de `chooseScoreWinner` cuando la cascada se agota 
       4,
     );
     const urna = [
-      { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
-      { kind: 'score', scores: { [A]: 3, [B]: 3, [C]: 3, [D]: 3 } },
-      { kind: 'score', scores: { [A]: 0, [B]: 0, [C]: 0, [D]: 0 } },
-      { kind: 'score', scores: { [A]: 5, [B]: 5, [C]: 5, [D]: 5 } },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+          { option: C, value: 5 },
+          { option: D, value: 5 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 3 },
+          { option: B, value: 3 },
+          { option: C, value: 3 },
+          { option: D, value: 3 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 0 },
+          { option: B, value: 0 },
+          { option: C, value: 0 },
+          { option: D, value: 0 },
+        ],
+      },
+      {
+        kind: 'score',
+        scores: [
+          { option: A, value: 5 },
+          { option: B, value: 5 },
+          { option: C, value: 5 },
+          { option: D, value: 5 },
+        ],
+      },
     ] as const;
     const directo = await tallyScore(cfg, efectivas([...urna]));
     const invertido = await tallyScore(cfg, efectivas([...urna].reverse()));

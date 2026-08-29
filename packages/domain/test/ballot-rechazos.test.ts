@@ -31,6 +31,7 @@ import {
   isVoterEligible,
   MIN_OBJECTION_ARGUMENT_LENGTH,
   type OptionId,
+  type Score,
   validateBallot,
   validateObjection,
 } from '../src/index.js';
@@ -173,7 +174,7 @@ describe('ballot — el motivo del rechazo se publica entero, no sólo su códig
    */
   it('el tipo de papeleta no admitido enumera lo que el método sí acepta', async () => {
     const config = await mayoria();
-    expect(motivo(config, papeleta(config, { payload: { kind: 'score', scores: {} } }))).toBe(
+    expect(motivo(config, papeleta(config, { payload: { kind: 'score', scores: [] } }))).toBe(
       'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): simple-majority admite binary | abstain y ' +
         'la papeleta es de tipo score; convertirla inventaría una preferencia que nadie expresó',
     );
@@ -240,11 +241,21 @@ describe('ballot — papeletas de puntuación (B.5)', () => {
     return multiConfig(METHOD, [A, B], 4);
   }
 
+  /**
+   * Recibe un `Record` por comodidad de lectura —`{ [A]: 3, [B]: 4 }` se lee mejor que un arreglo
+   * de pares— y lo convierte a la forma real de la papeleta: una LISTA de `{option, value}`, nunca
+   * un mapa con la opción de clave (ver el porqué en `BallotPayload`, `ballot.ts`). `null` y
+   * `undefined` no producen una entrada: las dos formas de decir «sin opinión» sobre una opción se
+   * traducen a la MISMA ausencia en la lista.
+   */
   function conPuntuaciones(
     cfg: DecisionConfig,
     scores: Readonly<Record<string, number | null | undefined>>,
   ): Ballot {
-    return papeleta(cfg, { payload: { kind: 'score', scores } as Ballot['payload'] });
+    const entradas = Object.entries(scores)
+      .filter((par): par is [string, number] => par[1] !== null && par[1] !== undefined)
+      .map(([option, value]) => ({ option: option as OptionId, value: value as Score }));
+    return papeleta(cfg, { payload: { kind: 'score', scores: entradas } as Ballot['payload'] });
   }
 
   it('una papeleta con todas las opciones y valores en rango es válida', async () => {
@@ -253,37 +264,61 @@ describe('ballot — papeletas de puntuación (B.5)', () => {
   });
 
   /**
-   * Las claves se comparan **normalizadas por orden**, no en el orden en que el cliente las
-   * serializó. Sin el `.sort()` de `payloadKeys`, esta papeleta perfectamente válida se rechazaba
-   * por el orden de dos propiedades de un JSON, que es exactamente el tipo de fallo que nadie
-   * reproduce y todo el mundo sufre.
+   * Las opciones se comparan por CONJUNTO, no por el orden en que llegaron en la lista. Antes esto
+   * protegía el `.sort()` de un mapa; ahora protege que `validateBallot` no confunda «llegaron en
+   * otro orden» con «faltan» o «sobran» — un fallo del mismo tipo, aunque la causa cambió de forma.
    */
-  it('el orden en que llegan las claves no importa: se comparan ordenadas', async () => {
+  it('el orden en que llegan las opciones en la lista no importa', async () => {
     const cfg = await config();
-    const alReves: Record<string, number> = {};
-    alReves[B] = 4;
-    alReves[A] = 3;
-    expect(Object.keys(alReves)).toStrictEqual([B, A]);
-    expect(isBallotValid(cfg, conPuntuaciones(cfg, alReves), ctx(cfg))).toBe(true);
+    const alReves: Ballot['payload'] = {
+      kind: 'score',
+      scores: [
+        { option: B, value: 4 },
+        { option: A, value: 3 },
+      ],
+    };
+    expect(isBallotValid(cfg, papeleta(cfg, { payload: alReves }), ctx(cfg))).toBe(true);
   });
 
-  it('faltar una opción se rechaza como «claves extra», no como puntuación inválida', async () => {
+  it('la misma opción repetida en la lista se rechaza, aunque los dos valores sean válidos', async () => {
     const cfg = await config();
-    expect(motivo(cfg, conPuntuaciones(cfg, { [A]: 3 }))).toBe(
-      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): score debe traer exactamente todas las ' +
-        'opciones vivas, sin claves extra (B.5)',
+    const repetida: Ballot['payload'] = {
+      kind: 'score',
+      scores: [
+        { option: A, value: 3 },
+        { option: A, value: 4 },
+        { option: B, value: 4 },
+      ],
+    };
+    expect(motivo(cfg, papeleta(cfg, { payload: repetida }))).toBe(
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la papeleta de puntuación repite la misma ' +
+        'opción más de una vez',
     );
   });
 
-  it('sobrar una opción también, aunque el número de claves cuadre', async () => {
+  /**
+   * DECISIÓN REVISADA: antes faltar una opción se rechazaba igual que sobrar una. Esa regla exigía
+   * una clave (con `null` adentro) por cada opción viva, y dejó de ser satisfacible el día que la
+   * papeleta tuvo que dejar de escribir `null` en el historial (el perfil canónico del ledger lo
+   * prohíbe, A.1.1.2): una papeleta «sin opinión en algo» válida según la regla vieja no se podía
+   * persistir jamás. Omitir la opción es ahora la forma honesta de decir «no opiné sobre esto», ni
+   * mejor ni peor que mandar `null` — `tally/score.ts` ya trataba las dos igual.
+   */
+  it('faltar una opción es válida: es la forma de decir «sin opinión» sobre ella', async () => {
+    const cfg = await config();
+    expect(isBallotValid(cfg, conPuntuaciones(cfg, { [A]: 3 }), ctx(cfg))).toBe(true);
+    expect(isBallotValid(cfg, conPuntuaciones(cfg, {}), ctx(cfg))).toBe(true);
+  });
+
+  it('una opción ajena a la decisión se rechaza, aunque las vivas estén completas', async () => {
     const cfg = await config();
     expect(motivo(cfg, conPuntuaciones(cfg, { [A]: 3, [C]: 4 }))).toBe(
-      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): score debe traer exactamente todas las ' +
-        'opciones vivas, sin claves extra (B.5)',
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la papeleta de puntuación contiene una ' +
+        'opción ajena a la decisión (B.5)',
     );
     expect(motivo(cfg, conPuntuaciones(cfg, { [A]: 3, [B]: 4, [C]: 5 }))).toBe(
-      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): score debe traer exactamente todas las ' +
-        'opciones vivas, sin claves extra (B.5)',
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la papeleta de puntuación contiene una ' +
+        'opción ajena a la decisión (B.5)',
     );
   });
 
@@ -294,8 +329,7 @@ describe('ballot — papeletas de puntuación (B.5)', () => {
   ])('la puntuación %s (%s) se rechaza nombrando la opción', async (valor) => {
     const cfg = await config();
     expect(motivo(cfg, conPuntuaciones(cfg, { [A]: valor, [B]: 3 }))).toBe(
-      `papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la puntuación de ${A} debe estar en [0,5] ` +
-        'o ser null',
+      `papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la puntuación de ${A} debe estar en [0,5]`,
     );
   });
 
@@ -304,15 +338,6 @@ describe('ballot — papeletas de puntuación (B.5)', () => {
     const cfg = await config();
     expect(isBallotValid(cfg, conPuntuaciones(cfg, { [A]: valor, [B]: valor }), ctx(cfg))).toBe(
       true,
-    );
-  });
-
-  it('`null` es «sin opinión» y es válido; `undefined` no lo es', async () => {
-    const cfg = await config();
-    expect(isBallotValid(cfg, conPuntuaciones(cfg, { [A]: null, [B]: 3 }), ctx(cfg))).toBe(true);
-    expect(motivo(cfg, conPuntuaciones(cfg, { [A]: undefined, [B]: 3 }))).toBe(
-      `papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la puntuación de ${A} debe estar en [0,5] ` +
-        'o ser null',
     );
   });
 });
@@ -436,8 +461,13 @@ describe('ballot — papeletas de menciones (B.7)', () => {
     return multiConfig({ ...MJ, missingGradePolicy }, [A, B], 4);
   }
 
+  /** Misma comodidad de lectura que `conPuntuaciones`: un `Record`, convertido a la lista real. */
   function conMenciones(cfg: DecisionConfig, grades: Readonly<Record<string, GradeId>>): Ballot {
-    return papeleta(cfg, { payload: { kind: 'grades', grades } as Ballot['payload'] });
+    const entradas = Object.entries(grades).map(([option, grade]) => ({
+      option: option as OptionId,
+      grade,
+    }));
+    return papeleta(cfg, { payload: { kind: 'grades', grades: entradas } as Ballot['payload'] });
   }
 
   it('una mención por opción, todas de la escala congelada, es válida', async () => {
@@ -452,6 +482,22 @@ describe('ballot — papeletas de menciones (B.7)', () => {
     expect(motivo(cfg, conMenciones(cfg, { [A]: GOOD, [OPCION_AJENA]: ACCEPTABLE }))).toBe(
       'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la papeleta de menciones contiene una ' +
         'opción ajena a la decisión',
+    );
+  });
+
+  it('la misma opción mencionada dos veces se rechaza', async () => {
+    const cfg = await config();
+    const repetida: Ballot['payload'] = {
+      kind: 'grades',
+      grades: [
+        { option: A, grade: EXCELLENT },
+        { option: A, grade: GOOD },
+        { option: B, grade: GOOD },
+      ],
+    };
+    expect(motivo(cfg, papeleta(cfg, { payload: repetida }))).toBe(
+      'papeleta rechazada (PAYLOAD_KIND_NOT_ACCEPTED): la papeleta de menciones repite la misma ' +
+        'opción más de una vez',
     );
   });
 

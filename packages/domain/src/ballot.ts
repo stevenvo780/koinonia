@@ -69,17 +69,46 @@ export interface Objection {
   readonly raisedAtRound: number;
 }
 
+/**
+ * Una nota por opción, en la papeleta de puntuación. La opción que no aparece en la lista es «sin
+ * opinión»: no cuenta como cero (B.5.a) y no hace falta nombrarla con un valor nulo.
+ */
+export interface ScoreEntry {
+  readonly option: OptionId;
+  readonly value: Score;
+}
+
+/** Una mención por opción, en la papeleta de valoración por menciones. */
+export interface GradeEntry {
+  readonly option: OptionId;
+  readonly grade: GradeId;
+}
+
 export type BallotPayload =
   /** Abstención EXPLÍCITA. Distinta del silencio, que es no emitir papeleta. */
   | { readonly kind: 'abstain' }
   /** Sí/No para mayoría, supermayoría y unanimidad. */
   | { readonly kind: 'binary'; readonly approve: boolean }
-  /** Puntuación 0–5. `null` significa «sin opinión», no cero. */
-  | { readonly kind: 'score'; readonly scores: Readonly<Record<OptionId, Score | null>> }
+  /**
+   * Puntuación 0–5, como LISTA de pares `{option, value}` y no como mapa con la opción de clave.
+   *
+   * No es una preferencia de estilo: toda papeleta se escribe en el historial pasando por el
+   * serializador canónico del ledger (`packages/crypto/src/canonical.ts`), que exige que las
+   * claves de objeto empiecen por letra y prohíbe `null` como cualquier valor. Un `OptionId` es 32
+   * hexadecimales al azar —cerca del 62 % empieza por dígito—, así que usarlo de clave revienta el
+   * hasheo la mayoría de las veces, y «sin opinión» no se puede escribir como `null` de ninguna
+   * forma. La lista no tiene ninguno de los dos problemas: `option` es un VALOR, y la opción sin
+   * opinión simplemente no aparece — `validateBallot` y `tally/score.ts` la leen igual que si
+   * hubiera un `null` explícito, que es como se leía antes de este cambio.
+   */
+  | { readonly kind: 'score'; readonly scores: readonly ScoreEntry[] }
   /** Orden estricto, posiblemente parcial cuando el método lo permite. */
   | { readonly kind: 'ranking'; readonly order: readonly OptionId[] }
-  /** Una mención por opción; con política `worst` se permiten claves omitidas. */
-  | { readonly kind: 'grades'; readonly grades: Readonly<Partial<Record<OptionId, GradeId>>> }
+  /**
+   * Una mención por opción, como LISTA de pares `{option, grade}` — misma razón que `scores`
+   * arriba. Con política `worst` se permiten opciones ausentes de la lista.
+   */
+  | { readonly kind: 'grades'; readonly grades: readonly GradeEntry[] }
   /** Consentimiento sociocrático. `objection` es obligatoria ⟺ `stance === 'object'`. */
   | {
       readonly kind: 'consent';
@@ -135,12 +164,24 @@ export function acceptedPayloadKinds(method: DecisionMethod): readonly BallotPay
   }
 }
 
-function payloadKeys(payload: Readonly<Record<string, unknown>>): readonly string[] {
-  return Object.keys(payload).sort();
+/**
+ * Las opciones de una lista de pares `{option, …}`, o `undefined` si alguna se repite.
+ *
+ * Repetida sería un dato ambiguo —¿cuál de las dos cuenta?— y esta función lo hace irrepresentable
+ * en vez de resolverlo con un criterio inventado (¿la primera? ¿la última?): `validateBallot`
+ * rechaza la papeleta entera cuando esto devuelve `undefined`.
+ */
+function optionsOf(entries: readonly { readonly option: OptionId }[]): Set<OptionId> | undefined {
+  const seen = new Set<OptionId>();
+  for (const entry of entries) {
+    if (seen.has(entry.option)) return undefined;
+    seen.add(entry.option);
+  }
+  return seen;
 }
 
-function sameOptionKeys(actual: readonly string[], expected: readonly OptionId[]): boolean {
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+function sameOptionSet(actual: ReadonlySet<OptionId>, expected: readonly OptionId[]): boolean {
+  return actual.size === expected.length && expected.every((option) => actual.has(option));
 }
 
 /** Contexto de validación: lo que el estado de la decisión aporta a la papeleta. */
@@ -277,22 +318,38 @@ export function validateBallot(
   }
 
   if (ballot.payload.kind === 'score') {
-    const keys = payloadKeys(ballot.payload.scores);
-    if (!sameOptionKeys(keys, config.options)) {
+    // DECISIÓN (revisada): antes se exigía una clave por cada opción viva, con `null` para «sin
+    // opinión» — «faltar una opción se rechazaba igual que sobrar una». Esa exigencia dejó de ser
+    // satisfacible el día que la papeleta tuvo que dejar de escribir `null` en el historial: el
+    // perfil canónico del ledger lo prohíbe (`packages/crypto/src/canonical.ts`, A.1.1.2), así que
+    // una papeleta «sin opinión en algo» válida según la regla vieja no se podía persistir jamás.
+    // La única forma honesta de decir «no opiné sobre esto» pasa a ser OMITIR la opción de la
+    // lista, ni más ni menos de lo que `scoreProfiles` (`tally/score.ts`) ya hacía con una opción
+    // ausente: la trataba exactamente igual que un `null` explícito. Lo único que sigue
+    // exigiéndose es que cada opción presente sea una opción viva de la decisión, y que no se
+    // repita: puntuar algo que no está en la papeleta, o puntuarlo dos veces, es un error, no una
+    // opinión.
+    const entries = ballot.payload.scores;
+    const options = optionsOf(entries);
+    if (options === undefined) {
       throw new InvalidBallotError(
         'PAYLOAD_KIND_NOT_ACCEPTED',
-        'score debe traer exactamente todas las opciones vivas, sin claves extra (B.5)',
+        'la papeleta de puntuación repite la misma opción más de una vez',
       );
     }
-    for (const option of config.options) {
-      const value = ballot.payload.scores[option];
-      if (
-        value === undefined ||
-        (value !== null && (!Number.isSafeInteger(value) || value < 0 || value > 5))
-      ) {
+    for (const option of options) {
+      if (!config.options.includes(option)) {
         throw new InvalidBallotError(
           'PAYLOAD_KIND_NOT_ACCEPTED',
-          `la puntuación de ${option} debe estar en [0,5] o ser null`,
+          'la papeleta de puntuación contiene una opción ajena a la decisión (B.5)',
+        );
+      }
+    }
+    for (const entry of entries) {
+      if (!Number.isSafeInteger(entry.value) || entry.value < 0 || entry.value > 5) {
+        throw new InvalidBallotError(
+          'PAYLOAD_KIND_NOT_ACCEPTED',
+          `la puntuación de ${entry.option} debe estar en [0,5]`,
         );
       }
     }
@@ -333,16 +390,25 @@ export function validateBallot(
         'menciones en un método incompatible',
       );
     }
-    const keys = payloadKeys(ballot.payload.grades);
-    if (keys.some((key) => !config.options.includes(key as OptionId))) {
+    const entries = ballot.payload.grades;
+    const options = optionsOf(entries);
+    if (options === undefined) {
       throw new InvalidBallotError(
         'PAYLOAD_KIND_NOT_ACCEPTED',
-        'la papeleta de menciones contiene una opción ajena a la decisión',
+        'la papeleta de menciones repite la misma opción más de una vez',
       );
+    }
+    for (const option of options) {
+      if (!config.options.includes(option)) {
+        throw new InvalidBallotError(
+          'PAYLOAD_KIND_NOT_ACCEPTED',
+          'la papeleta de menciones contiene una opción ajena a la decisión',
+        );
+      }
     }
     if (
       config.method.missingGradePolicy === 'reject-ballot' &&
-      !sameOptionKeys(keys, config.options)
+      !sameOptionSet(options, config.options)
     ) {
       throw new InvalidBallotError(
         'PAYLOAD_KIND_NOT_ACCEPTED',
@@ -350,8 +416,8 @@ export function validateBallot(
       );
     }
     const gradeIds = new Set(config.method.scale.grades.map((grade) => grade.id));
-    for (const grade of Object.values(ballot.payload.grades)) {
-      if (grade === undefined || !gradeIds.has(grade)) {
+    for (const entry of entries) {
+      if (!gradeIds.has(entry.grade)) {
         throw new InvalidBallotError(
           'PAYLOAD_KIND_NOT_ACCEPTED',
           'la papeleta contiene una mención que no pertenece a la escala congelada',

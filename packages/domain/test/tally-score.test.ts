@@ -19,15 +19,27 @@ describe('B.5 — score voting 0–5', () => {
     expect(weightedMedian([0, 1, 0, 1, 0, 0])).toBe(1);
   });
 
-  it('INV-50 — `null` se ignora y una opción sin cobertura no puede ganar', async () => {
+  it('INV-50 — «sin opinión» se ignora y una opción sin cobertura no puede ganar', async () => {
     const config = await multiConfig(METHOD, [A, B], 4);
     const result = await tallyScore(
       config,
       effective([
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
-        { kind: 'score', scores: { [A]: null, [B]: 3 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
+        { kind: 'score', scores: [{ option: B, value: 3 }] },
       ]),
     );
     expect(result.outcome).toEqual({ kind: 'winner', option: B, tieBroken: false });
@@ -42,8 +54,20 @@ describe('B.5 — score voting 0–5', () => {
     const result = await tallyScore(
       config,
       effective([
-        { kind: 'score', scores: { [A]: 3, [B]: 3 } },
-        { kind: 'score', scores: { [A]: 5, [B]: 3 } },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 3 },
+            { option: B, value: 3 },
+          ],
+        },
+        {
+          kind: 'score',
+          scores: [
+            { option: A, value: 5 },
+            { option: B, value: 3 },
+          ],
+        },
       ]),
     );
     expect(result.outcome).toEqual({ kind: 'winner', option: A, tieBroken: true });

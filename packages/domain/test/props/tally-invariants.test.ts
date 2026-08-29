@@ -203,11 +203,23 @@ const arbTruncatedRankingProfile = fc.array(
   { minLength: 1, maxLength: 9 },
 );
 
+/** Las celdas `null` de la fila —«sin opinión»— quedan FUERA de la lista, no adentro con `null`. */
+function scoreEntries(
+  row: ScoreRow,
+): readonly { readonly option: typeof A; readonly value: 0 | 1 | 2 | 3 | 4 | 5 }[] {
+  const opciones = [A, B, C] as const;
+  return opciones
+    .map((option, index) => ({ option, value: row[index] }))
+    .filter(
+      (entry): entry is { option: typeof A; value: 0 | 1 | 2 | 3 | 4 | 5 } => entry.value !== null,
+    );
+}
+
 function scoreBallots(profile: readonly ScoreRow[]): readonly EffectiveBallot[] {
   return repeatedEffective(
     profile.map((row) => ({
       count: 1,
-      payload: { kind: 'score', scores: { [A]: row[0], [B]: row[1], [C]: row[2] } } as const,
+      payload: { kind: 'score', scores: scoreEntries(row) } as const,
     })),
   );
 }
@@ -218,11 +230,11 @@ function gradeBallots(profile: readonly GradeRow[]): readonly EffectiveBallot[] 
       count: 1,
       payload: {
         kind: 'grades',
-        grades: {
-          [A]: GRADE_IDS[row[0]] ?? EXCELLENT,
-          [B]: GRADE_IDS[row[1]] ?? EXCELLENT,
-          [C]: GRADE_IDS[row[2]] ?? EXCELLENT,
-        },
+        grades: [
+          { option: A, grade: GRADE_IDS[row[0]] ?? EXCELLENT },
+          { option: B, grade: GRADE_IDS[row[1]] ?? EXCELLENT },
+          { option: C, grade: GRADE_IDS[row[2]] ?? EXCELLENT },
+        ],
       } as const,
     })),
   );
@@ -521,7 +533,10 @@ describe('el perdedor de Condorcet nunca gana — condorcet-schulze e irv; MJ EX
         count: 1,
         payload: {
           kind: 'grades',
-          grades: { [A]: GRADE_IDS[a] ?? EXCELLENT, [B]: GRADE_IDS[b] ?? EXCELLENT },
+          grades: [
+            { option: A, grade: GRADE_IDS[a] ?? EXCELLENT },
+            { option: B, grade: GRADE_IDS[b] ?? EXCELLENT },
+          ],
         } as const,
       })),
     );
@@ -648,11 +663,11 @@ describe('MJ — `reject-ballot` garantiza el mismo W para todas las opciones (B
               count: 1,
               payload: {
                 kind: 'grades',
-                grades: {
-                  [A]: GRADE_IDS[a] ?? EXCELLENT,
-                  ...(b === null ? {} : { [B]: GRADE_IDS[b] ?? EXCELLENT }),
-                  ...(c === null ? {} : { [C]: GRADE_IDS[c] ?? EXCELLENT }),
-                },
+                grades: [
+                  { option: A, grade: GRADE_IDS[a] ?? EXCELLENT },
+                  ...(b === null ? [] : [{ option: B, grade: GRADE_IDS[b] ?? EXCELLENT }]),
+                  ...(c === null ? [] : [{ option: C, grade: GRADE_IDS[c] ?? EXCELLENT }]),
+                ],
               } as const,
             })),
           );

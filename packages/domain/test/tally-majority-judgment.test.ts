@@ -98,9 +98,27 @@ describe('B.7 — Majority Judgment', () => {
     const before = await tallyMajorityJudgment(
       config,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: INSUFFICIENT } },
-        { kind: 'grades', grades: { [A]: ACCEPTABLE, [B]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: INSUFFICIENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: ACCEPTABLE },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
       ]),
     );
     expect(before.outcome).toMatchObject({ kind: 'winner', option: A });
@@ -108,9 +126,27 @@ describe('B.7 — Majority Judgment', () => {
     const raisedLaterPreference = await tallyMajorityJudgment(
       config,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: ACCEPTABLE, [B]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: ACCEPTABLE },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
       ]),
     );
     expect(raisedLaterPreference.outcome).toMatchObject({ kind: 'winner', option: B });
@@ -119,11 +155,23 @@ describe('B.7 — Majority Judgment', () => {
   it('B.7.b — con reject-ballot la papeleta incompleta se descarta entera, no se rellena', async () => {
     const config = await multiConfig(METHOD, [A, B], 3);
     const ballots = effective([
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: REJECT } },
-      { kind: 'grades', grades: { [A]: EXCELLENT, [B]: REJECT } },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: REJECT },
+        ],
+      },
+      {
+        kind: 'grades',
+        grades: [
+          { option: A, grade: EXCELLENT },
+          { option: B, grade: REJECT },
+        ],
+      },
       // Incompleta: no califica B. Bajo `worst` contaría como «Rechazar» para B y como «Excelente»
       // para A; bajo `reject-ballot` no cuenta para ninguna de las dos.
-      { kind: 'grades', grades: { [A]: REJECT } },
+      { kind: 'grades', grades: [{ option: A, grade: REJECT }] },
     ]);
     const profiles = majorityJudgmentProfiles(config, ballots);
     const totals = profiles.map((profile) =>
@@ -150,11 +198,41 @@ describe('B.7 — Majority Judgment', () => {
     const result = await tallyMajorityJudgment(
       config,
       effective([
-        { kind: 'grades', grades: { [A]: EXCELLENT, [B]: GOOD } },
-        { kind: 'grades', grades: { [A]: INSUFFICIENT, [B]: REJECT } },
-        { kind: 'grades', grades: { [A]: INSUFFICIENT, [B]: REJECT } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: EXCELLENT } },
-        { kind: 'grades', grades: { [A]: REJECT, [B]: EXCELLENT } },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: EXCELLENT },
+            { option: B, grade: GOOD },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: INSUFFICIENT },
+            { option: B, grade: REJECT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: INSUFFICIENT },
+            { option: B, grade: REJECT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
+        {
+          kind: 'grades',
+          grades: [
+            { option: A, grade: REJECT },
+            { option: B, grade: EXCELLENT },
+          ],
+        },
       ]),
     );
     // Tres de cinco personas califican A estrictamente mejor que B, pero las distribuciones

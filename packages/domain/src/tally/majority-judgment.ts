@@ -82,8 +82,8 @@ export function usableGradeBallots(
       throw new InvalidBallotForMethod(ballot.payload.kind, 'majority-judgment');
     }
     if (!rejectIncomplete) return true;
-    const grades = ballot.payload.grades;
-    return config.options.every((option) => grades[option] !== undefined);
+    const opinadas = new Set(ballot.payload.grades.map((entry) => entry.option));
+    return config.options.every((option) => opinadas.has(option));
   });
 }
 
@@ -106,7 +106,7 @@ export function majorityJudgmentProfiles(
       if (ballot.payload.kind !== 'grades') {
         throw new InvalidBallotForMethod(ballot.payload.kind, config.method.kind);
       }
-      const grade = ballot.payload.grades[option];
+      const grade = ballot.payload.grades.find((entry) => entry.option === option)?.grade;
       // Sólo se llega aquí con `grade === undefined` bajo la política `'worst'`: B.7.b ya apartó la
       // papeleta incompleta cuando la política es `'reject-ballot'`.
       const index = grade === undefined ? worst : gradeIndex.get(grade);

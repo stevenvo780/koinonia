@@ -71,12 +71,16 @@ const CLAVES_RESUMEN = new Set([
 ]);
 
 /**
- * `decisionDetalle` = resumen + estas seis, dos de ellas opcionales (`http.ts`).
+ * `decisionDetalle` = resumen + estas siete, tres de ellas opcionales (`http.ts`).
  *
  * La lista es blanca a propósito: cualquier clave nueva en el detalle rompe esta prueba y obliga a
  * mirarla antes de dejarla pasar, que es exactamente lo que pasó con `objeciones` el 2026-08-25.
  * Se admite porque el texto de una objeción es público —existe para poder responderse— y porque va
  * SIN firma; lo que no puede aparecer nunca es de quién es, y eso lo comprueba el caso de abajo.
+ *
+ * `escalaDeMenciones` se admitió al desbloquear la papeleta de valoración por menciones: son los
+ * identificadores y etiquetas de la escala congelada al abrir (`excelente`, `rechazar`…), no un
+ * dato de ninguna persona — la escala es la MISMA para todo el mundo que responde esta decisión.
  */
 const CLAVES_DETALLE_EXTRA = new Set([
   'cuerpoVersion',
@@ -85,6 +89,7 @@ const CLAVES_DETALLE_EXTRA = new Set([
   'yaVotaste',
   'motivoNoPuedo',
   'objeciones',
+  'escalaDeMenciones',
 ]);
 
 describe.skipIf(!env.ok)(`conteo oculto de una votación abierta${skipNote(env)}`, () => {

@@ -190,6 +190,24 @@ export type ThresholdMethod = Extract<
   { kind: 'simple-majority' | 'supermajority' | 'unanimity' }
 >;
 
+/**
+ * Los métodos que COMPARAN opciones entre sí: puntuación, orden de preferencia, mención y
+ * Condorcet-Schulze. Se distinguen de los binarios y del consentimiento en que su pregunta no es
+ * «¿aprobamos esto?» sino «¿cuál de éstas?».
+ *
+ * Existe porque esa diferencia tiene una consecuencia dura, ver `MULTI_METHOD_NEEDS_TWO_OPTIONS`
+ * más abajo: con una sola opción, «cuál gana» no es una pregunta, y todos ellos contestan que gana
+ * la única que hay.
+ */
+export function isComparativeMethod(method: DecisionMethod): boolean {
+  return (
+    method.kind === 'score' ||
+    method.kind === 'irv' ||
+    method.kind === 'majority-judgment' ||
+    method.kind === 'condorcet-schulze'
+  );
+}
+
 export function isThresholdMethod(method: DecisionMethod): method is ThresholdMethod {
   return (
     method.kind === 'simple-majority' ||
@@ -644,6 +662,31 @@ export function validateDecisionConfig(config: DecisionConfig): void {
       'BINARY_METHOD_NEEDS_SINGLE_OPTION',
       `${config.method.kind} decide sobre una sola propuesta (sí/no); con 3+ opciones el motor ` +
         'rechaza la configuración (B.1)',
+    );
+  }
+
+  /*
+   * La contraparte de la regla de arriba, y no es simetría por elegancia: sin ella el motor aprueba
+   * cosas que nadie aprobó.
+   *
+   * Con UNA sola opción, «cuál gana» deja de ser una pregunta: score, orden de preferencia, mención
+   * y Condorcet-Schulze contestan todos que gana la única que hay, y el desenlace sale `approved`.
+   * Se reprodujo de punta a punta contra PostgreSQL real: una decisión de mención abierta por la
+   * API, los CUATRO votantes mandando «rechazar», y el cierre devolviendo `"desenlace":"approved"`.
+   * El escrutinio no está mal —«la mejor de una» es la única de una— y la comparación es lo que no
+   * significa nada.
+   *
+   * La guarda vive ACÁ y no en la pantalla que abre la votación, que es donde estaba: una regla que
+   * sólo aplica el navegador no es una regla, es una sugerencia, y quien llame a la API se la salta
+   * — que es exactamente como se reprodujo. Mientras `abrirDecision` siga abriendo sobre la única
+   * propuesta de la decisión, estos cuatro métodos no se pueden abrir, y el motor lo dice en vez de
+   * dejar que se abran y mientan al cerrar.
+   */
+  if (isComparativeMethod(config.method) && config.options.length < 2) {
+    reject(
+      'MULTI_METHOD_NEEDS_TWO_OPTIONS',
+      `${config.method.kind} compara opciones entre sí, y con una sola no hay nada que comparar: ` +
+        'gana la única que haya aunque todo el mundo la rechace (B.1)',
     );
   }
 
