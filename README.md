@@ -17,6 +17,29 @@ personas, en español, y pensado primero para el teléfono con datos contados.
 > Koinonía **no es un órgano de la Universidad de Antioquia ni la representa.** Su infraestructura,
 > sus datos y su historia son de la comunidad estudiantil.
 
+## Dónde verlo funcionando
+
+|                                                                                     | Dirección                                               |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **La plataforma**                                                                   | <https://koinonia-udea.stevenvallejo.com>               |
+| **Quién es dueño de esto** — por qué no hace falta creerle a quien tiene la máquina | <https://koinonia-udea.stevenvallejo.com/arquitectura>  |
+| **Comprobarlo sin creernos** — descargar la historia y recalcularla                 | <https://koinonia-udea.stevenvallejo.com/verificar>     |
+| **Todo lo que quedó escrito** — el historial completo, en orden y sin filtrar       | <https://koinonia-udea.stevenvallejo.com/historial>     |
+| **Las reglas del juego** — con qué se decide y con qué plazos                       | <https://koinonia-udea.stevenvallejo.com/normas>        |
+| El servicio, por separado                                                           | <https://api.koinonia-udea.stevenvallejo.com/salud>     |
+| La dirección anterior, que sigue sirviendo lo mismo                                 | <https://koinonia.167.114.118.213.sslip.io>             |
+| **El código**                                                                       | <https://github.com/stevenvo780/koinonia>               |
+| Clonar                                                                              | `git clone https://github.com/stevenvo780/koinonia.git` |
+
+Leer no exige cuenta: los problemas, las deliberaciones, las decisiones, el historial entero y la
+pantalla de comprobación están abiertos a cualquiera, sin entrar.
+
+> [!NOTE]
+> **Para escribir o votar hace falta un correo `@udea.edu.co`.** No hay contraseñas: se pide un
+> enlace de un solo uso, que vale 15 minutos. Es una regla del código y no una configuración
+> (`DOMINIO_INSTITUCIONAL` en `services/api/src/http/adapters.ts`), así que una dirección de otro
+> dominio no entra aunque se le mande el enlace.
+
 ## El problema que resuelve
 
 Una asamblea decide algo. Tres meses después nadie recuerda con qué regla se decidió, quién podía
@@ -108,6 +131,10 @@ Funciona y está desplegado, pero es software joven y conviene decir qué falta.
 ### Cuatro pasos
 
 ```sh
+# 0. El código
+git clone https://github.com/stevenvo780/koinonia.git
+cd koinonia
+
 # 1. Dependencias
 pnpm install
 
