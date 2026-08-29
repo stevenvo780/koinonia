@@ -16,6 +16,7 @@ import {
   delegationId,
   instant,
   memberId,
+  topicId,
   type Delegation,
   type DelegationScope,
   type Instant,
@@ -59,7 +60,14 @@ let siguienteSeq = 0;
 function delegacionGlobal(
   from: MemberId,
   to: MemberId,
-  opciones: { readonly revokedAt?: Instant; readonly scope?: DelegationScope } = {},
+  opciones: {
+    readonly revokedAt?: Instant;
+    readonly scope?: DelegationScope;
+    /** Para fabricar el escenario de dos decisiones distintas: `grantedAt` es comparable entre
+     * agregados (es reloj real); `grantedSeq` NO lo es (es la posición en el log de SU decisión). */
+    readonly grantedAt?: Instant;
+    readonly grantedSeq?: number;
+  } = {},
 ): Delegation {
   siguienteSeq += 1;
   return {
@@ -67,9 +75,9 @@ function delegacionGlobal(
     delegator: from,
     delegate: to,
     scope: opciones.scope ?? { kind: 'global' },
-    grantedAt: instant(AHORA - 1000),
+    grantedAt: opciones.grantedAt ?? instant(AHORA - 1000),
     expiresAt: instant(AHORA + SEMESTRE_MS),
-    grantedSeq: siguienteSeq,
+    grantedSeq: opciones.grantedSeq ?? siguienteSeq,
     ...(opciones.revokedAt !== undefined ? { revokedAt: opciones.revokedAt } : {}),
   };
 }
@@ -209,7 +217,11 @@ describe('calcularConcentracionDeDelegacion', () => {
     }
   });
 
-  it('una delegación de ámbito circle/topic NO se recorre — sólo cuenta el ámbito global', () => {
+  it('una delegación de ámbito circle SÍ se recorre, igual que una global', () => {
+    // Regresión del fallo que describe la cabecera del módulo: hasta esta corrección, la ruta sólo
+    // miraba `global`, un ámbito que ninguna acción de usuario produce jamás —el único punto de
+    // concesión real (`delegarVoto`) siempre concedió `circle`—, así que esta prueba, con la versión
+    // vieja del cálculo, habría dado `personasQueDelegan: 0` para un préstamo real y corriente.
     const censoDeDoce = censo(12);
     const delegaciones = [
       delegacionGlobal(m(0), m(1), {
@@ -223,11 +235,106 @@ describe('calcularConcentracionDeDelegacion', () => {
       instante: AHORA,
     });
 
-    // Ninguna delegación GLOBAL activa: m(0) sigue siendo su propio terminal.
+    expect(informe.personasQueDelegan).toBe(1);
+    expect(informe.reparto).toMatchObject({ publicado: true, personas: 11 });
+    if (informe.reparto.publicado) {
+      expect(informe.reparto.valor.receptoresConPeso).toBe(11);
+      expect(informe.reparto.valor.personasSinAsignar).toBe(0);
+    }
+  });
+
+  it('una delegación de ámbito topic NO se recorre — no hay ningún asunto contra el cual resolverla', () => {
+    const censoDeDoce = censo(12);
+    const delegaciones = [
+      delegacionGlobal(m(0), m(1), {
+        scope: { kind: 'topic', topicId: topicId(hex32(0x4000)) },
+      }),
+    ];
+
+    const informe = calcularConcentracionDeDelegacion({
+      censo: censoDeDoce,
+      delegaciones,
+      instante: AHORA,
+    });
+
+    // Ninguna delegación de TEMA cuenta acá: m(0) sigue siendo su propio terminal.
     expect(informe.personasQueDelegan).toBe(0);
     expect(informe.reparto).toMatchObject({ publicado: true, personas: 12 });
     if (informe.reparto.publicado) {
       expect(informe.reparto.valor.receptoresConPeso).toBe(12);
+    }
+  });
+
+  it('con un global Y un circle vigentes para la misma persona, gana el circle (más específico) — de forma observable', () => {
+    // La prueba anterior de este mismo caso (sesión previa) sólo afirmaba `personasQueDelegan: 1` y
+    // `personas: 11`: dos cifras idénticas gane el global o gane el circle, así que no distinguía
+    // nada — invertir el orden de prioridad dejaba las 19 pruebas del fichero en verde igual. Acá el
+    // destino de cada ámbito es asimétrico a propósito (uno cae fuera del censo, el otro no), así
+    // que `personasSinAsignar` sí delata cuál ganó.
+    const censoDeDoce = censo(12);
+    const fantasma = memberId(hex32(0xdead));
+    const delegaciones = [
+      delegacionGlobal(m(0), fantasma), // global (menos específico), hacia alguien FUERA del censo
+      delegacionGlobal(m(0), m(1), {
+        scope: { kind: 'circle', circleId: circleId(hex32(0x3000)) },
+      }), // circle (más específico), hacia alguien DEL censo — tiene que ganar
+    ];
+
+    const informe = calcularConcentracionDeDelegacion({
+      censo: censoDeDoce,
+      delegaciones,
+      instante: AHORA,
+    });
+
+    // Si ganara el global, m(0) quedaría sin asignar (el fantasma no está en el censo). Gana el
+    // circle: m(0) se asigna a m(1), que sí está.
+    expect(informe.personasQueDelegan).toBe(1);
+    expect(informe.reparto).toMatchObject({ publicado: true, personas: 11 });
+    if (informe.reparto.publicado) {
+      expect(informe.reparto.valor.receptoresConPeso).toBe(11);
+      expect(informe.reparto.valor.personasSinAsignar).toBe(0);
+    }
+  });
+
+  it('con dos préstamos circle de DECISIONES DISTINTAS, el desempate es por grantedAt, no por grantedSeq', () => {
+    // Al aplanar decisiones distintas, una misma persona puede traer dos delegaciones `circle`
+    // vigentes a la vez (una por votación, cada una en su propio grupo) — C.1.b sólo lo impide
+    // DENTRO del agregado de una misma decisión. `grantedSeq` es la posición en el log de SU propia
+    // decisión (`engine.ts`): comparar el de una decisión contra el de otra no significa nada, y acá
+    // se fabrica a mano para que apunte al ganador EQUIVOCADO si alguien lo usara para desempatar.
+    const censoDeDoce = censo(12);
+    const fantasma = memberId(hex32(0xdead));
+    const delegaciones = [
+      // Concedida ANTES en el reloj real, pero con un `grantedSeq` alto dentro de SU propio log
+      // (una decisión ya con mucha actividad) — y apunta a alguien FUERA del censo.
+      delegacionGlobal(m(0), fantasma, {
+        scope: { kind: 'circle', circleId: circleId(hex32(0x3000)) },
+        grantedAt: instant(AHORA - 5000),
+        grantedSeq: 90,
+      }),
+      // Concedida DESPUÉS de verdad, pero con un `grantedSeq` bajo dentro de SU propio log (una
+      // decisión recién abierta) — y apunta a alguien DEL censo.
+      delegacionGlobal(m(0), m(1), {
+        scope: { kind: 'circle', circleId: circleId(hex32(0x4000)) },
+        grantedAt: instant(AHORA - 1000),
+        grantedSeq: 2,
+      }),
+    ];
+
+    const informe = calcularConcentracionDeDelegacion({
+      censo: censoDeDoce,
+      delegaciones,
+      instante: AHORA,
+    });
+
+    // Desempatar por `grantedSeq` (90 > 2) elegiría el préstamo hacia el fantasma y m(0) quedaría
+    // sin asignar. Desempatar por `grantedAt` (el de verdad más reciente) elige el préstamo hacia
+    // m(1), que sí está en el censo.
+    expect(informe.personasQueDelegan).toBe(1);
+    expect(informe.reparto).toMatchObject({ publicado: true, personas: 11 });
+    if (informe.reparto.publicado) {
+      expect(informe.reparto.valor.receptoresConPeso).toBe(11);
+      expect(informe.reparto.valor.personasSinAsignar).toBe(0);
     }
   });
 

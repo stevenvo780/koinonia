@@ -79,12 +79,14 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
   let e: ApiListo;
   let lucia: Persona;
   /**
-   * Veinte personas rasas.
+   * Veintidós personas rasas.
    *
-   * Ocho bastarían para el análisis de consenso; las veinte hacen falta para **poder encender la
+   * Ocho bastarían para el análisis de consenso; veinte hacen falta para **poder encender la
    * delegación**, y ése es un hallazgo de esta sesión: el tope de concentración es una décima parte
    * del censo, así que por debajo de veinte personas el tope vale 1 —el voto propio— y la primera
-   * concesión ya se pasaría. Ver `asertarQueSePuedePrestarElVoto`.
+   * concesión ya se pasaría (ver `asertarQueSePuedePrestarElVoto`). Las dos de más son margen para
+   * `siguienteAutor()`: cada bloque de este fichero que abre una votación consume una persona de la
+   * reserva (`gente[11]` en adelante) y este archivo abre bastantes a lo largo de un solo `describe`.
    */
   let gente: Persona[];
 
@@ -242,7 +244,7 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       emitidoEn: e.reloj.now(),
     };
     gente = [];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 22; i++) {
       const correo = `pantallas.${String(i)}@udea.edu.co`;
       const sesion = await entrar(e, correo);
       gente.push({
@@ -605,6 +607,90 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
       });
       expect(respuesta.statusCode, respuesta.body).toBe(422);
       expect(respuesta.json<{ mensaje: string }>().mensaje).toMatch(/si querés votar, votá/u);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // Concentración de poder por delegación — deja de mentir (fix de esta sesión)
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  describe('/concentracion/delegaciones', () => {
+    it('un préstamo real por HTTP se ve en la foto, y deja de contar en cuanto su votación cierra', async () => {
+      // HALLAZGO. Antes de este arreglo, `/concentracion` sólo miraba delegaciones de ámbito
+      // `global`, un ámbito que ninguna acción de usuario produce jamás —el único punto de concesión
+      // real siempre concede `circle`—, así que esta foto mostraba «nadie prestó su voto» siempre,
+      // con datos reales o sin ellos. Esta prueba concede un préstamo real, de punta a punta por
+      // HTTP, y comprueba que la cifra SÍ se mueve — y que deja de contar en cuanto la votación que
+      // lo trae se cierra.
+      //
+      // Antes de la línea base: si el bloque anterior dejó un préstamo concedido en el mismo
+      // milisegundo de reloj en que terminó (sin que nada lo empujara después), ese préstamo
+      // todavía no rige (`isVigent` exige `grantedAt < instante` ESTRICTAMENTE) y esta línea lo
+      // asienta, para que el delta que se mide más abajo sea sólo el de ESTE préstamo.
+      e.reloj.avanzar(1000);
+      const antes = await e.app.inject({ method: 'GET', url: '/concentracion/delegaciones' });
+      expect(antes.statusCode, antes.body).toBe(200);
+      const personasAntes = antes.json<{ personasQueDelegan: number }>().personasQueDelegan;
+
+      const propuestaId = await nuevaPropuesta(siguienteAutor(), 'Arreglar la gotera del salón');
+      const abierta = await peticion(lucia, {
+        method: 'POST',
+        url: '/decisiones',
+        payload: {
+          requestId: req(),
+          propuestaId,
+          metodo: 'simple-majority',
+          duracionHoras: 1,
+          delegacion: true,
+        },
+      });
+      expect(abierta.statusCode, abierta.body).toBe(201);
+      const decision = abierta.json<{ id: string; huellaVersion: string }>();
+
+      const prestado = await peticion(gente[19]!, {
+        method: 'POST',
+        url: `/decisiones/${decision.id}/delegaciones`,
+        payload: { requestId: req(), enQuienId: gente[18]!.miembroId },
+      });
+      expect(prestado.statusCode, prestado.body).toBe(201);
+
+      // C.2 exige `grantedAt < instante` ESTRICTAMENTE (`isVigent`, `packages/domain/src/
+      // delegation-graph.ts`): con el reloj de prueba congelado, `instante` sería exactamente
+      // `grantedAt` y la delegación todavía no regiría en su propio milisegundo de concesión.
+      e.reloj.avanzar(1000);
+
+      const durante = await e.app.inject({ method: 'GET', url: '/concentracion/delegaciones' });
+      expect(durante.statusCode, durante.body).toBe(200);
+      const personasDurante = durante.json<{ personasQueDelegan: number }>().personasQueDelegan;
+      // El único ámbito que concede la aplicación es `circle`: si esta cifra no se movió, es
+      // exactamente el fallo que esta sesión arregla.
+      expect(personasDurante).toBe(personasAntes + 1);
+
+      // Alguien más vota directo, para que la votación tenga con qué cerrar.
+      const papeleta = await peticion(gente[0]!, {
+        method: 'POST',
+        url: `/decisiones/${decision.id}/papeletas`,
+        payload: {
+          requestId: req(),
+          huellaVersion: decision.huellaVersion,
+          respuesta: { tipo: 'binary', aprueba: true },
+        },
+      });
+      expect(papeleta.statusCode, papeleta.body).toBe(201);
+
+      // Se cierra la votación: la ventana venció.
+      e.reloj.avanzar(HORA_MS + 60_000);
+      const cerrada = await peticion(lucia, {
+        method: 'POST',
+        url: `/decisiones/${decision.id}/cerrar`,
+        payload: { requestId: req() },
+      });
+      expect(cerrada.statusCode, cerrada.body).toBe(200);
+
+      const despues = await e.app.inject({ method: 'GET', url: '/concentracion/delegaciones' });
+      expect(despues.statusCode, despues.body).toBe(200);
+      const personasDespues = despues.json<{ personasQueDelegan: number }>().personasQueDelegan;
+      expect(personasDespues).toBe(personasAntes);
     });
   });
 

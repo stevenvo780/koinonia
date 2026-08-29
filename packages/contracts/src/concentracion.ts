@@ -45,11 +45,18 @@
  *
  * # Qué NO calcula (a propósito)
  *
- * Sólo recorre delegaciones de ámbito `global` (C.1): son las únicas cuyo destino no depende de
- * ninguna decisión concreta (una delegación de `circle` o `topic` sólo tiene sentido dentro de esa
- * decisión — C.2 resuelve el ámbito contra el asunto, y aquí no hay ningún asunto). Es una lectura
- * DELIBERADAMENTE parcial: el reparto real de poder en una decisión con delegaciones de ámbito más
- * específico puede diferir de esta foto. La cabecera de la ruta HTTP repite esta limitación.
+ * Recorre delegaciones de ámbito `global` y `circle` (C.1); deja fuera `topic`, porque C.2 resuelve
+ * ese ámbito contra los temas de un asunto concreto y esta foto no vive dentro de ninguno (y porque,
+ * hoy, ninguna decisión de este producto llega a abrirse con un tema puesto — ver `service.ts`,
+ * junto a `topics: []`).
+ *
+ * Es una lectura DELIBERADAMENTE parcial, y la aproximación real es más profunda que «un ámbito
+ * queda afuera»: TODA delegación de este producto —`global` y `circle` incluidos— vive y muere en
+ * el agregado de la única decisión donde se concedió; ninguna sobrevive a su cierre ni se aplica en
+ * otra votación (ver la cabecera de la ruta HTTP para la historia completa). Esta foto aplana los
+ * préstamos de todas las decisiones abiertas del historial como si fueran hechos permanentes del
+ * colectivo, que es la única forma de que exista una foto DEL COLECTIVO en vez de una por decisión.
+ * El reparto real de poder en una decisión concreta puede diferir de esta foto.
  *
  * # Sin jerga (ADR-0041)
  *
@@ -107,7 +114,8 @@ export interface InformeConcentracionDelegacion {
   /** Milisegundos desde la época, asignados por el servidor al calcular (nunca por quien pide). */
   readonly medidoEn: number;
   readonly censo: number;
-  /** Cuántas personas del censo tienen hoy una delegación de ámbito global activa. Agregado, no lista. */
+  /** Cuántas personas del censo tienen hoy una delegación activa (ámbito global o de grupo — nunca
+   * de tema, ver «Qué NO calcula» arriba). Agregado, no lista. */
   readonly personasQueDelegan: number;
   readonly reparto: Desglose<RepartoDeDelegacion>;
 }

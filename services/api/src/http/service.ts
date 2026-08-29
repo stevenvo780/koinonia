@@ -1100,6 +1100,26 @@ export async function abrirDecision(
       proposalId: toProposalId(input.propuestaId),
       proposalVersionHash: version.versionHash,
       circleId: circulo,
+      // `topics` se congela SIEMPRE vacío. Es una decisión, no un hueco por rellenar después.
+      //
+      // HALLAZGO (segundo intento de la tarea de delegación por tema). El primer intento expuso un
+      // ámbito de delegación `'tema'` por HTTP mientras esta línea seguía congelando `topics: []` en
+      // TODA decisión: `matchesScope` para ese ámbito (`packages/domain/src/delegation-graph.ts`)
+      // exige `subject.topics.includes(scope.topicId)`, y con `topics` siempre vacío esa condición
+      // es `false` en cualquier decisión que este producto abra, hoy y dentro de seis meses. Una
+      // delegación de tema se habría escrito igual en el historial —que es de sólo-anexar e
+      // irreparable— prometiendo un préstamo que NUNCA podría regir, y la pantalla la habría
+      // mostrado como activa. Un revisor independiente lo rechazó con razón: escribir una mentira
+      // permanente en un registro irreparable es peor que no tener la función.
+      //
+      // La causa de raíz no es esta línea: es que no existe, en ningún punto del producto, un
+      // catálogo de temas ni una pantalla donde quien abre una votación pueda etiquetarla con
+      // alguno. No hay nada legítimo que pudiera ir en este array todavía; rellenarlo con datos
+      // inventados sólo para que la delegación por tema tuviera algo contra qué casar sería la misma
+      // mentira por otra puerta. Por eso esta sesión no expone el ámbito de tema por ninguna ruta
+      // (`delegarVoto`, más abajo, sigue concediendo únicamente `circle` — ver el porqué junto a esa
+      // línea) y deja esta congelación documentada como lo que es, no como algo transitorio. El día
+      // que exista un catálogo real de temas, esta línea y esa decisión se revisan juntas.
       topics: [],
       options: [optionId(input.propuestaId)],
       electorate,
@@ -3847,6 +3867,35 @@ export async function delegarVoto(
             delegationId: toDelegationId(deps.ports.random.opaqueId()),
             delegator: delegante,
             delegate: memberId(input.enQuienId),
+            // Ámbito fijo, a propósito — no una elección pendiente de cablear.
+            //
+            // El dominio admite tres ámbitos (`DelegationScope`: global/circle/topic,
+            // `packages/domain/src/config.ts`, con pruebas propias de cada uno), pero esta ruta sólo
+            // concede `circle`, y esta sesión revisó la alternativa —dejar elegir— y la descartó por
+            // dos motivos, no por descuido:
+            //
+            //  1. `topic` no puede regir NUNCA con este producto tal como está: `abrirDecision`
+            //     congela `topics: []` siempre (ver el porqué junto a esa línea, arriba en este
+            //     mismo fichero) porque no existe catálogo de temas en ningún punto de la
+            //     aplicación. Exponerlo escribiría, en un historial de sólo-anexar, un préstamo que
+            //     la pantalla mostraría activo y que el escrutinio jamás aplicaría — la misma
+            //     mentira permanente que un revisor independiente rechazó en el intento anterior.
+            //
+            //  2. `global` sí podría regir en principio (`matchesScope` para `global` es siempre
+            //     `true`), pero en esta arquitectura una delegación vive y muere en el agregado de
+            //     la ÚNICA decisión donde se concedió: `escribirSobreDecision` la anexa al log de
+            //     ESTA decisión, y el escrutinio de cualquier OTRA ni siquiera lo abre. Así que
+            //     «para cualquier votación abierta» nunca ocurre de verdad — dentro de la decisión
+            //     donde se concede, `global` y `circle` producen exactamente el mismo resultado
+            //     (`subject.circleId` es siempre el de esta misma decisión), y fuera de ella ninguno
+            //     de los dos hace nada. Ofrecer a elegir entre dos opciones indistinguibles, con una
+            //     etiqueta que promete algo que ninguna cumple, es la misma falla que ya describió
+            //     el revisor sobre el radio «Para todo» del intento anterior: no se arregla
+            //     escribiendo mejor el texto, se arregla no ofreciendo la elección.
+            //
+            // Si el día de mañana las delegaciones dejan de vivir dentro del agregado de una sola
+            // decisión, `global` empieza a significar algo distinto de `circle` y esta decisión se
+            // revisa junto con ese cambio.
             scope: { kind: 'circle', circleId: config.circleId },
             expiresAt: vigenciaDeDelegacion(config, at),
           },

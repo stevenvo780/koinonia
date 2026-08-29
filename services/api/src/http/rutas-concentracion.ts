@@ -16,43 +16,56 @@
  * sobreviviera al cálculo, la llamada revienta con `FugaDeIdentidadError` antes de que exista
  * respuesta HTTP.
  *
- * ═══ Por qué sólo delegaciones de ámbito GLOBAL ═══
+ * ═══ Qué ámbitos se recorren, y la mentira que esto reemplaza ═══
  *
- * Una delegación de ámbito `circle` o `topic` sólo tiene sentido resuelta contra una decisión
- * concreta (C.2: el ámbito se resuelve contra `circleId`/`topics` del asunto). Esta ruta no vive
- * dentro de ninguna decisión — es una foto del colectivo en general—, así que sólo tiene sentido
- * recorrer las delegaciones cuyo destino NO depende de ningún asunto: las de ámbito `global`. Es una
- * lectura deliberadamente parcial: el reparto real de poder en una decisión concreta con
- * delegaciones más específicas puede diferir de esta foto. Documentado también en
+ * La primera versión de este fichero recorría sólo delegaciones de ámbito `global`, razonando que
+ * `circle` y `topic` «sólo tienen sentido resueltas contra una decisión concreta». Eso es cierto
+ * para `topic` (ver el porqué en `service.ts`, junto a `topics: []`), pero era una lectura FALSA
+ * para `circle`: el único punto de concesión real de esta aplicación (`delegarVoto`,
+ * `services/api/src/http/service.ts`) sólo ha concedido nunca `{ kind: 'circle', ... }` — `global`
+ * no lo produce ninguna acción de usuario, ni antes ni ahora (ver el porqué junto a esa línea) —
+ * así que una ruta que sólo miraba `global` no contaba NINGUNA delegación real, jamás. El síntoma
+ * no era un error: era «nadie prestó su voto», siempre, con datos o sin ellos. Un fallo que se
+ * parece exactamente a que todo funcione, hasta que alguien presta el voto y la cifra no se mueve.
+ *
+ * Ahora se recorren `global` y `circle`. Se deja fuera `topic`, y por la razón correcta esta vez:
+ * `matchesScope` para `topic` exige que el asunto tenga ese tema entre los suyos, y esta foto no
+ * vive dentro de ningún asunto contra el cual resolver eso — ni falta que hace, porque hoy ninguna
+ * decisión de este producto llega a abrirse con un tema puesto (`topics` se congela `[]` siempre;
+ * ver `service.ts`).
+ *
+ * ═══ Por qué esto sigue siendo una foto aproximada, y de qué manera ═══
+ *
+ * TODA delegación de este producto —sea cual sea su ámbito nominal— vive y muere en el agregado de
+ * la ÚNICA decisión donde se concedió: `escribirSobreDecision` la anexa al log de esa decisión, y
+ * el escrutinio de cualquier OTRA decisión ni siquiera abre ese log. Esta ruta, en cambio, aplana
+ * las delegaciones de TODAS las decisiones del historial (`leerDelegaciones`, `app.ts`) en un solo
+ * grafo, como si cada préstamo fuera un hecho permanente del colectivo y no un préstamo de una
+ * votación puntual. Esa es la aproximación real que hace esta foto — no «pertenecer a más de un
+ * grupo», que fue lo que decía (falsamente) una versión anterior de este comentario. El reparto real
+ * de poder en una decisión concreta puede diferir de lo que se ve acá. Documentado también en
  * `packages/contracts/src/concentracion.ts`.
  *
  * ═══ Cómo se integra ═══
  *
- * Este fichero **no toca `app.ts`**. Exporta `registrarRutasDeConcentracion(app, ctx)`, que un
- * agente integrador llama desde dentro de `buildApp`, igual que ya hace con
- * `registrarRutasDeMetricas`. Dos piezas quedan deliberadamente fuera de este encargo:
- *
- *  1. `packages/contracts/src/index.ts` no reexporta `concentracion.ts` todavía — una línea,
- *     fuera de mi alcance (la consigna prohíbe tocar ese fichero).
- *  2. `ContextoConcentracion.leerCenso`/`leerDelegacionesGlobales` son la interfaz, no la
- *     implementación: ninguna consulta a PostgreSQL existe todavía aquí, igual que
- *     `rutas-metricas.ts` deja pendientes sus cinco `leerEntradaX`. Quien integre decide de dónde
- *     sale el censo activo y el log de delegaciones (probablemente replayando el mismo agregado que
- *     ya usa el motor de escrutinio al resolver delegaciones dentro de una decisión).
+ * Exporta `registrarRutasDeConcentracion(app, ctx)`; `buildApp` (`app.ts`) la llama con `leerCenso`
+ * (reutiliza `allMembers`) y `leerDelegaciones` (aplana `state.delegations` de cada decisión del
+ * ledger, filtrada a las que siguen `Open` — ver el porqué junto a esa función).
  */
 
 import {
-  compareDelegationPriority,
+  cmpFraction,
+  compareIds,
+  concentrationRatio,
+  DELEGATION_ENABLED,
   gini,
   HIGH_CONCENTRATION_CR1,
   HIGH_CONCENTRATION_HHI,
-  cmpFraction,
-  concentrationRatio,
-  DELEGATION_ENABLED,
   instant,
   isVigent,
   normalizedHerfindahl,
   ratio,
+  scopeSpecificity,
   walkChain,
   ZERO,
   type Delegation,
@@ -82,7 +95,8 @@ import {
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 /** Lo que el cálculo necesita: el censo vigente y todas las delegaciones conocidas (de cualquier
- * ámbito y estado — la vigencia y el filtro por ámbito `global` se aplican adentro). */
+ * ámbito y estado — la vigencia y el filtro por ámbito se aplican adentro; ver la cabecera del
+ * módulo para qué ámbitos se cuentan y por qué). */
 export interface EntradaConcentracionDelegacion {
   readonly censo: readonly MemberId[];
   readonly delegaciones: readonly Delegation[];
@@ -92,16 +106,43 @@ export interface EntradaConcentracionDelegacion {
   readonly maxDepth?: number;
 }
 
-/** El delegado activo de ámbito `global`, por delegante, en `instante`. A lo sumo uno por C.1.b;
- * si los datos trajeran más de uno (log fabricado a mano), se resuelve con la misma prioridad que
- * usa el propio motor de escrutinio (`compareDelegationPriority`), nunca con el orden de llegada. */
-function delegadoGlobalPorDelegante(
+/**
+ * Compara dos delegaciones que pueden venir de DECISIONES DISTINTAS, para elegir cuál gobierna a un
+ * mismo delegante en esta foto aplanada del colectivo.
+ *
+ * A propósito NO es `compareDelegationPriority` del dominio (mismo criterio de especificidad, pero
+ * desempata por `grantedSeq`): ese número sólo es comparable DENTRO del agregado de una misma
+ * decisión — es la posición en SU log (`grantedSeq: log.length + 1`, `packages/domain/src/
+ * engine.ts`). Esta función recibe delegaciones ya aplanadas de decisiones distintas: dos préstamos
+ * de agregados distintos pueden compartir `grantedSeq` sin que signifique nada (o sin que uno sea
+ * «después» del otro de ninguna forma real), y ordenarlos por ese número sería un criterio
+ * arbitrario disfrazado de determinismo. El escenario es real, no hipotético: una misma persona
+ * puede prestar el voto en dos decisiones abiertas a la vez —de dos círculos distintos, cada
+ * préstamo con su propio `circle:X`— y esta foto tiene que elegir una sola arista de salida para
+ * ella. Se desempata por `grantedAt` —un instante de reloj real, comparable entre agregados
+ * distintos— y, si hasta eso coincide, por `delegationId` para que el orden siga siendo total.
+ */
+function compararEntreDecisiones(a: Delegation, b: Delegation): number {
+  const porEspecificidad = scopeSpecificity(b.scope) - scopeSpecificity(a.scope);
+  if (porEspecificidad !== 0) return porEspecificidad;
+  if (a.grantedAt !== b.grantedAt) return b.grantedAt - a.grantedAt;
+  return compareIds(a.delegationId, b.delegationId);
+}
+
+/**
+ * El delegado activo, por delegante, en `instante` — de ámbito `global` o `circle` (`topic` queda
+ * fuera; ver la cabecera del módulo). Lo normal es a lo sumo uno por delegante (C.1.b lo impide
+ * DENTRO de una misma decisión), pero al aplanar decisiones distintas una misma persona puede traer
+ * más de uno a la vez (ver `compararEntreDecisiones`); cuando pasa, se resuelve con esa prioridad,
+ * nunca con el orden de llegada al array.
+ */
+function delegadoActivoPorDelegante(
   delegaciones: readonly Delegation[],
   instante: Instant,
 ): ReadonlyMap<MemberId, MemberId> {
   const candidatasPorDelegante = new Map<MemberId, Delegation[]>();
   for (const d of delegaciones) {
-    if (d.scope.kind !== 'global' || !isVigent(d, instante)) continue;
+    if (d.scope.kind === 'topic' || !isVigent(d, instante)) continue;
     const lista = candidatasPorDelegante.get(d.delegator);
     if (lista === undefined) candidatasPorDelegante.set(d.delegator, [d]);
     else lista.push(d);
@@ -109,7 +150,7 @@ function delegadoGlobalPorDelegante(
   const resultado = new Map<MemberId, MemberId>();
   for (const [delegante, candidatas] of candidatasPorDelegante) {
     // `candidatas` nunca está vacío: sólo se crea con un primer elemento (línea de arriba).
-    const [elegida] = [...candidatas].sort(compareDelegationPriority);
+    const [elegida] = [...candidatas].sort(compararEntreDecisiones);
     if (elegida !== undefined) resultado.set(delegante, elegida.delegate);
   }
   return resultado;
@@ -154,7 +195,7 @@ export function calcularConcentracionDeDelegacion(
 ): InformeConcentracionDelegacion {
   const maxDepth = entrada.maxDepth ?? DELEGATION_ENABLED.maxDepth;
   const censoSet = new Set(entrada.censo);
-  const delegadoDe = delegadoGlobalPorDelegante(entrada.delegaciones, entrada.instante);
+  const delegadoDe = delegadoActivoPorDelegante(entrada.delegaciones, entrada.instante);
 
   // El destino de una delegación tiene que seguir siendo alguien del censo vigente: si la persona
   // delegada ya no está, la cadena se corta ahí (silencio, no reasignación — misma filosofía que
@@ -246,8 +287,17 @@ export interface ContextoConcentracion {
   readonly clock: { readonly now: () => number };
   /** El censo activo, tal como esté definido hoy (no un padrón congelado de ninguna decisión). */
   readonly leerCenso: () => Promise<readonly MemberId[]>;
-  /** Toda delegación conocida, de cualquier ámbito y estado: el filtro por ámbito y vigencia se
-   * aplica dentro de `calcularConcentracionDeDelegacion`, no aquí. */
+  /**
+   * Delegaciones a considerar, de cualquier ámbito y estado: el filtro por ámbito y vigencia se
+   * aplica dentro de `calcularConcentracionDeDelegacion`, no aquí.
+   *
+   * Lo que este cálculo NO puede filtrar por su cuenta es de qué DECISIÓN viene cada una — un
+   * `Delegation` no carga el estado de su decisión, sólo su propio `expiresAt`/`revokedAt` — así que
+   * es responsabilidad de quien implemente esto (`app.ts`) entregar sólo las de decisiones todavía
+   * `Open`. Sin ese filtro, una decisión cerrada ANTES de su `closesAt` programado (cierre anticipado
+   * o manual) sigue aportando delegaciones aquí hasta ese `closesAt` original, aunque su votación ya
+   * haya terminado — ver el porqué junto a `leerDelegaciones` en `app.ts`.
+   */
   readonly leerDelegaciones: () => Promise<readonly Delegation[]>;
 }
 

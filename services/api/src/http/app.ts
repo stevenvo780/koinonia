@@ -195,6 +195,7 @@ import {
   crearProblema,
   crearPropuesta,
   delegacionesDe,
+  type DecisionConEstado,
   type DelegacionesDeUnaDecision,
   delegarVoto,
   emitirPapeleta,
@@ -528,6 +529,28 @@ function errorDe(error: unknown): { estado: number; cuerpo: ApiError } {
 /** Parsea con Zod y lanza el `ZodError` para que lo traduzca `errorDe`. */
 function parse<T>(schema: { parse: (value: unknown) => T }, value: unknown): T {
   return schema.parse(value);
+}
+
+/**
+ * Sólo las decisiones cuyas delegaciones todavía pueden importarle a `/concentracion`: las que
+ * siguen `Open`. Exportada aparte de la clausura `leerDelegaciones` (más abajo, dentro de
+ * `buildApp`) para poder probarla sin Fastify ni Postgres.
+ *
+ * HALLAZGO. Sin este filtro, una decisión cerrada ANTES de su `closesAt` PROGRAMADO —cierre
+ * anticipado o manual, `closeCause` 'early-irreversible'/'full-turnout'/'manual' en
+ * `packages/domain/src/engine.ts`— seguiría aportando sus delegaciones a esa foto: `expiresAt` se
+ * fija contra ese `closesAt` original (`vigenciaDeDelegacion`, `service.ts`), no contra el instante
+ * real de cierre, así que `isVigent` las seguiría contando hasta ahí aunque la votación ya hubiera
+ * terminado antes. La ruta HTTP de cierre (`/decisiones/:id/cerrar`) sólo produce hoy `cause:
+ * 'window'` —cierra exactamente cuando la ventana vence, nunca antes—, así que este escenario
+ * todavía no es alcanzable desde la aplicación real: este filtro es una defensa correcta y
+ * preventiva, no un parche a un síntoma que ya se haya visto. Deja de ser inofensivo en cuanto
+ * exista una vía de cierre anticipado o manual.
+ */
+export function decisionesConDelegacionesVigentes(
+  decisiones: readonly DecisionConEstado[],
+): readonly DecisionConEstado[] {
+  return decisiones.filter((d) => d.state.status === 'Open');
 }
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
@@ -2003,11 +2026,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   // Concentración de poder por delegación DEL COLECTIVO (docs/OBJETIVO.md), nunca de una persona:
   // publica la FORMA del reparto (índices normalizados, deciles de tamaño fijo), con doble gate de
-  // k-anonimato, nunca quién sostiene el voto de quién. Sólo delegaciones de ámbito `global`: las
-  // de `circle`/`topic` sólo tienen sentido resueltas contra una decisión concreta, y esta foto no
-  // vive dentro de ninguna. `leerCenso` reutiliza `allMembers` (igual que `congelarPadron`);
-  // `leerDelegaciones` recorre las delegaciones ya conocidas por cada decisión del ledger —no hay
-  // un agregado de delegaciones aparte de las decisiones que las conceden.
+  // k-anonimato, nunca quién sostiene el voto de quién. Delegaciones de ámbito `global` y `circle`
+  // (`topic` queda fuera — ver la cabecera de `rutas-concentracion.ts`). `leerCenso` reutiliza
+  // `allMembers` (igual que `congelarPadron`); `leerDelegaciones` recorre las delegaciones ya
+  // conocidas por cada decisión del ledger —no hay un agregado de delegaciones aparte de las
+  // decisiones que las conceden— filtradas a las que siguen `Open` (`decisionesConDelegacionesVigentes`,
+  // arriba — ahí está el HALLAZGO de por qué ese filtro hace falta).
   registrarRutasDeConcentracion(app, {
     clock: options.ports.clock,
     leerCenso: async () => {
@@ -2021,7 +2045,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     },
     leerDelegaciones: async () => {
       const decisiones = await listarDecisiones(deps);
-      return decisiones.flatMap((d) => d.state.delegations);
+      return decisionesConDelegacionesVigentes(decisiones).flatMap((d) => d.state.delegations);
     },
   });
 

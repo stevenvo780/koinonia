@@ -190,11 +190,17 @@ function Informe({ informe }: { readonly informe: ConcentracionDelegacion }): Re
       <section aria-labelledby="lo-que-no-cuenta">
         <h2 id="lo-que-no-cuenta">Qué no está contado acá</h2>
         <p>
-          Sólo cuenta el voto que se presta <strong>para todo</strong>. Quien lo prestó nada más
-          para un grupo o para un tema no aparece en esta foto: ese préstamo sólo tiene sentido
-          dentro de la decisión concreta a la que se aplica, y fuera de ella no hay forma de saber a
-          quién le tocaría llevarlo. Así que en una decisión con préstamos de ésos, el reparto real
-          puede ser distinto del que se ve acá.
+          Cada préstamo de voto vale para UNA votación concreta, y deja de contar en cuanto esa
+          votación se cierra. Esta foto junta los préstamos de todas las votaciones abiertas ahora
+          mismo como si fueran permanentes, para poder mostrar un solo número del colectivo en vez
+          de uno distinto por cada votación. Así que el reparto real dentro de una votación concreta
+          puede ser algo distinto de lo que se ve acá, y en cuanto una votación se cierra su
+          préstamo deja de sumar acá también.
+        </p>
+        <p>
+          Lo que no aparece en esta foto, hoy, es el préstamo hecho para un tema puntual: todavía no
+          hay ninguna votación de este producto que se pueda etiquetar por tema, así que ese tipo de
+          préstamo no existe todavía en ningún lado.
         </p>
       </section>
 
