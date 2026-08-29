@@ -1201,7 +1201,14 @@ export interface DecisionConEstado {
  * cerrojo es global y lo toma cada `append`—; lo que se alarga es cuánto se sostiene, porque ahora
  * incluye la lectura del log. Es el precio de que un «tu voto se registró» signifique lo que dice.
  */
-async function escribirSobreDecision(
+/**
+ * Se exporta —era privada— porque `rutas-objeciones.ts` la necesita. Esa ruta era el ÚLTIMO
+ * escritor del repositorio que seguía leyendo fuera del cerrojo y persistiendo después, con
+ * `persistDecisionLog` sobre el pool en vez de `persistDecisionLogWithin` dentro de la
+ * transacción. Ver el comentario de arriba: no es un detalle de estilo, es la diferencia entre
+ * que una desestimación concurrente con una papeleta se rechace y que se escriba mal.
+ */
+export async function escribirSobreDecision(
   deps: ServicioDeps,
   decisionIdRaw: string,
   requestId: string,

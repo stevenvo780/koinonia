@@ -199,6 +199,7 @@ describe.skipIf(!env.ok)(`desestimar una objeción por HTTP${skipNote(env)}`, ()
   async function decisionConObjecion(): Promise<{
     readonly decisionId: string;
     readonly objectionId: string;
+    readonly huellaVersion: string;
   }> {
     const proponente = siguienteProponente();
     const problema = await e.app.inject({
@@ -278,7 +279,7 @@ describe.skipIf(!env.ok)(`desestimar una objeción por HTTP${skipNote(env)}`, ()
     const objection = ballotConObjecion.payload.objection;
     if (objection === undefined) throw new Error('la papeleta no trae la objeción adjunta');
 
-    return { decisionId, objectionId: objection.objectionId };
+    return { decisionId, objectionId: objection.objectionId, huellaVersion };
   }
 
   it('sin sesión, se rechaza antes de sortear nada', async () => {
@@ -511,5 +512,96 @@ describe.skipIf(!env.ok)(`desestimar una objeción por HTTP${skipNote(env)}`, ()
     });
     expect(res.statusCode).toBe(422);
     expect(res.json<CodigoDeError>().codigo).toBe('OBJECTIONS_NOT_APPLICABLE');
+  });
+
+  /**
+   * REGRESIÓN — desestimar mientras alguien vota no puede partir el historial.
+   *
+   * Esta ruta leía el log fuera del cerrojo y persistía después. Con UNA papeleta interpuesta entre
+   * la lectura y la escritura, el tramo pendiente se quedaba sólo con el `ObjectionDismissed` y
+   * descartaba el `ObjectionRaised` que lo precede; la comprobación de densidad cuadraba por
+   * casualidad —la papeleta había ocupado ese hueco— y el CAS sobre la cabeza acertaba. Resultado:
+   * una desestimación sin la objeción que desestima, y una decisión que a partir de ese momento
+   * lanza `UNKNOWN_OBJECTION` en CUALQUIER lectura, para siempre, sin reparación posible (el
+   * historial es de sólo-anexar y el rol de la aplicación no tiene `UPDATE`).
+   *
+   * Lo que se afirma acá NO es que la desestimación gane la carrera —puede perderla, y perderla
+   * limpio es correcto—. Es que, pase lo que pase, **la decisión se siga pudiendo leer**. Ésa es la
+   * propiedad que el fallo rompía y la única que importa.
+   *
+   * ⚠ HONESTIDAD SOBRE EL ALCANCE DE ESTA PRUEBA
+   *
+   * Esta prueba **no reproduce la carrera**. Se intentó: primero con las dos peticiones a la vez, y
+   * después soltando la papeleta 15 ms después de arrancar la desestimación para caer en el rato
+   * del sorteo del panel. En las dos formas la prueba pasa TAMBIÉN contra el código viejo, porque
+   * la desestimación entera termina antes de que la papeleta llegue: la ventana real es más
+   * estrecha que cualquier retardo que se pueda poner desde fuera. Reproducirla de verdad exige una
+   * costura dentro de la ruta que la pause entre la lectura y la escritura, y eso es meter código
+   * de prueba en la ruta de producción.
+   *
+   * Así que esto es un GUARDIÁN DE INVARIANTE, no la demostración del arreglo. Lo que sostiene la
+   * corrección es de construcción: la ruta pasó a usar `escribirSobreDecision`, que toma el cerrojo
+   * antes de leer y persiste en la misma transacción — el mismo camino que ya usan todos los demás
+   * escritores y que sí tienen probado `append-concurrente.test.ts` y `papeleta-concurrente.test.ts`.
+   * Si alguien devolviera la ruta al patrón viejo, esta prueba probablemente seguiría en verde: lo
+   * que lo impediría es la revisión, no esta línea. Queda escrito para que nadie se confíe.
+   */
+  it('desestimar a la vez que entra una papeleta no deja la decisión ilegible', async () => {
+    const { decisionId, objectionId, huellaVersion } = await decisionConObjecion();
+
+    /*
+     * La papeleta sale con un respiro de por medio, no a la vez. Con `Promise.allSettled` de las dos
+     * a la vez la carrera casi nunca cae en la ventana mala: se comprobó, y contra el código viejo
+     * la prueba pasaba igual, o sea que no probaba nada. La ventana de verdad es el rato que la
+     * desestimación pasa sorteando el panel —cripto asíncrona— DESPUÉS de haber leído el log y ANTES
+     * de escribirlo. Soltar la papeleta unos milisegundos después de arrancar la desestimación es lo
+     * que cae dentro de esa ventana.
+     */
+    const enCurso = objeciones.inject({
+      method: 'POST',
+      url: `/decisiones/${decisionId}/objeciones/${objectionId}/desestimar`,
+      headers: comoObjeciones(facilitadora.miembroId, ['member', 'facilitator']),
+      payload: {
+        requestId: req(),
+        votos: 3,
+        motivacion: 'El panel se pronunció y la motivación queda publicada para el registro.',
+      },
+    });
+    await new Promise((listo) => setTimeout(listo, 15));
+
+    const [desestimacion, papeleta] = await Promise.allSettled([
+      enCurso,
+      e.app.inject({
+        method: 'POST',
+        url: `/decisiones/${decisionId}/papeletas`,
+        headers: como(panelista1.testigo),
+        payload: {
+          requestId: req(),
+          huellaVersion,
+          respuesta: { tipo: 'consent', postura: 'consent' },
+        },
+      }),
+    ]);
+
+    // Ninguna de las dos puede reventar el proceso; que una falle con un conflicto es aceptable.
+    expect(desestimacion.status).toBe('fulfilled');
+    expect(papeleta.status).toBe('fulfilled');
+
+    // LA AFIRMACIÓN QUE IMPORTA: el historial se vuelve a plegar sin lanzar.
+    const log = await loadDecisionLog(e.pool, decisionId);
+    const estado = replay(log);
+    expect(estado.decisionId).toBe(decisionId);
+
+    // Y si la desestimación llegó a escribirse, su `ObjectionRaised` tiene que estar ANTES.
+    const iDismissed = log.findIndex((ev) => ev.payload.type === 'ObjectionDismissed');
+    if (iDismissed >= 0) {
+      const iRaised = log.findIndex(
+        (ev) =>
+          ev.payload.type === 'ObjectionRaised' &&
+          ev.payload.objection.objectionId === toObjectionId(objectionId),
+      );
+      expect(iRaised, 'se escribió una desestimación sin su objeción').toBeGreaterThanOrEqual(0);
+      expect(iRaised).toBeLessThan(iDismissed);
+    }
   });
 });

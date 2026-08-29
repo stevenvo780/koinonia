@@ -14,6 +14,11 @@ export default tseslint.config(
       // Arnés de sesión del orquestador (gitignored, ver .gitignore línea 51): no es código del
       // repositorio, es herramienta transitoria de una corrida de mutación manual.
       '.harness/**',
+      // Copias de trabajo aisladas de la orquestación de agentes. Son clones del árbol entero
+      // —2,9 GB en la última tanda— y viven DENTRO del repositorio, así que sin esta línea
+      // `eslint .` los recorre: se cayó por falta de memoria (SIGABRT) al toparse con un informe
+      // de mutación generado dentro de uno. No son fuente y se borran al terminar la corrida.
+      '.claude/**',
       // Artefactos generados: los produce Next.js y no se revisan, se borran.
       'apps/web/.next/**',
       'apps/web/next-env.d.ts',

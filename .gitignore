@@ -53,6 +53,13 @@ next-env.d.ts
 # Ajustes personales de Claude Code: rutas y permisos de esta máquina, no del proyecto.
 .claude/settings.local.json
 
+# Copias de trabajo aisladas que crea la orquestación de agentes. Son clones del árbol —2,9 GB en
+# la última tanda— y viven DENTRO del repositorio, así que sin esta línea `eslint .` y
+# `prettier --check .` entran en ellas: el lint del repositorio se cayó por falta de memoria
+# intentando formatear un informe de mutación generado dentro de un worktree. No son fuente, son
+# andamio, y se borran solas al terminar.
+.claude/worktrees/
+
 # Guía de acceso para las pruebas: es operativa, no fuente. Nombra la dirección de producción, un
 # correo real de contacto y el estado de los defectos abiertos — cosas que sirven a quien opera esto
 # y que no tienen por qué viajar en un repositorio público. Se queda en la carpeta de trabajo.

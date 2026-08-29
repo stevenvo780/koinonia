@@ -16,3 +16,6 @@ apps/web/.next/
 apps/web/next-env.d.ts
 playwright-report/
 test-results/
+
+# Worktrees de la orquestación de agentes: clones del árbol, con artefactos generados dentro.
+.claude/worktrees/

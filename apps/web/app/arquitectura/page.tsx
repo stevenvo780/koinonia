@@ -28,15 +28,16 @@
  */
 
 import Link from 'next/link';
-import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-export const metadata: Metadata = {
-  title: 'Quién es dueño de esto · Koinonía',
-  description:
-    'Este servidor es de una persona, y por eso solo no habría que creerle. Cómo se reparte ' +
-    'el testimonio entre partes independientes, y cómo participar sin pedirle permiso a nadie.',
-};
+/*
+ * El título de la pestaña NO va acá: va en `layout.tsx`, con `tituloDe(...)`, que es la convención
+ * de las otras 33 pantallas. Declararlo dentro de `page.tsx` funciona en el navegador —se comprobó—
+ * pero deja la ruta fuera de `tests/unit/titulos-de-pantalla.test.ts`, que lee las capas por fichero
+ * (no puede importarlas: `apps/web` resuelve módulos de otra manera y el import rompería el
+ * typecheck del repositorio entero). Una pantalla sin su capa hereda «Koinonía» a ojos de esa
+ * prueba, que es justo la regresión que existe para impedir — dieciséis pestañas iguales.
+ */
 
 /**
  * El dibujo. Va en SVG dentro del marcado —no como imagen— por la misma razón que el resto del

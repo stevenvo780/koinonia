@@ -32,10 +32,30 @@
  * La solución no es inventar un dato nuevo: es hacer explícito, con su propio evento, lo que la
  * papeleta ya declaró. Si la objeción todavía no tiene `ObjectionRaised` en el log, esta ruta lo
  * publica primero —con el `by` y el texto que ya traía la papeleta, sin tocar una palabra— y recién
- * después publica `ObjectionDismissed`. Los dos eventos quedan en el mismo tramo pendiente y se
- * escriben juntos en una sola llamada a `persistDecisionLog` (ver `decision/repository.ts`): no hay
- * una ventana en la que el primero exista sin el segundo si el proceso se cae a mitad de camino,
- * porque hasta que no se persiste ninguno de los dos está en el ledger.
+ * después publica `ObjectionDismissed`.
+ *
+ * ═══ Y por qué toda la operación va dentro del cerrojo ═══
+ *
+ * Los dos eventos se escriben juntos, pero eso NO alcanzaba. Esta ruta leía el log con
+ * `verDecision` —sin transacción y sin cerrojo—, y sólo al final persistía con `persistDecisionLog`
+ * sobre el pool. Era el último escritor del repositorio con ese patrón; el resto pasa por
+ * `escribirSobreDecision`, que toma el cerrojo ANTES de leer.
+ *
+ * La diferencia no es teórica. Entre esa lectura y esa escritura cabe una papeleta, y con UNA sola
+ * interpuesta —el caso probable, no el raro— la aritmética de `persistDecisionLog` cuadraba por
+ * casualidad: el tramo pendiente se quedaba sólo con el `ObjectionDismissed`, descartaba el
+ * `ObjectionRaised` que lo precede, la comprobación de densidad daba el número esperado porque la
+ * papeleta había ocupado ese hueco, y el CAS sobre la cabeza acertaba. Se escribía una desestimación
+ * sin la objeción que desestima.
+ *
+ * Y a partir de ahí la decisión quedaba muerta para siempre: `apply` sobre `ObjectionDismissed`
+ * busca la objeción con `findObjection` y lanza `UNKNOWN_OBJECTION`; como `replay` pliega el log
+ * entero, cualquier lectura, cierre, escrutinio o verificación de esa decisión lanzaba. El historial
+ * es de sólo-anexar y el rol de la aplicación no tiene `UPDATE`: no había reparación posible.
+ *
+ * Ahora la lectura, el sorteo y las dos escrituras ocurren dentro de la misma transacción con el
+ * cerrojo tomado, así que una papeleta concurrente espera su turno y la operación se rehace sobre el
+ * estado ya actualizado — o falla limpio, que también es correcto.
  *
  * ═══ Autorización: por qué no usa `authorize()` ═══
  *
@@ -98,9 +118,7 @@ import {
   toFractionString,
 } from '@koinonia/domain';
 
-import { persistDecisionLog } from '../decision/repository.js';
-
-import { ServicioError, type ServicioDeps, verDecision } from './service.js';
+import { escribirSobreDecision, ServicioError, type ServicioDeps } from './service.js';
 
 /** Parsea con Zod y deja que `errorDe` en `app.ts` traduzca el `ZodError` (mismo patrón que el
  * resto de las rutas de este directorio: cada fichero define su propio `parse` local). */
@@ -185,115 +203,159 @@ export function registrarRutasDeObjeciones(app: FastifyInstance, ctx: ContextoOb
       );
     }
 
-    const { log, state } = await verDecision(deps, decisionId);
-    const config = state.config;
-    if (config === undefined) {
-      throw new ServicioError('ILLEGAL_TRANSITION', 409, 'esa decisión todavía no se ha abierto');
-    }
-    if (config.method.kind !== 'sociocratic-consent') {
-      throw new ServicioError(
-        'OBJECTIONS_NOT_APPLICABLE',
-        422,
-        'este método de decisión no tiene objeciones que desestimar',
-      );
-    }
-
-    // Ver la cabecera: réplica a mano de la regla de `decision:close`/`decision:ratify`, porque
-    // `objection:dismiss` todavía no existe en la matriz de `access.ts`.
-    if (!actor.roles.some((role) => role === 'facilitator' || role === 'guarantees')) {
-      throw new ServicioError(
-        'UNAUTHORIZED_ROLE_NOT_GRANTED',
-        403,
-        'sólo quien facilita el procedimiento o garantías puede publicar la desestimación de una ' +
-          'objeción',
-      );
-    }
-    if (!actor.circles.includes(config.circleId)) {
-      throw new ServicioError(
-        'UNAUTHORIZED_NOT_IN_CIRCLE',
-        403,
-        'quien publica la desestimación tiene que pertenecer al círculo de la decisión',
-      );
-    }
-
-    const objId = toObjectionId(objectionIdRaw);
+    /*
+     * ═══ Todo lo que sigue va DENTRO del cerrojo, y ése es el arreglo ═══
+     *
+     * Antes esta ruta leía con `verDecision` —sin transacción y sin cerrojo—, construía hasta dos
+     * eventos en memoria y los escribía al final con `persistDecisionLog` sobre el pool, que abre
+     * su propia transacción. Era el único escritor del repositorio que quedaba con ese patrón;
+     * todos los demás pasan por acá.
+     *
+     * Lo que eso permitía, y no es teórico: entre la lectura y la escritura cabe una papeleta. Con
+     * UNA sola interpuesta —el caso más probable, no el raro— la aritmética de `persistDecisionLog`
+     * cuadra por casualidad: `persisted` avanza uno, `pending` se queda sólo con el
+     * `ObjectionDismissed` y descarta el `ObjectionRaised` que lo precede, la comprobación de
+     * densidad da el número esperado porque la papeleta ocupó ese hueco, y el CAS sobre la cabeza
+     * acierta. Se escribe una desestimación sin la objeción que desestima.
+     *
+     * Y a partir de ahí la decisión queda MUERTA: `apply` sobre `ObjectionDismissed` busca la
+     * objeción con `findObjection` y lanza `UNKNOWN_OBJECTION`; como `replay` pliega el log entero,
+     * cualquier lectura, cierre, escrutinio o verificación de esa decisión lanza para siempre. El
+     * historial es de sólo-anexar y el rol de la aplicación no tiene `UPDATE`: no hay reparación
+     * posible desde la aplicación.
+     *
+     * `escribirSobreDecision` toma el cerrojo ANTES de leer y persiste dentro de la misma
+     * transacción, así que la papeleta concurrente espera su turno y la operación se rehace sobre
+     * el estado ya actualizado — o falla limpio, que también es correcto.
+     */
+    // `actor.memberId` ya está comprobado arriba; se fija acá para que el estrechamiento sobreviva
+    // dentro del cierre, donde TypeScript ya no puede darlo por hecho.
+    const memberId = actor.memberId;
+    // Un solo «ahora» para toda la operación: los dos eventos que puede escribir esta ruta tienen
+    // que compartir instante, y volver a preguntar el reloj dentro del cerrojo daría dos.
     const at = deps.ports.clock.now();
 
-    let workingLog = log;
-    let workingState = state;
+    let panelSorteado: readonly MemberId[] = [];
+    let tamanoDelPanel = 0;
+    let umbralDelPanel = '';
 
-    if (!state.objections.some((o) => o.objectionId === objId)) {
-      // Ver la cabecera: se publica primero el `ObjectionRaised` implícito en la papeleta.
-      const ballot = state.ballots.find(
-        (b) =>
-          b.payload.kind === 'consent' &&
-          b.payload.stance === 'object' &&
-          b.payload.objection?.objectionId === objId,
-      );
-      const objection: Objection | undefined =
-        ballot !== undefined && ballot.payload.kind === 'consent'
-          ? ballot.payload.objection
-          : undefined;
-      if (ballot === undefined || objection === undefined) {
+    await escribirSobreDecision(deps, decisionId, cuerpo.requestId, async ({ log, state }) => {
+      const config = state.config;
+      if (config === undefined) {
+        throw new ServicioError('ILLEGAL_TRANSITION', 409, 'esa decisión todavía no se ha abierto');
+      }
+      if (config.method.kind !== 'sociocratic-consent') {
+        throw new ServicioError(
+          'OBJECTIONS_NOT_APPLICABLE',
+          422,
+          'este método de decisión no tiene objeciones que desestimar',
+        );
+      }
+
+      // Ver la cabecera: réplica a mano de la regla de `decision:close`/`decision:ratify`, porque
+      // `objection:dismiss` todavía no existe en la matriz de `access.ts`.
+      if (!actor.roles.some((role) => role === 'facilitator' || role === 'guarantees')) {
+        throw new ServicioError(
+          'UNAUTHORIZED_ROLE_NOT_GRANTED',
+          403,
+          'sólo quien facilita el procedimiento o garantías puede publicar la desestimación de una ' +
+            'objeción',
+        );
+      }
+      if (!actor.circles.includes(config.circleId)) {
+        throw new ServicioError(
+          'UNAUTHORIZED_NOT_IN_CIRCLE',
+          403,
+          'quien publica la desestimación tiene que pertenecer al círculo de la decisión',
+        );
+      }
+
+      const objId = toObjectionId(objectionIdRaw);
+
+      let workingLog = log;
+      let workingState = state;
+
+      if (!state.objections.some((o) => o.objectionId === objId)) {
+        // Ver la cabecera: se publica primero el `ObjectionRaised` implícito en la papeleta.
+        const ballot = state.ballots.find(
+          (b) =>
+            b.payload.kind === 'consent' &&
+            b.payload.stance === 'object' &&
+            b.payload.objection?.objectionId === objId,
+        );
+        const objection: Objection | undefined =
+          ballot !== undefined && ballot.payload.kind === 'consent'
+            ? ballot.payload.objection
+            : undefined;
+        if (ballot === undefined || objection === undefined) {
+          throw new ServicioError(
+            'OBJECION_NO_ENCONTRADA',
+            404,
+            'esa objeción no existe en esta decisión',
+          );
+        }
+        const extendido = await extender(deps, workingLog, workingState, {
+          actor: ballot.voter,
+          at,
+          payload: { type: 'ObjectionRaised', objection, by: ballot.voter },
+        });
+        workingLog = extendido.log;
+        workingState = extendido.state;
+      }
+
+      const registrada = workingState.objections.find((o) => o.objectionId === objId);
+      if (registrada === undefined) {
         throw new ServicioError(
           'OBJECION_NO_ENCONTRADA',
           404,
           'esa objeción no existe en esta decisión',
         );
       }
-      const extendido = await extender(deps, workingLog, workingState, {
-        actor: ballot.voter,
-        at,
-        payload: { type: 'ObjectionRaised', objection, by: ballot.voter },
-      });
-      workingLog = extendido.log;
-      workingState = extendido.state;
-    }
 
-    const registrada = workingState.objections.find((o) => o.objectionId === objId);
-    if (registrada === undefined) {
-      throw new ServicioError(
-        'OBJECION_NO_ENCONTRADA',
-        404,
-        'esa objeción no existe en esta decisión',
-      );
-    }
-
-    // Ver la cabecera: `config.seedCommitment`, no `state.seed`. `state.seed` (la semilla
-    // compuesta y revelada de B.0.3) nunca está disponible acá — es la tensión de la máquina de
-    // estados que se documenta arriba —, así que se usa el compromiso, público desde
-    // `DecisionOpened` y congelado en `configHash`.
-    const { panelSize, dismissThreshold } = config.method.admissibility;
-    const sorteo = await sortObjectionPanel({
-      electorate: config.electorate,
-      circleId: config.circleId,
-      objectionId: objId,
-      objector: registrada.by,
-      panelSize,
-      seed: config.seedCommitment,
-    });
-
-    const final = await extender(deps, workingLog, workingState, {
-      actor: actor.memberId,
-      at,
-      payload: {
-        type: 'ObjectionDismissed',
+      // Ver la cabecera: `config.seedCommitment`, no `state.seed`. `state.seed` (la semilla
+      // compuesta y revelada de B.0.3) nunca está disponible acá — es la tensión de la máquina de
+      // estados que se documenta arriba —, así que se usa el compromiso, público desde
+      // `DecisionOpened` y congelado en `configHash`.
+      const { panelSize, dismissThreshold } = config.method.admissibility;
+      const sorteo = await sortObjectionPanel({
+        electorate: config.electorate,
+        circleId: config.circleId,
         objectionId: objId,
-        panel: sorteo.panel,
-        votes: cuerpo.votos,
-        motivation: cuerpo.motivacion,
-      },
-    });
+        objector: registrada.by,
+        panelSize,
+        seed: config.seedCommitment,
+      });
 
-    await persistDecisionLog(deps.pool, final.log, { requestId: cuerpo.requestId });
+      const final = await extender(deps, workingLog, workingState, {
+        actor: memberId,
+        at,
+        payload: {
+          type: 'ObjectionDismissed',
+          objectionId: objId,
+          panel: sorteo.panel,
+          votes: cuerpo.votos,
+          motivation: cuerpo.motivacion,
+        },
+      });
+
+      // Lo que la respuesta necesita y el cerrojo no devuelve: se saca por cierre, no por retorno,
+      // porque `escribirSobreDecision` entrega el log y no lo que esta ruta calculó por el camino.
+      panelSorteado = sorteo.panel;
+      tamanoDelPanel = panelSize;
+      umbralDelPanel = toFractionString(dismissThreshold);
+
+      // Persistir ya no es cosa de esta ruta: lo hace `escribirSobreDecision`, dentro de la misma
+      // transacción que tomó el cerrojo y leyó el log.
+      return final.log;
+    });
 
     return {
       decisionId,
       objectionId: objectionIdRaw,
-      panel: sorteo.panel,
-      tamanoPanel: panelSize,
+      panel: panelSorteado,
+      tamanoPanel: tamanoDelPanel,
       votos: cuerpo.votos,
-      umbral: toFractionString(dismissThreshold),
+      umbral: umbralDelPanel,
       motivacion: cuerpo.motivacion,
       desestimadaEn: at,
     };
