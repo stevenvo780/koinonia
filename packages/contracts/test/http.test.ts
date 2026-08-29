@@ -3,16 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   crearPropuesta,
   decisionDetalle,
-  ofrecerTarea,
-  planificarHito,
-  ratificarDecision,
-  reofrecerTarea,
-  responderOfertaTarea,
   iniciativaDetalle,
   miembroCirculo,
   miembrosCirculo,
+  ofrecerTarea,
   planEjecucion,
+  planificarHito,
+  ratificarDecision,
+  rectificacionAplicada,
+  reofrecerTarea,
+  responderOfertaTarea,
   resultadoDecision,
+  solicitarRectificacion,
   solicitarSupresion,
   supresionSolicitada,
   versionPropuesta,
@@ -346,5 +348,94 @@ describe('contrato HTTP ADR-0044: ratificación, hitos y ofertas', () => {
     expect(initiative.activa).toBe(true);
     expect(initiative.tareas?.[0]?.ofertaId).toBe(offerId);
     expect(initiative.tareas?.[0]).not.toHaveProperty('nombreResponsable');
+  });
+});
+
+describe('contrato de rectificación propia (la hermana de la supresión)', () => {
+  const requestId = '123e4567-e89b-42d3-a456-426614174000';
+
+  it('a diferencia de la supresión, no pide ni base legal ni confirmación de irreversibilidad', () => {
+    const pedido = {
+      requestId,
+      campo: 'alias',
+      valorNuevo: 'Alias que sí elegí',
+    } as const;
+    expect(solicitarRectificacion.parse(pedido)).toEqual(pedido);
+    // Tampoco acepta un selector de sujeto: el mismo patrón que `solicitarSupresion` de arriba.
+    expect(solicitarRectificacion.safeParse({ ...pedido, subjectId: id }).success).toBe(false);
+  });
+
+  it('el correo NO es uno de los campos rectificables: es la credencial de acceso', () => {
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'correo', valorNuevo: 'x@udea.edu.co' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('semestre y jornada sólo aceptan uno de un conjunto cerrado, nunca texto libre', () => {
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'semestre', valorNuevo: 's8' }).success,
+    ).toBe(true);
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'jornada', valorNuevo: 'nocturna' })
+        .success,
+    ).toBe(true);
+    // Ni «octavo» (texto libre de verdad) ni el identificador de un miembro: los dos son
+    // exactamente el agujero que tumbó el primer intento de esta tarea (`FugaDeIdentidadError`
+    // en la métrica de cobertura, cuando el estrato es el identificador de alguien).
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'semestre', valorNuevo: 'octavo' })
+        .success,
+    ).toBe(false);
+    expect(
+      solicitarRectificacion.safeParse({
+        requestId,
+        campo: 'semestre',
+        valorNuevo: '0123456789abcdef0123456789abcdef',
+      }).success,
+    ).toBe(false);
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'jornada', valorNuevo: 'mixta' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('el alias rechaza el vacío, el exceso y un carácter de control disfrazado de texto', () => {
+    // `.trim()` corre ANTES que `.min(1)`: un valor de puros espacios no cuela como «no vacío».
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'alias', valorNuevo: '   ' }).success,
+    ).toBe(false);
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'alias', valorNuevo: 'a'.repeat(121) })
+        .success,
+    ).toBe(false);
+    // Un carácter NUL en medio del texto: PostgreSQL rechaza la fila entera con «invalid byte
+    // sequence», y esto tiene que rechazarse acá, con un mensaje, antes de llegar a la base.
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'alias', valorNuevo: 'Ana\u0000Gómez' })
+        .success,
+    ).toBe(false);
+    expect(
+      solicitarRectificacion.safeParse({ requestId, campo: 'alias', valorNuevo: '  Ana Gómez  ' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('expone radicado, campo e instante, y el estado siempre es «aplicada» — nunca «pendiente»', () => {
+    const respuesta = {
+      solicitudId: id,
+      radicado: id,
+      campo: 'semestre',
+      aplicadaEn: 1_700_000_000_000,
+      estado: 'aplicada',
+    } as const;
+    expect(rectificacionAplicada.parse(respuesta)).toEqual(respuesta);
+    expect(rectificacionAplicada.safeParse({ ...respuesta, estado: 'pendiente' }).success).toBe(
+      false,
+    );
+    // El valor rectificado no viaja en la respuesta: sólo qué campo cambió, nunca el dato en sí.
+    expect(
+      rectificacionAplicada.safeParse({ ...respuesta, valorNuevo: 'lo que sea' }).success,
+    ).toBe(false);
   });
 });
