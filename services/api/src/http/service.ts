@@ -797,6 +797,21 @@ function construirMetodo(
         seedCommitment: contexto.seedCommitment,
       };
     }
+    case 'consensus': {
+      const cfg = configuracion?.metodo === 'consensus' ? configuracion : undefined;
+      const tope = cfg?.topeDeApartados;
+      return {
+        kind: 'consensus',
+        // Un cuarto por defecto: pasado ese punto «acuerdo del grupo» describe mal lo que pasó.
+        maxStandAside:
+          tope === undefined
+            ? { num: 1n, den: 4n }
+            : { num: BigInt(tope.numerador), den: BigInt(tope.denominador) },
+        // El mismo piso de participación que el acuerdo interno, y por la misma razón: sin él, un
+        // acuerdo firmado por tres de trescientas sería un consenso perfecto sobre el papel.
+        minEngagement: { num: 1n, den: 2n },
+      };
+    }
     case 'advice-process': {
       const cfg = configuracion?.metodo === 'advice-process' ? configuracion : undefined;
       return {
@@ -916,6 +931,14 @@ export function queHaceFaltaParaQuePase(metodo: IdMetodo, podianDecidir: number)
         `comparación entre las que van quedando hasta encontrar la que resiste mejor. Tienen que ` +
         `responder al menos ${String(minimo)} de las ${String(podianDecidir)} personas que podían ` +
         `decidir aquí.`
+      );
+    case 'consensus':
+      return (
+        'Se aprueba si NADIE bloquea y no se aparta demasiada gente. Podés decir que estás de ' +
+        'acuerdo, de acuerdo con reservas, que te apartás —no lo apoyás pero no lo vas a impedir, y ' +
+        'querés que conste— o que lo bloqueás. Apartarse y bloquear piden escribir el motivo: ' +
+        'apartarse sin decir de qué no deja constancia de nada, y bloquear le impide algo a todo el ' +
+        'mundo.'
       );
     case 'advice-process':
       return (
@@ -1320,7 +1343,8 @@ export async function listarDecisiones(deps: ServicioDeps): Promise<readonly Dec
 
 /** Lo que la interfaz manda como respuesta a una papeleta. */
 export interface RespuestaPapeleta {
-  readonly tipo: 'binary' | 'abstain' | 'consent' | 'score' | 'ranking' | 'grades' | 'advice';
+  readonly tipo:
+    'binary' | 'abstain' | 'consent' | 'score' | 'ranking' | 'grades' | 'advice' | 'consensus';
   readonly aprueba?: boolean | undefined;
   /**
    * La postura, que significa cosas distintas según el tipo y por eso lleva las dos uniones.
@@ -1330,9 +1354,21 @@ export interface RespuestaPapeleta {
    * `tipo` — `payloadDePapeleta` los separa en cuanto los mira, que es donde corresponde.
    */
   readonly postura?:
-    'consent' | 'concern' | 'object' | 'a-favor' | 'en-contra' | 'matiz' | undefined;
+    | 'consent'
+    | 'concern'
+    | 'object'
+    | 'a-favor'
+    | 'en-contra'
+    | 'matiz'
+    | 'de-acuerdo'
+    | 'con-reservas'
+    | 'me-aparto'
+    | 'bloqueo'
+    | undefined;
   /** El consejo escrito. Sólo en `advice`, y obligatorio ahí. */
   readonly razones?: string | undefined;
+  /** El motivo, en consenso. Obligatorio al bloquear y al apartarse. */
+  readonly razon?: string | undefined;
   readonly objecion?:
     | {
         readonly argumento: string;
@@ -1368,6 +1404,22 @@ export function payloadDePapeleta(
       return { kind: 'abstain' };
     case 'binary':
       return { kind: 'binary', approve: respuesta.aprueba === true };
+    case 'consensus': {
+      const postura = respuesta.postura;
+      if (
+        postura !== 'de-acuerdo' &&
+        postura !== 'con-reservas' &&
+        postura !== 'me-aparto' &&
+        postura !== 'bloqueo'
+      ) {
+        throw new ServicioError('DATOS_INVALIDOS', 400, 'ésa no es una postura de consenso');
+      }
+      return {
+        kind: 'consensus',
+        stance: postura,
+        ...(respuesta.razon === undefined ? {} : { razon: respuesta.razon }),
+      };
+    }
     case 'advice': {
       // El largo mínimo lo comprueba dos veces: el esquema al entrar y `validateBallot` al escribir.
       // No es redundancia perezosa — el esquema protege la frontera y el motor protege el historial,
@@ -1393,7 +1445,15 @@ export function payloadDePapeleta(
       const postura = respuesta.postura ?? 'consent';
       // Las posturas de consejo no valen acá: `tipo` las discrimina en la red, pero esta interfaz
       // comparte el campo, así que se comprueba en vez de confiar en que nadie mande la de al lado.
-      if (postura === 'a-favor' || postura === 'en-contra' || postura === 'matiz') {
+      if (
+        postura === 'a-favor' ||
+        postura === 'en-contra' ||
+        postura === 'matiz' ||
+        postura === 'de-acuerdo' ||
+        postura === 'con-reservas' ||
+        postura === 'me-aparto' ||
+        postura === 'bloqueo'
+      ) {
         throw new ServicioError(
           'DATOS_INVALIDOS',
           400,

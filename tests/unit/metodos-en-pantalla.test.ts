@@ -88,16 +88,17 @@ function metodoDelMotor(id: IdMetodo): DecisionMethod {
   return { kind: id } as DecisionMethod;
 }
 
-describe('qué papeleta puede recibir hoy cada uno de los nueve métodos', () => {
+describe('qué papeleta puede recibir hoy cada uno de los métodos del catálogo', () => {
   const transportables = clasesQueLaRedTransporta();
 
-  it('la red transporta exactamente siete clases de papeleta', () => {
+  it('la red transporta exactamente ocho clases de papeleta', () => {
     // Es el hecho del que cuelga todo lo demás. Si cambia, cambia el formulario que dibuja
     // `apps/web/app/decisiones/[id]/page.tsx` para el método que exija la clase que falte.
     expect([...transportables].sort()).toEqual([
       'abstain',
       'advice',
       'binary',
+      'consensus',
       'consent',
       'grades',
       'ranking',

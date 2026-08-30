@@ -76,7 +76,9 @@ export type FormularioDePapeleta =
   /** No hay nada que llenar: lo que decide es el sorteo. */
   | 'sin-papeleta'
   /** Un consejo escrito con su postura — y, para quien decide, el sí o el no. */
-  | 'consejo';
+  | 'consejo'
+  /** De acuerdo / con reservas / me aparto / bloqueo, con motivo escrito en los dos últimos. */
+  | 'consenso';
 
 /** Lo que hay que decirle a alguien sobre un método antes de que lo elija. */
 export interface MetodoEnPalabras {
@@ -227,6 +229,23 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
       'porqué es obligatorio, porque sin razones no es consejo. Quien decide no aconseja: cuando ya ' +
       'hay consejos suficientes, le aparece el sí o el no.',
     formulario: 'consejo',
+  },
+  consensus: {
+    cuandoConviene:
+      'Cuando hace falta que el grupo entero pueda vivir con lo que se decida y querés que el ' +
+      'desacuerdo quede escrito en vez de tragado. Tiene una figura que ningún otro método de acá ' +
+      'tiene: apartarse — «no lo apoyo, no lo voy a impedir, y quiero que conste».',
+    ejemplo: 'Cambiar cómo se reparten los turnos de la sala. Fijar la línea de un comunicado.',
+    cuandoNo:
+      'Si el grupo es grande y el asunto urgente: el consenso se cae con un solo bloqueo, y eso le ' +
+      'da a una persona el poder de detener a todas. Para eso está la mayoría, que decide aunque ' +
+      'incomode. Y si lo que querés es que nadie objete con daño argumentado, el acuerdo interno ' +
+      'hace eso mejor y sin el tope de apartados.',
+    queLlenaLaGente:
+      'Una de cuatro: de acuerdo, de acuerdo con reservas, me aparto, o bloqueo. Las dos últimas ' +
+      'piden escribir el motivo — apartarse sin decir de qué no deja constancia de nada, y bloquear ' +
+      'le impide algo a todo el mundo. Se aprueba si nadie bloqueó y los apartados no pasan del tope.',
+    formulario: 'consenso',
   },
 };
 

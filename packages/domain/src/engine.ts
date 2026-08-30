@@ -95,6 +95,7 @@ import {
   type WeightResolver,
 } from './tally/common.js';
 import { tallyAdviceProcess } from './tally/advice-process.js';
+import { tallyConsensus } from './tally/consensus.js';
 import { type ObjectionRecord, tallyConsent } from './tally/consent.js';
 import { tallyCondorcetSchulze } from './tally/condorcet-schulze.js';
 import { tallyIrv } from './tally/irv.js';
@@ -1231,6 +1232,8 @@ async function runMethod(
       return tallyConsent(config, ballots, { round, objections });
     case 'advice-process':
       return tallyAdviceProcess(config, ballots);
+    case 'consensus':
+      return tallyConsensus(config, ballots);
     case 'score':
       return tallyScore(config, ballots);
     case 'irv':
@@ -1602,6 +1605,7 @@ function passesFor(
     case 'condorcet-schulze':
     case 'deliberative-sortition':
     case 'advice-process':
+    case 'consensus':
       return false;
   }
 }

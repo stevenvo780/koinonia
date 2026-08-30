@@ -175,6 +175,39 @@ export type DecisionMethod =
       readonly tieBreak: TieBreakPolicy;
     }
   /**
+   * **Consenso formal (B.10).** Nadie bloquea, y no se apartó demasiada gente.
+   *
+   * ═══ En qué se distingue de los dos que ya existen ═══
+   *
+   * `unanimity` pide que TODO EL MUNDO esté a favor. `sociocratic-consent` pide que NADIE objete
+   * con daño argumentado — y el silencio no es apoyo, es no haber participado. Los dos son puntos
+   * coherentes y ninguno tiene la figura que define al consenso formal: **apartarse**.
+   *
+   * Apartarse es decir «no lo apoyo, no lo voy a impedir, y quiero que conste que no lo apoyo». En
+   * consentimiento eso no existe: o se objeta con argumento de daño, o no se objeta, y quien tiene
+   * una reserva profunda que no llega a daño se queda sin manera de dejarla anotada. En unanimidad
+   * tampoco: apartarse rompería el acuerdo, así que la única salida honesta sería bloquear.
+   *
+   * Y tiene una consecuencia que el motor SÍ puede hacer cumplir, que es lo que lo vuelve un método
+   * y no un matiz: un acuerdo que pasa con la mitad del grupo apartándose está técnicamente
+   * desbloqueado y políticamente hueco. `maxStandAside` es el tope, y las tradiciones de consenso
+   * formal lo ponen exactamente por eso. Pasado ese tope no se aprueba: se devuelve para
+   * reformular.
+   */
+  | {
+      readonly kind: 'consensus';
+      /**
+       * Cuánta gente puede apartarse sin que el acuerdo deje de significar algo.
+       *
+       * Se mide sobre quienes se manifestaron, no sobre el censo: apartarse es un acto, y sólo lo
+       * hace quien participó. Medirlo contra el censo diluiría a los que se apartaron con los que
+       * no aparecieron, que son cosas distintas.
+       */
+      readonly maxStandAside: Fraction;
+      /** Fracción del círculo que debe manifestarse para que el acuerdo cuente. Como en B.3. */
+      readonly minEngagement: Fraction;
+    }
+  /**
    * **Proceso de consejo (B.9).** Decide UNA persona, después de escuchar.
    *
    * No es una votación y por eso no tiene umbral ni fracción: nadie gana, nadie pierde. Quien
@@ -486,6 +519,12 @@ function canonicalMethod(method: DecisionMethod): JsonObject {
           },
         },
       };
+    case 'consensus':
+      return {
+        kind: method.kind,
+        maxStandAside: canonicalFraction(method.maxStandAside),
+        minEngagement: canonicalFraction(method.minEngagement),
+      };
     case 'advice-process':
       return { kind: method.kind, decider: method.decider, minAdvisors: method.minAdvisors };
     case 'score':
@@ -784,6 +823,18 @@ function validateMethod(config: DecisionConfig): void {
           'UNANIMITY_NOT_AUTHORIZED',
           'la unanimidad está deshabilitada por defecto: da poder de veto individual y exige una ' +
             'decisión previa del círculo que la autorice para este caso concreto (B.4.a)',
+        );
+      }
+      break;
+    }
+    case 'consensus': {
+      requireProper(method.maxStandAside, 'maxStandAside');
+      requireProper(method.minEngagement, 'minEngagement');
+      if (circleSize(config.electorate, config.circleId) < 1) {
+        reject(
+          'CONSENT_CIRCLE_EMPTY',
+          'el consenso se mide contra el círculo, y ningún miembro del padrón pertenece a ' +
+            `${config.circleId}: la participación sería 0/0`,
         );
       }
       break;

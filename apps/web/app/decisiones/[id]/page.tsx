@@ -262,6 +262,9 @@ export default function Decision(): ReactNode {
    */
   const [posturaConsejo, setPosturaConsejo] = useState('');
   const [razonesConsejo, setRazonesConsejo] = useState('');
+  /* Consenso: sin postura elegida de entrada, por lo mismo que las otras dos. */
+  const [posturaConsenso, setPosturaConsenso] = useState('');
+  const [razonConsenso, setRazonConsenso] = useState('');
 
   const recargar = useCallback(() => {
     setError(undefined);
@@ -328,15 +331,23 @@ export default function Decision(): ReactNode {
                   // Hoy la decisión tiene una sola opción: el único orden posible es ésa.
                   orden: [decision.propuestaId],
                 }
-              : formularioDeEsteMetodo === 'consejo' && decision.procesoDeConsejo?.decidoYo !== true
+              : formularioDeEsteMetodo === 'consenso'
                 ? {
-                    tipo: 'advice' as const,
-                    postura: posturaConsejo as 'a-favor' | 'en-contra' | 'matiz',
-                    razones: razonesConsejo,
+                    tipo: 'consensus' as const,
+                    postura: posturaConsenso as
+                      'de-acuerdo' | 'con-reservas' | 'me-aparto' | 'bloqueo',
+                    ...(razonConsenso.trim() === '' ? {} : { razon: razonConsenso }),
                   }
-                : binario === 'abstengo'
-                  ? { tipo: 'abstain' as const }
-                  : { tipo: 'binary' as const, aprueba: binario === 'si' };
+                : formularioDeEsteMetodo === 'consejo' &&
+                    decision.procesoDeConsejo?.decidoYo !== true
+                  ? {
+                      tipo: 'advice' as const,
+                      postura: posturaConsejo as 'a-favor' | 'en-contra' | 'matiz',
+                      razones: razonesConsejo,
+                    }
+                  : binario === 'abstengo'
+                    ? { tipo: 'abstain' as const }
+                    : { tipo: 'binary' as const, aprueba: binario === 'si' };
 
     const resultado = await ejecutar(
       'papeleta',
@@ -415,6 +426,15 @@ export default function Decision(): ReactNode {
    * puerta pasa por él igual—, pero ofrecer un botón que va a rebotar es peor que no ofrecerlo. El
    * mínimo de 40 caracteres es el del motor (`MIN_LARGO_DEL_CONSEJO`), no un número de esta pantalla.
    */
+  /**
+   * Si esta papeleta es de consenso y le falta algo. El motor exige lo mismo; acá se bloquea para no
+   * ofrecer un botón que va a rebotar.
+   */
+  const faltaElConsenso =
+    formulario === 'consenso' &&
+    (posturaConsenso === '' ||
+      ((posturaConsenso === 'me-aparto' || posturaConsenso === 'bloqueo') &&
+        razonConsenso.trim().length < 40));
   const faltaElConsejo =
     formulario === 'consejo' &&
     decision.procesoDeConsejo?.decidoYo !== true &&
@@ -691,6 +711,76 @@ export default function Decision(): ReactNode {
               </>
             )}
 
+            {formulario === 'consenso' && (
+              <>
+                <fieldset className="opciones">
+                  <legend>¿Cómo quedás con esto?</legend>
+                  {(
+                    [
+                      ['de-acuerdo', 'De acuerdo', 'Lo apoyo.'],
+                      [
+                        'con-reservas',
+                        'De acuerdo, con reservas',
+                        'Lo apoyo aunque no me convenza del todo.',
+                      ],
+                      [
+                        'me-aparto',
+                        'Me aparto',
+                        'No lo apoyo y no lo voy a impedir — pero que conste que no lo apoyo.',
+                      ],
+                      [
+                        'bloqueo',
+                        'Bloqueo',
+                        'Esto no puede seguir así. Un solo bloqueo detiene la propuesta.',
+                      ],
+                    ] as const
+                  ).map(([valor, etiqueta, explica]) => (
+                    <div className="opcion" key={valor}>
+                      <input
+                        type="radio"
+                        id={`consenso-${valor}`}
+                        name="consenso"
+                        checked={posturaConsenso === valor}
+                        onChange={() => {
+                          setPosturaConsenso(valor);
+                        }}
+                      />
+                      <label htmlFor={`consenso-${valor}`}>
+                        {etiqueta}
+                        <span className="explica">{explica}</span>
+                      </label>
+                    </div>
+                  ))}
+                </fieldset>
+
+                {(posturaConsenso === 'me-aparto' || posturaConsenso === 'bloqueo') && (
+                  <div className="campo">
+                    <label htmlFor="razon-consenso">
+                      {posturaConsenso === 'bloqueo'
+                        ? '¿Por qué lo bloqueás?'
+                        : '¿Por qué te apartás?'}
+                    </label>
+                    <span className="ayuda" id="ayuda-consenso">
+                      Mínimo 40 caracteres.{' '}
+                      {posturaConsenso === 'bloqueo'
+                        ? 'Bloquear le impide algo a todo el mundo: tiene que costar, como mínimo, explicarse.'
+                        : 'Apartarse existe para que quede constancia de un desacuerdo; sin decir de qué, no queda constancia de nada.'}
+                    </span>
+                    <textarea
+                      id="razon-consenso"
+                      required
+                      minLength={40}
+                      aria-describedby="ayuda-consenso"
+                      value={razonConsenso}
+                      onChange={(e) => {
+                        setRazonConsenso(e.target.value);
+                      }}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
             {formulario === 'consejo' && decision.procesoDeConsejo !== undefined && (
               <>
                 {decision.procesoDeConsejo.decidoYo ? (
@@ -917,6 +1007,12 @@ export default function Decision(): ReactNode {
                 Elegí una mención para poder enviar tu respuesta.
               </p>
             )}
+            {faltaElConsenso && (
+              <p className="suave" id="falta-consenso">
+                Elegí cómo quedás y, si te apartás o bloqueás, escribí el motivo (mínimo 40
+                caracteres).
+              </p>
+            )}
             {faltaElConsejo && (
               <p className="suave" id="falta-consejo">
                 Elegí qué le decís y escribí tus razones (mínimo 40 caracteres) para poder enviarlo.
@@ -926,9 +1022,12 @@ export default function Decision(): ReactNode {
             <button
               className="boton"
               type="submit"
-              disabled={enCurso !== undefined || faltaLaMencion || faltaElConsejo}
+              disabled={
+                enCurso !== undefined || faltaLaMencion || faltaElConsejo || faltaElConsenso
+              }
               {...(faltaLaMencion ? { 'aria-describedby': 'falta-mencion' } : {})}
               {...(faltaElConsejo ? { 'aria-describedby': 'falta-consejo' } : {})}
+              {...(faltaElConsenso ? { 'aria-describedby': 'falta-consenso' } : {})}
             >
               {enCurso === 'papeleta'
                 ? 'Enviando…'

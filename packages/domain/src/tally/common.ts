@@ -560,7 +560,18 @@ export type Outcome =
        * método deja por escrito: que hubo alguien responsable.
        */
       readonly reason:
-        'threshold-not-met' | 'objections-pending' | 'no-decision' | 'decided-against';
+        | 'threshold-not-met'
+        | 'objections-pending'
+        | 'no-decision'
+        | 'decided-against'
+        /**
+         * `too-many-stand-asides`: nadie bloqueó, pero se apartó demasiada gente (B.10).
+         *
+         * Separado de los demás porque lo que dice es «así no, pero no dijimos que no», y eso se
+         * arregla reformulando. Meterlo en `threshold-not-met` le diría a quien lo lea que su
+         * propuesta perdió una votación que nunca hubo.
+         */
+        | 'too-many-stand-asides';
     }
   | { readonly kind: 'no-quorum'; readonly achieved: Fraction; readonly required: Fraction }
   | { readonly kind: 'winner'; readonly option: OptionId; readonly tieBroken: boolean }

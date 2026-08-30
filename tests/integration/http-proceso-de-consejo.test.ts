@@ -249,4 +249,117 @@ describe.skipIf(!env.ok)(`proceso de consejo por HTTP${skipNote(env)}`, () => {
     // La tabla de quién aconsejó sale con nombres, no con identificadores de 32 hex.
     expect(JSON.stringify(resultado.tablas)).not.toMatch(/[0-9a-f]{32}/u);
   });
+
+  it('CONSENSO de punta a punta: nadie bloquea pero se apartan demasiados', async () => {
+    /*
+     * El otro método que faltaba del pliego, en el caso que lo define. Cuatro se manifiestan: dos
+     * de acuerdo y dos apartándose. Nadie bloquea — con `sociocratic-consent` esto pasaría — y acá
+     * NO pasa, porque la mitad se apartó y el tope es un cuarto. Ésa es la diferencia entera entre
+     * los dos métodos, ejecutada contra la aplicación y una base de verdad.
+     */
+    const autor = gente[0];
+    if (autor === undefined) throw new Error('falta autor');
+    e.reloj.avanzar(24 * 60 * 60 * 1000);
+    facilitadora = await entrar(e, FACILITADORA);
+    const votantes = await Promise.all(
+      gente.map((_, i) =>
+        entrar(e, `consejo.${['uno', 'dos', 'tres', 'cuatro'][i] ?? 'uno'}@udea.edu.co`),
+      ),
+    );
+
+    const problema = await e.app.inject({
+      method: 'POST',
+      url: '/problemas',
+      headers: como(votantes[0]?.testigo ?? ''),
+      payload: {
+        requestId: req(),
+        titulo: 'Cómo se reparten los turnos de la sala',
+        cuerpo: 'Los turnos se reparten como se puede y siempre hay alguien que queda por fuera.',
+        circuloId: CIRCULO,
+      },
+    });
+    expect(problema.statusCode, problema.body).toBe(201);
+
+    const propuesta = await e.app.inject({
+      method: 'POST',
+      url: '/propuestas',
+      headers: como(votantes[0]?.testigo ?? ''),
+      payload: {
+        requestId: req(),
+        problemaId: problema.json<{ id: string }>().id,
+        titulo: 'Repartir los turnos por sorteo cada semestre',
+        cuerpo: 'La propuesta concreta: que los turnos se sorteen al empezar cada semestre.',
+        plan: planDe(votantes[0]?.miembroId ?? ''),
+      },
+    });
+    expect(propuesta.statusCode, propuesta.body).toBe(201);
+
+    const decision = await e.app.inject({
+      method: 'POST',
+      url: '/decisiones',
+      headers: como(facilitadora.testigo),
+      payload: {
+        requestId: req(),
+        propuestaId: propuesta.json<{ id: string }>().id,
+        metodo: 'consensus',
+        duracionHoras: 1,
+      },
+    });
+    expect(decision.statusCode, decision.body).toBe(201);
+    const abierta = decision.json<{ id: string; huellaVersion: string; metodo: string }>();
+    expect(abierta.metodo).toBe('consensus');
+
+    // Apartarse SIN motivo se rechaza: sin decir de qué, no queda constancia de nada.
+    const sinMotivo = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${abierta.id}/papeletas`,
+      headers: como(votantes[2]?.testigo ?? ''),
+      payload: {
+        requestId: req(),
+        huellaVersion: abierta.huellaVersion,
+        respuesta: { tipo: 'consensus', postura: 'me-aparto' },
+      },
+    });
+    expect(sinMotivo.statusCode, sinMotivo.body).toBe(422);
+
+    const posturas = ['de-acuerdo', 'de-acuerdo', 'me-aparto', 'me-aparto'] as const;
+    for (const [i, p] of posturas.entries()) {
+      const quien = votantes[i];
+      if (quien === undefined) throw new Error('falta persona');
+      const res = await e.app.inject({
+        method: 'POST',
+        url: `/decisiones/${abierta.id}/papeletas`,
+        headers: como(quien.testigo),
+        payload: {
+          requestId: req(),
+          huellaVersion: abierta.huellaVersion,
+          respuesta:
+            p === 'me-aparto'
+              ? {
+                  tipo: 'consensus',
+                  postura: p,
+                  razon:
+                    'No lo voy a impedir pero no lo apoyo, y quiero que quede escrito por qué no.',
+                }
+              : { tipo: 'consensus', postura: p },
+        },
+      });
+      expect(res.statusCode, `${p}: ${res.body}`).toBe(201);
+    }
+
+    e.reloj.avanzar(2 * 60 * 60 * 1000);
+    facilitadora = await entrar(e, FACILITADORA);
+    const cierre = await e.app.inject({
+      method: 'POST',
+      url: `/decisiones/${abierta.id}/cerrar`,
+      headers: como(facilitadora.testigo),
+      payload: { requestId: req() },
+    });
+    expect(cierre.statusCode, cierre.body).toBe(200);
+
+    const resultado = cierre.json<{ desenlace: string; relato: string }>();
+    expect(resultado.desenlace).toBe('rejected');
+    // Y lo dice como lo que es: así no, no que no. Se reformula, no se acata.
+    expect(resultado.relato).toContain('No es un rechazo');
+  });
 });

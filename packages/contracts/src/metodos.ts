@@ -54,6 +54,7 @@ export const ID_METODOS = [
   'condorcet-schulze',
   'deliberative-sortition',
   'advice-process',
+  'consensus',
 ] as const;
 
 export type IdMetodo = (typeof ID_METODOS)[number];
@@ -74,6 +75,8 @@ export const formaPapeleta = z.enum([
   'sorteo',
   /** Un consejo escrito, con postura. No es un voto: no se cuenta, se lee. */
   'consejo',
+  /** De acuerdo, con reservas, me aparto o bloqueo — las cuatro del consenso formal. */
+  'consenso',
 ]);
 export type FormaPapeleta = z.infer<typeof formaPapeleta>;
 
@@ -87,6 +90,23 @@ export type FormaPapeleta = z.infer<typeof formaPapeleta>;
  * la apertura. Lo que el cliente manda se valida con el mismo esquema que el servidor usa para
  * configurar, así que la única fuente de verdad sobre la forma de la configuración es esta entrada.
  */
+
+// ── Consenso formal ───────────────────────────────────────────────────────────────────────────
+const configuracionConsenso = z
+  .object({
+    /**
+     * Qué fracción de quienes se manifiesten puede apartarse sin tumbar el acuerdo. Por defecto 1/4.
+     *
+     * Un cuarto y no un tercio: pasado ese punto, «acuerdo del grupo» empieza a describir mal lo que
+     * pasó. Se puede subir o bajar al abrir, y quien lo haga está diciendo cuánta disidencia
+     * silenciosa considera tolerable para ESTE asunto — que es una decisión política, no técnica.
+     */
+    topeDeApartados: z
+      .object({ numerador: z.number().int().min(0), denominador: z.number().int().min(1) })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 // ── Proceso de consejo ────────────────────────────────────────────────────────────────────────
 const configuracionConsejo = z
@@ -259,6 +279,7 @@ export const configuracionDeMetodo = z.discriminatedUnion('metodo', [
     .strict(),
   z.object({ metodo: z.literal('deliberative-sortition'), ...configuracionSorteo.shape }).strict(),
   z.object({ metodo: z.literal('advice-process'), ...configuracionConsejo.shape }).strict(),
+  z.object({ metodo: z.literal('consensus'), ...configuracionConsenso.shape }).strict(),
 ]);
 export type ConfiguracionDeMetodo = z.infer<typeof configuracionDeMetodo>;
 
@@ -403,6 +424,19 @@ export const METODOS_DISPONIBLES: Readonly<Record<IdMetodo, MetodoDisponible>> =
     formasPapeleta: ['consejo', 'binaria'],
     delegacionPermitida: false,
     configSchema: configuracionConsejo,
+  },
+  consensus: {
+    id: 'consensus',
+    nombre: 'Consenso',
+    descripcion:
+      'Se aprueba si NADIE bloquea y no se apartó demasiada gente. Tiene una figura que los otros ' +
+      'métodos no tienen: apartarse — «no lo apoyo, no lo voy a impedir, y quiero que conste». Sin ' +
+      'ella, quien tiene una reserva profunda que no llega a daño tiene que elegir entre fingir ' +
+      'acuerdo y bloquear, y las dos son peores que la verdad. Bloquear y apartarse exigen escribir ' +
+      'el motivo.',
+    formasPapeleta: ['consenso'],
+    delegacionPermitida: false,
+    configSchema: configuracionConsenso,
   },
 };
 

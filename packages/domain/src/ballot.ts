@@ -49,6 +49,16 @@ import { type EffectiveWindow, isWithinWindow } from './window.js';
 /** Postura en el consentimiento sociocrático. */
 export type ConsentStance = 'consent' | 'concern' | 'object';
 
+/**
+ * Las cuatro posturas del consenso formal (B.10).
+ *
+ * `me-aparto` es la que no existe en ningún otro método de este catálogo, y es la que define al
+ * consenso: «no lo apoyo, no lo voy a impedir, y quiero que conste que no lo apoyo». Sin ella, quien
+ * tiene una reserva profunda que no llega a daño argumentado tiene que elegir entre fingir acuerdo y
+ * bloquear, y las dos salidas son peores que la verdad.
+ */
+export type ConsensusStance = 'de-acuerdo' | 'con-reservas' | 'me-aparto' | 'bloqueo';
+
 export type Score = 0 | 1 | 2 | 3 | 4 | 5;
 
 /** Longitud mínima del argumento de una objeción, tras normalizar espacios (A.4). */
@@ -126,6 +136,19 @@ export type BallotPayload =
       readonly kind: 'advice';
       readonly stance: AdviceStance;
       readonly reasoning: string;
+    }
+  /**
+   * Postura de consenso formal (B.10). `razon` es obligatoria al bloquear y al apartarse.
+   *
+   * Al bloquear, por lo mismo que en una objeción: impedirle algo a todo el mundo tiene que costar,
+   * como mínimo, explicarse. Al apartarse, por un motivo distinto y propio: apartarse existe para
+   * que quede constancia de un desacuerdo, y un desacuerdo sin decir de qué no deja constancia de
+   * nada — sería una abstención con otro nombre, y para eso ya está la abstención.
+   */
+  | {
+      readonly kind: 'consensus';
+      readonly stance: ConsensusStance;
+      readonly razon?: string;
     };
 
 /**
@@ -182,6 +205,8 @@ export function acceptedPayloadKinds(method: DecisionMethod): readonly BallotPay
      */
     case 'advice-process':
       return ['advice', 'binary'] as const;
+    case 'consensus':
+      return ['consensus'] as const;
     case 'score':
       return ['score'] as const;
     case 'irv':
@@ -363,6 +388,23 @@ export function validateBallot(
             'caracteres. Sin razones no es consejo, es un voto disfrazado — y esto no es una votación',
         );
       }
+    }
+  }
+
+  if (ballot.payload.kind === 'consensus') {
+    const { stance, razon } = ballot.payload;
+    if (
+      (stance === 'bloqueo' || stance === 'me-aparto') &&
+      (razon ?? '').trim().length < MIN_OBJECTION_ARGUMENT_LENGTH
+    ) {
+      throw new InvalidBallotError(
+        'CONSENSUS_REASON_REQUIRED',
+        stance === 'bloqueo'
+          ? 'bloquear le impide algo a todo el mundo: tiene que costar, como mínimo, explicarse ' +
+              '(B.10)'
+          : 'apartarse existe para que quede constancia de un desacuerdo; sin decir de qué, no ' +
+              'queda constancia de nada — sería una abstención con otro nombre (B.10)',
+      );
     }
   }
 

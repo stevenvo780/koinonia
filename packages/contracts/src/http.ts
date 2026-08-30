@@ -632,6 +632,7 @@ export const metodo = z.enum([
   'condorcet-schulze',
   'deliberative-sortition',
   'advice-process',
+  'consensus',
 ]);
 export type Metodo = z.infer<typeof metodo>;
 
@@ -733,6 +734,16 @@ export const configuracionDeMetodoHttp = z.discriminatedUnion('metodo', [
     .strict(),
   z
     .object({
+      metodo: z.literal('consensus'),
+      /** Qué fracción de quienes se manifiesten puede apartarse. Por defecto 1/4. */
+      topeDeApartados: z
+        .object({ numerador: z.number().int().min(0), denominador: z.number().int().min(1) })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
       metodo: z.literal('advice-process'),
       /** Identificador de quien decide. Si falta, decide quien abre. */
       decide: z.string().length(32).optional(),
@@ -822,6 +833,15 @@ export const emitirPapeleta = z.object({
      * no se votan. Quien decide tiene que poder leer POR QUÉ — es lo único que puede cambiarle la
      * cabeza, porque el consejo no la ata.
      */
+    /**
+     * Postura de consenso formal. `razon` es obligatoria al bloquear y al apartarse — el motor lo
+     * exige igual (`MIN_OBJECTION_ARGUMENT_LENGTH`), acá se pide para no ofrecer un botón que rebota.
+     */
+    z.object({
+      tipo: z.literal('consensus'),
+      postura: z.enum(['de-acuerdo', 'con-reservas', 'me-aparto', 'bloqueo']),
+      razon: z.string().trim().min(40).max(4000).optional(),
+    }),
     z.object({
       tipo: z.literal('advice'),
       postura: z.enum(['a-favor', 'en-contra', 'matiz']),

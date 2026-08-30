@@ -1,7 +1,7 @@
 /**
- * El catálogo de los diez métodos, expuesto por HTTP, contra PostgreSQL real.
+ * El catálogo de los once métodos, expuesto por HTTP, contra PostgreSQL real.
  *
- * El motor (`@koinonia/domain`) ya implementa los diez; este incremento cierra la frontera para
+ * El motor (`@koinonia/domain`) ya implementa los once; este incremento cierra la frontera para
  * que la pantalla los pueda elegir desde un único `GET /metodos` y armar la papeleta correcta
  * según la forma declarada por el catálogo.
  *
@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () => {
-  it('sirve los diez métodos con nombre, descripción, papeleta y delegación', async () => {
+  it('sirve los once métodos con nombre, descripción, papeleta y delegación', async () => {
     const e = listo(env);
     const sesion = await entrar(e, FACILITADORA);
     const res = await e.app.inject({
@@ -47,7 +47,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
         delegacionPermitida: boolean;
       }>
     >();
-    expect(cuerpo).toHaveLength(10);
+    expect(cuerpo).toHaveLength(11);
 
     const ids = cuerpo.map((m) => m.id);
     expect(ids).toEqual([
@@ -61,6 +61,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
       'condorcet-schulze',
       'deliberative-sortition',
       'advice-process',
+      'consensus',
     ]);
   });
 
@@ -71,7 +72,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
-  it('consentimiento, sorteo y proceso de consejo declaran delegación prohibida', async () => {
+  it('consentimiento, sorteo, proceso de consejo y consenso declaran delegación prohibida', async () => {
     const e = listo(env);
     const res = await e.app.inject({ method: 'GET', url: '/metodos' });
     const cuerpo = res.json<Array<{ id: string; delegacionPermitida: boolean }>>();
@@ -79,7 +80,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
     // El proceso de consejo tampoco la admite: un consejo se da o no se da, no se presta; y quien
     // decide, menos todavía — delegar la decisión sería otro método, no éste.
     expect(sinDelegacion.sort()).toEqual(
-      ['advice-process', 'deliberative-sortition', 'sociocratic-consent'].sort(),
+      ['advice-process', 'consensus', 'deliberative-sortition', 'sociocratic-consent'].sort(),
     );
   });
 
@@ -98,6 +99,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
       'condorcet-schulze': 'ordenamiento',
       'deliberative-sortition': 'sorteo',
       'advice-process': 'consejo',
+      consensus: 'consenso',
     };
     for (const m of cuerpo) {
       expect(m.formasPapeleta[0]).toBe(esperado[m.id]);

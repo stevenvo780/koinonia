@@ -23,10 +23,11 @@ describe('catálogo de métodos de votación', () => {
       'condorcet-schulze',
       'deliberative-sortition',
       'advice-process',
+      'consensus',
     ]);
     expect(METODOS_EN_ORDEN.map((m) => m.id)).toEqual(ID_METODOS);
-    expect(METODOS_EN_ORDEN).toHaveLength(10);
-    expect(Object.keys(METODOS_DISPONIBLES)).toHaveLength(10);
+    expect(METODOS_EN_ORDEN).toHaveLength(11);
+    expect(Object.keys(METODOS_DISPONIBLES)).toHaveLength(11);
   });
 
   it('traduce los identificadores al castellano neutro pedido', () => {
@@ -43,6 +44,7 @@ describe('catálogo de métodos de votación', () => {
       'condorcet-schulze': 'Comparación por pares',
       'deliberative-sortition': 'Deliberación aleatoria',
       'advice-process': 'Proceso de consejo',
+      consensus: 'Consenso',
     };
     for (const id of ID_METODOS) {
       expect(METODOS_DISPONIBLES[id].nombre).toBe(esperado[id]);
@@ -68,7 +70,10 @@ describe('catálogo de métodos de votación', () => {
       // El proceso de consejo tampoco: un consejo se da o no se da, no se presta. Y quien decide
       // menos todavía — delegar la decisión sería otro método, no éste.
       (id) =>
-        id !== 'sociocratic-consent' && id !== 'deliberative-sortition' && id !== 'advice-process',
+        id !== 'sociocratic-consent' &&
+        id !== 'deliberative-sortition' &&
+        id !== 'advice-process' &&
+        id !== 'consensus',
     );
     for (const id of conDelegacion) {
       expect(METODOS_DISPONIBLES[id].delegacionPermitida).toBe(true);

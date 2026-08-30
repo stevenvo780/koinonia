@@ -355,6 +355,12 @@ function encMethod(method: DecisionMethod): JsonObject {
   switch (method.kind) {
     case 'advice-process':
       return { kind: method.kind, decider: method.decider, minAdvisors: method.minAdvisors };
+    case 'consensus':
+      return {
+        kind: method.kind,
+        maxStandAside: encFraction(method.maxStandAside),
+        minEngagement: encFraction(method.minEngagement),
+      };
     case 'simple-majority':
       return {
         kind: method.kind,
@@ -447,6 +453,7 @@ function decMethod(source: JsonObject, path: string): DecisionMethod {
       'condorcet-schulze',
       'deliberative-sortition',
       'advice-process',
+      'consensus',
     ] as const,
     `${path}.kind`,
   );
@@ -456,6 +463,12 @@ function decMethod(source: JsonObject, path: string): DecisionMethod {
         kind,
         decider: memberId(str(source, 'decider', path)),
         minAdvisors: int(source, 'minAdvisors', path),
+      };
+    case 'consensus':
+      return {
+        kind,
+        maxStandAside: decFraction(source, 'maxStandAside', path),
+        minEngagement: decFraction(source, 'minEngagement', path),
       };
     case 'simple-majority':
       return {
@@ -785,6 +798,12 @@ function encBallotPayload(payload: BallotPayload): JsonObject {
       return { kind: payload.kind, approve: payload.approve };
     case 'advice':
       return { kind: payload.kind, stance: payload.stance, reasoning: payload.reasoning };
+    case 'consensus':
+      return {
+        kind: payload.kind,
+        stance: payload.stance,
+        ...(payload.razon === undefined ? {} : { razon: payload.razon }),
+      };
     case 'consent':
       return {
         kind: payload.kind,
@@ -877,7 +896,7 @@ function decGrades(source: readonly JsonValue[], path: string): readonly GradeEn
 function decBallotPayload(source: JsonObject, path: string): BallotPayload {
   const kind = oneOf(
     str(source, 'kind', path),
-    ['abstain', 'binary', 'consent', 'score', 'ranking', 'grades', 'advice'] as const,
+    ['abstain', 'binary', 'consent', 'score', 'ranking', 'grades', 'advice', 'consensus'] as const,
     `${path}.kind`,
   );
   switch (kind) {
@@ -895,6 +914,18 @@ function decBallotPayload(source: JsonObject, path: string): BallotPayload {
         ),
         reasoning: str(source, 'reasoning', path),
       };
+    case 'consensus': {
+      const razon = optStr(source, 'razon', path);
+      return {
+        kind,
+        stance: oneOf(
+          str(source, 'stance', path),
+          ['de-acuerdo', 'con-reservas', 'me-aparto', 'bloqueo'] as const,
+          `${path}.stance`,
+        ),
+        ...(razon === undefined ? {} : { razon }),
+      };
+    }
     case 'consent': {
       const objection = optObj(source, 'objection', path);
       return {

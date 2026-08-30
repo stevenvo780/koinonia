@@ -181,6 +181,7 @@ export {
   type BallotPayload,
   type BallotPayloadKind,
   ballotRejection,
+  type ConsensusStance,
   type ConsentStance,
   type GradeEntry,
   isBallotValid,
