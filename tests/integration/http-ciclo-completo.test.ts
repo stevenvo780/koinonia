@@ -425,8 +425,17 @@ describe.skipIf(!env.ok)(`ciclo completo por HTTP${skipNote(env)}`, () => {
       expect(comprobacion.queSignifica.length).toBeGreaterThan(30);
       expect(comprobacion.queSeComprobo.toLowerCase()).not.toContain('hash');
     }
-    // Y cómo comprobarlo sin confiar en esta página, que es lo único que prueba algo.
-    expect(informe.comoComprobarloVosMismo.comando).toContain('verificador');
+    /*
+     * Y cómo comprobarlo sin confiar en esta página, que es lo único que prueba algo.
+     *
+     * Esta línea decía `toContain('verificador')` y fijaba un defecto: `@koinonia/verificador` no
+     * existe —el paquete se llama `@koinonia/verificar`— y ninguno de los dos está publicado en
+     * npm. La prueba pasaba porque comprobaba que la cadena estuviera, no que el comando sirviera.
+     * Lo que se exige ahora es la costura: que el comando nombre el fichero que de verdad se
+     * descarga. `tests/integration/descarga-verificable.test.ts` comprueba el camino entero.
+     */
+    expect(informe.comoComprobarloVosMismo.comando).toContain('historial-koinonia.tar.gz');
+    expect(informe.comoComprobarloVosMismo.urlDeDescarga).toBe('/integridad/paquete.tar.gz');
   });
 
   it('14 · el historial se exporta entero, para recalcularlo por fuera', async () => {

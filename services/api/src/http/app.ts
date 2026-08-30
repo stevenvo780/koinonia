@@ -275,6 +275,10 @@ import { registrarRutasDeMetodos } from './rutas-metodos.js';
 import { registrarRutasDeMetricas } from './rutas-metricas.js';
 import { registrarRutasDeObjeciones } from './rutas-objeciones.js';
 import { registrarRutasDeReuniones } from './rutas-reuniones.js';
+import type { TrustRoster } from '@koinonia/verificar';
+
+import { empaquetarTarGz } from '../ledger/empaquetar.js';
+import { buildExport } from '../ledger/export.js';
 import { registrarRutasDeSeguimiento } from './rutas-seguimiento.js';
 
 /**
@@ -330,6 +334,19 @@ export interface AppOptions {
    * minuto los inicios de sesión que una persona hace en un semestre. Los valores por defecto son
    * los de `rate-limit.ts`.
    */
+  /**
+   * El padrón de firmantes y testigos que se publica DENTRO del paquete verificable.
+   *
+   * Por omisión va vacío, y eso es lo honesto hoy: este despliegue no tiene ni firmantes de git ni
+   * testigos por correo configurados —lo dice su propio arranque, «no hay padrón de testigos
+   * configurado»—. El verificador levanta el aviso `RAIZ_DE_CONFIANZA_DEL_EXPORT` cuando usa el
+   * padrón que viene dentro del paquete, y hace bien: un padrón que viaja en el mismo paquete que
+   * dice verificar prueba menos que uno obtenido por otro canal.
+   *
+   * Es opción y no constante para que el día que haya testigos de verdad se pasen desde donde se
+   * arma la aplicación, sin volver a tocar la ruta.
+   */
+  readonly confianza?: TrustRoster;
   readonly reglas?: {
     readonly enlace?: RateRule;
     readonly escritura?: RateRule;
@@ -337,6 +354,26 @@ export interface AppOptions {
     readonly comentario?: RateRule;
   };
 }
+
+/**
+ * El padrón de confianza cuando el despliegue no declara ninguno, que es el caso hoy.
+ *
+ * No es un hueco por rellenar: es la descripción exacta de este despliegue. No hay firmantes de git
+ * ni testigos por correo configurados, y `minDistinctDomains: 2` dice cuántas clases independientes
+ * harían falta para que un anclaje contara — dos, que es el quórum del proyecto. Con el padrón así,
+ * el verificador dirá que el anclaje no alcanza el quórum, y estará diciendo la verdad.
+ *
+ * Escribirlo con testigos inventados para que el verificador saliera verde sería la peor mentira
+ * que este proyecto puede contar, porque sería precisamente la mentira que el verificador existe
+ * para detectar.
+ */
+const PADRON_VACIO: TrustRoster = {
+  gitSigners: [],
+  witnesses: [],
+  minDistinctDomains: 2,
+  forges: [],
+  gitSigningKeyOffHost: false,
+};
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -1917,10 +1954,69 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           'privado no sale en esa descarga: su fila de esta página es una revisión hecha acá mismo ' +
           '—que el material está y que cuadra con el compromiso público que quedó anotado—, y no ' +
           'una prueba independiente de sus textos cifrados.',
-        comando: 'npx @koinonia/verificador historial.json',
-        urlDeDescarga: '/integridad/exportar',
+        /*
+         * El comando decía `npx @koinonia/verificador historial.json` y era falso por partida doble:
+         * el paquete se llama `@koinonia/verificar` —no `verificador`— y ninguno de los dos nombres
+         * está publicado en npm; los dos dan 404. Y aunque lo estuvieran, `historial.json` no es lo
+         * que el verificador lee: espera el PAQUETE, con su `manifest.json` y su `events.ndjson`.
+         *
+         * Así que lo que se ofrece es lo que se puede correr hoy, sin depender de que alguien
+         * publique nada: clonar el repositorio, que es público, y correrlo desde ahí. Es más largo
+         * de teclear y a cambio funciona, que es la diferencia que importa.
+         *
+         * Y el paquete lleva dentro `README-VERIFICACION.txt` con el procedimiento entero a mano:
+         * si mañana no existe ni este programa ni esta plataforma, quien tenga el `.tar.gz` puede
+         * rehacer la comprobación con SHA-256 y una tarde. Ésa es la garantía de última instancia,
+         * y por eso el texto de acá la menciona en vez de dejarla escondida dentro del fichero.
+         */
+        comando:
+          'tar -xzf historial-koinonia.tar.gz && ' +
+          'git clone https://github.com/stevenvo780/koinonia && cd koinonia && ' +
+          'pnpm install && pnpm --filter @koinonia/verificar build && ' +
+          'node packages/verifier-cli/dist/cli.js ../historial-koinonia',
+        urlDeDescarga: '/integridad/paquete.tar.gz',
       },
     };
+  });
+
+  /**
+   * El paquete que el verificador independiente sabe leer, en `.tar.gz`.
+   *
+   * `buildExport` existía desde hacía meses, con sus pruebas de integración en verde, y **ninguna
+   * ruta lo servía**: el botón de descarga apuntaba a `/integridad/exportar`, que es otra cosa con
+   * otro propósito —un JSON llano que las pruebas usan para comprobar que el historial público no
+   * filtra autoría—, y el verificador lo rechazaba con «no es un directorio». O sea que «comprobalo
+   * por fuera», la frase que sostiene el proyecto y que va en el pie de las 34 pantallas, no la
+   * podía cumplir nadie. Construido e inalcanzable, que es peor que faltante porque nadie lo echa
+   * de menos.
+   *
+   * No pide sesión, igual que la otra: si comprobar el historial exigiera una cuenta, quien
+   * administra el servidor decidiría quién puede auditarlo, que es justo lo contrario de lo que
+   * esta pantalla promete.
+   */
+  app.get('/integridad/paquete.tar.gz', async (_request, reply) => {
+    const ahora = options.ports.clock.now();
+    const client = await options.pool.connect();
+    let paquete;
+    try {
+      paquete = await buildExport(client, {
+        generatedAt: new Date(ahora).toISOString(),
+        trust: options.confianza ?? PADRON_VACIO,
+      });
+    } finally {
+      client.release();
+    }
+
+    void reply
+      .header('content-type', 'application/gzip')
+      .header('content-disposition', 'attachment; filename="historial-koinonia.tar.gz"')
+      // Que no se sirva de una caché intermedia: quien comprueba tiene que estar comprobando el
+      // historial de ahora, no el de hace una hora.
+      .header('cache-control', 'no-store');
+
+    // `mtime` en segundos y tomado del mismo instante que `generatedAt`: dos exportaciones del
+    // mismo historial en el mismo instante dan el mismo byte, y su huella se puede contrastar.
+    return Buffer.from(empaquetarTarGz(paquete, Math.floor(ahora / 1000)));
   });
 
   app.get('/integridad/exportar', async (_request, reply) => {

@@ -261,12 +261,21 @@ test('la frase que sostiene la pantalla está, verbatim, en los tres estados', a
   for (const estado of estados) {
     await page.unroute('**/api/integridad');
     await pintar(page, estado.informe);
-    // La primera navegación del proceso (hidratación + primer fetch de /api/integridad) puede
-    // tardar más que las siguientes: sin esperar a que el veredicto real reemplace el «Cargando la
-    // comprobación…» inicial, `innerText()` a veces capturaba ese estado transitorio y la prueba
-    // fallaba por una carrera, no por una frase perdida de verdad. Las pruebas hermanas de este
-    // mismo fichero ya esperan su veredicto (`toBeVisible()`) antes de leer texto; acá se hace lo
-    // mismo, sin saber de antemano si el rol es «status» (vacío/sin confirmar) o «alert» (alarma).
+    /*
+     * La primera navegación del proceso (hidratación + primer fetch de /api/integridad) puede tardar
+     * más que las siguientes: sin esperar a que el veredicto real reemplace el «Cargando la
+     * comprobación…» inicial, `innerText()` captura ese estado transitorio y la prueba falla por una
+     * carrera, no por una frase perdida de verdad.
+     *
+     * Se esperaba a que hubiera un «status» o un «alert» visible, y NO alcanzaba: el propio
+     * cargador es un `status`, así que la espera se cumplía con él y seguía habiendo carrera. Se vio
+     * fallar en una corrida completa y pasar 3 de 3 aislada, que es la firma de esto.
+     *
+     * Lo que se espera ahora es que el cargador se haya IDO, que es la condición que de verdad
+     * significa «ya hay veredicto», sea del rol que sea —«status» en vacío y sin confirmar, «alert»
+     * en alarma—.
+     */
+    await expect(page.getByText('Cargando la comprobación…')).toBeHidden();
     await expect(page.getByRole('status').or(page.getByRole('alert')).first()).toBeVisible();
     const texto = await page.locator('main').innerText();
     expect(texto, `falta la frase en el estado «${estado.nombre}»`).toMatch(
