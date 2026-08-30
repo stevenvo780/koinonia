@@ -174,6 +174,33 @@ export type DecisionMethod =
       readonly truncatedMeans: 'tied-last';
       readonly tieBreak: TieBreakPolicy;
     }
+  /**
+   * **Proceso de consejo (B.9).** Decide UNA persona, después de escuchar.
+   *
+   * No es una votación y por eso no tiene umbral ni fracción: nadie gana, nadie pierde. Quien
+   * decide está obligado a haber recogido consejo de al menos `minAdvisors` personas distintas
+   * antes de que su decisión valga; el consejo **no ata**, y ésa es la diferencia con todo lo demás
+   * de este catálogo. Lo que el motor hace cumplir no es el contenido de la decisión sino la
+   * obligación de haber preguntado — que es exactamente lo que este método promete y lo único que
+   * un programa puede comprobar.
+   *
+   * Sirve para lo que una asamblea no debería votar: qué herramienta usar, cómo redactar un aviso,
+   * a quién invitar a una reunión. Votar eso convierte una operación en un plebiscito; decidirlo a
+   * puerta cerrada convierte una operación en un privilegio. Ésta es la tercera vía, y su registro
+   * deja por escrito a quién se le preguntó.
+   */
+  | {
+      readonly kind: 'advice-process';
+      /** Quien decide. Es una sola persona, y eso ES el método, no una limitación suya. */
+      readonly decider: MemberId;
+      /**
+       * Cuántas personas distintas tienen que haber aconsejado para que la decisión valga.
+       *
+       * Uno no alcanza: «pedí consejo a alguien» es lo que hace cualquiera antes de hacer lo que
+       * iba a hacer igual. El mínimo del motor es 2 y se comprueba al abrir.
+       */
+      readonly minAdvisors: number;
+    }
   | {
       readonly kind: 'deliberative-sortition';
       readonly sampleSize: number;
@@ -459,6 +486,8 @@ function canonicalMethod(method: DecisionMethod): JsonObject {
           },
         },
       };
+    case 'advice-process':
+      return { kind: method.kind, decider: method.decider, minAdvisors: method.minAdvisors };
     case 'score':
       return {
         kind: method.kind,
@@ -755,6 +784,43 @@ function validateMethod(config: DecisionConfig): void {
           'UNANIMITY_NOT_AUTHORIZED',
           'la unanimidad está deshabilitada por defecto: da poder de veto individual y exige una ' +
             'decisión previa del círculo que la autorice para este caso concreto (B.4.a)',
+        );
+      }
+      break;
+    }
+    case 'advice-process': {
+      /*
+       * Quien decide tiene que estar en el padrón CONGELADO, no en el de hoy: si mañana se da de
+       * baja, la decisión que tomó sigue siendo suya y sigue siendo legible. Mirar el padrón vivo
+       * dejaría decisiones huérfanas cada vez que alguien se va.
+       */
+      if (!config.electorate.members.some((m) => m.memberId === method.decider)) {
+        reject(
+          'DECIDER_NOT_IN_ROLL',
+          'quien decide tiene que estar en el padrón de esta decisión: no se le puede encargar a ' +
+            'alguien que no podía participar (B.9)',
+        );
+      }
+      if (!Number.isSafeInteger(method.minAdvisors) || method.minAdvisors < 2) {
+        reject(
+          'MIN_ADVISORS_TOO_LOW',
+          'hacen falta al menos DOS consejos: «pedí consejo a alguien» es lo que hace cualquiera ' +
+            'antes de hacer lo que iba a hacer igual, y este método existe para que eso no cuente ' +
+            '(B.9)',
+        );
+      }
+      /*
+       * Y tiene que haber a quién preguntarle. `censusSize - 1` porque quien decide no se aconseja
+       * a sí misma: con un padrón de tres y `minAdvisors: 3`, la decisión sería IMPOSIBLE de cerrar
+       * y nadie lo notaría hasta el vencimiento. Rechazarlo al abrir es la diferencia entre un
+       * error que se ve enseguida y una votación que muere en silencio.
+       */
+      if (method.minAdvisors > config.electorate.censusSize - 1) {
+        reject(
+          'MIN_ADVISORS_UNREACHABLE',
+          `se piden ${String(method.minAdvisors)} consejos y en el padrón hay ` +
+            `${String(config.electorate.censusSize - 1)} personas que puedan darlos (quien decide ` +
+            'no cuenta): así no se podría cerrar nunca (B.9)',
         );
       }
       break;

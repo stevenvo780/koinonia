@@ -114,7 +114,30 @@ export type BallotPayload =
       readonly kind: 'consent';
       readonly stance: ConsentStance;
       readonly objection?: Objection;
+    }
+  /**
+   * Un consejo, en el proceso de consejo (B.9). No es un voto y no se cuenta como tal.
+   *
+   * `reasoning` es OBLIGATORIO y no por formalismo: un consejo sin razones no es un consejo, es un
+   * voto disfrazado — y este método existe justamente porque hay decisiones que no se votan. Quien
+   * decide tiene que poder leer POR QUÉ, que es lo único que puede cambiarle la cabeza.
+   */
+  | {
+      readonly kind: 'advice';
+      readonly stance: AdviceStance;
+      readonly reasoning: string;
     };
+
+/**
+ * Qué dice un consejo, en grueso.
+ *
+ * Tres y no dos: `matiz` es el que hace que esto no sea un sí/no con otro nombre. La mayoría de los
+ * consejos útiles no son «hacelo» ni «no lo hagas», son «hacelo, pero mirá esto antes».
+ */
+export type AdviceStance = 'a-favor' | 'en-contra' | 'matiz';
+
+/** Lo mínimo que se le exige a un consejo escrito, en caracteres. */
+export const MIN_LARGO_DEL_CONSEJO = 40;
 
 export type BallotPayloadKind = BallotPayload['kind'];
 
@@ -152,6 +175,13 @@ export function acceptedPayloadKinds(method: DecisionMethod): readonly BallotPay
   switch (method.kind) {
     case 'sociocratic-consent':
       return ['consent'] as const;
+    /*
+     * Las dos, y cada una para quien le toca: los demás aconsejan, quien decide decide. Que la
+     * decisión sea una papeleta `binary` no la convierte en un voto — es una entre miles y la única
+     * que el escrutinio mira. `validateBallot` impide que la emita alguien que no sea quien decide.
+     */
+    case 'advice-process':
+      return ['advice', 'binary'] as const;
     case 'score':
       return ['score'] as const;
     case 'irv':
@@ -298,6 +328,42 @@ export function validateBallot(
       `${config.method.kind} admite ${accepted.join(' | ')} y la papeleta es de tipo ` +
         `${ballot.payload.kind}; convertirla inventaría una preferencia que nadie expresó`,
     );
+  }
+
+  /*
+   * Proceso de consejo: quién puede emitir cada cosa.
+   *
+   * Va en el DOMINIO y no en la pantalla, por lo mismo que la guarda de los métodos comparativos:
+   * una regla que sólo aplica el navegador es una sugerencia, y quien llame a la API se la salta.
+   * Si cualquiera pudiera emitir la papeleta binaria, el escrutinio la ignoraría —sólo mira la de
+   * quien decide— pero el historial se llenaría de decisiones que nadie tomó, y alguien que lea el
+   * registro no podría distinguirlas de la buena.
+   */
+  if (config.method.kind === 'advice-process') {
+    const { decider } = config.method;
+    if (ballot.payload.kind === 'binary' && ballot.voter !== decider) {
+      throw new InvalidBallotError(
+        'NOT_THE_DECIDER',
+        'en el proceso de consejo decide una sola persona, y no sos vos: lo que podés aportar es ' +
+          'consejo, que es lo que este método hace obligatorio escuchar',
+      );
+    }
+    if (ballot.payload.kind === 'advice') {
+      if (ballot.voter === decider) {
+        throw new InvalidBallotError(
+          'DECIDER_CANNOT_ADVISE',
+          'quien decide no se aconseja a sí misma: su papeleta es la decisión, y contarla como ' +
+            'consejo dejaría que se cumpliera el mínimo con su propia voz',
+        );
+      }
+      if (ballot.payload.reasoning.trim().length < MIN_LARGO_DEL_CONSEJO) {
+        throw new InvalidBallotError(
+          'ADVICE_WITHOUT_REASONS',
+          `un consejo se explica: hacen falta al menos ${String(MIN_LARGO_DEL_CONSEJO)} ` +
+            'caracteres. Sin razones no es consejo, es un voto disfrazado — y esto no es una votación',
+        );
+      }
+    }
   }
 
   if (ballot.payload.kind === 'consent') {

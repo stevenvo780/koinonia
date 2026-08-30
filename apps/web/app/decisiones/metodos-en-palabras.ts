@@ -74,7 +74,9 @@ export type FormularioDePapeleta =
   /** Una mención por opción, elegida de la escala congelada al abrir. */
   | 'menciones'
   /** No hay nada que llenar: lo que decide es el sorteo. */
-  | 'sin-papeleta';
+  | 'sin-papeleta'
+  /** Un consejo escrito con su postura — y, para quien decide, el sí o el no. */
+  | 'consejo';
 
 /** Lo que hay que decirle a alguien sobre un método antes de que lo elija. */
 export interface MetodoEnPalabras {
@@ -208,6 +210,23 @@ const EN_PALABRAS: Readonly<Record<IdMetodo, Omit<MetodoEnPalabras, 'id'>>> = {
       'Nada: nadie llena una papeleta. El número del sorteo se anuncia sellado antes de abrir y se ' +
       'abre al cerrar, para que cualquiera pueda rehacer el sorteo y comprobar que salió eso.',
     formulario: 'sin-papeleta',
+  },
+  'advice-process': {
+    cuandoConviene:
+      'Para lo que una asamblea no debería votar: qué herramienta usar, cómo redactar un aviso, a ' +
+      'quién invitar. Decide una sola persona, pero no puede resolver hasta que varias le hayan ' +
+      'dejado su consejo por escrito. El consejo NO la ata — puede ir en contra de todo lo que le ' +
+      'dijeron, y eso está permitido. Lo que no está permitido es no preguntar.',
+    ejemplo: 'Elegir con qué programa se llevan las actas. Decidir el horario de una jornada.',
+    cuandoNo:
+      'Si el asunto reparte poder, plata o sanciones. Ahí tiene que decidir el grupo, no una ' +
+      'persona por bien intencionada que sea. Votar eso convierte una operación en plebiscito; ' +
+      'decidir a puerta cerrada lo que sí toca al grupo lo convierte en privilegio.',
+    queLlenaLaGente:
+      'Casi todo el mundo escribe un consejo: si le parece bien, mal o con matices, y por qué — el ' +
+      'porqué es obligatorio, porque sin razones no es consejo. Quien decide no aconseja: cuando ya ' +
+      'hay consejos suficientes, le aparece el sí o el no.',
+    formulario: 'consejo',
   },
 };
 

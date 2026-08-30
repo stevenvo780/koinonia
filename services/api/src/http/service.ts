@@ -650,10 +650,38 @@ function comoFraccion(f: { readonly numerador: number; readonly denominador: num
  * (`configuracion.metodo === metodo`); acá sólo se leen sus campos opcionales para reemplazar el
  * default correspondiente.
  */
+/**
+ * Quién decide en un proceso de consejo: lo que se pidió, o quien abre.
+ *
+ * Si no hay ninguno de los dos, se falla acá y no más adelante. Sin identidad no hay a quién
+ * encargarle una decisión, y `SYSTEM_CANNOT_GOVERN` es la doctrina de este motor: ningún acto de
+ * gobierno es un automatismo, todos tienen responsable con nombre propio.
+ */
+function quienDecide(pedido: string | undefined, quienAbre: MemberId | undefined): MemberId {
+  if (pedido !== undefined) return memberId(pedido);
+  if (quienAbre !== undefined) return quienAbre;
+  throw new ServicioError(
+    'SIN_QUIEN_DECIDA',
+    400,
+    'el proceso de consejo necesita una persona que decida, y esta petición no dice quién ni ' +
+      'viene de nadie: una decisión sin responsable no es una decisión',
+  );
+}
+
 function construirMetodo(
   metodo: IdMetodo,
   configuracion: ConfiguracionDeMetodoHttp | undefined,
-  contexto: { readonly seedCommitment: Hash },
+  contexto: {
+    readonly seedCommitment: Hash;
+    /**
+     * Quién abre. Es el valor por defecto de «quién decide» en el proceso de consejo.
+     *
+     * Opcional porque el actor del sistema no tiene identidad. Para todos los demás métodos da
+     * igual; para el proceso de consejo, sin identidad no hay a quién encargarle la decisión, y esa
+     * rama lo dice en vez de inventar un responsable.
+     */
+    readonly quienAbre: MemberId | undefined;
+  },
 ): DecisionConfig['method'] {
   switch (metodo) {
     case 'simple-majority': {
@@ -769,8 +797,20 @@ function construirMetodo(
         seedCommitment: contexto.seedCommitment,
       };
     }
+    case 'advice-process': {
+      const cfg = configuracion?.metodo === 'advice-process' ? configuracion : undefined;
+      return {
+        kind: 'advice-process',
+        // Por defecto decide quien abre. Se admite nombrar a otra persona porque el caso normal es
+        // «esto le toca a quien lleva la biblioteca», y quien abre puede ser un tercero que sólo
+        // pone el procedimiento en marcha. El motor comprueba que esté en el padrón congelado.
+        decider: quienDecide(cfg?.decide, contexto.quienAbre),
+        // Tres por defecto; el motor no admite menos de dos. Ver el porqué en `metodos.ts`.
+        minAdvisors: cfg?.consejosMinimos ?? 3,
+      };
+    }
     default: {
-      // Red de seguridad de tipos: si `IdMetodo` alguna vez gana un décimo valor sin que este
+      // Red de seguridad de tipos: si `IdMetodo` alguna vez gana un valor nuevo sin que este
       // switch se actualice, esto falla en tiempo de compilación (never) y, si algo se saltara el
       // tipo, en tiempo de ejecución con un 400 claro en vez de una configuración a medio construir.
       const _exhaustivo: never = metodo;
@@ -876,6 +916,13 @@ export function queHaceFaltaParaQuePase(metodo: IdMetodo, podianDecidir: number)
         `comparación entre las que van quedando hasta encontrar la que resiste mejor. Tienen que ` +
         `responder al menos ${String(minimo)} de las ${String(podianDecidir)} personas que podían ` +
         `decidir aquí.`
+      );
+    case 'advice-process':
+      return (
+        'Acá no se vota. Quien decide tiene que escuchar primero: hace falta que varias personas ' +
+        'distintas dejen su consejo por escrito, y sólo entonces vale su decisión. El consejo NO ' +
+        'ata — puede resolver en contra de todo lo que le digan, y eso está permitido. Lo que no ' +
+        'está permitido es no preguntar.'
       );
     case 'deliberative-sortition':
       return (
@@ -1126,7 +1173,10 @@ export async function abrirDecision(
       topics: [],
       options: [optionId(input.propuestaId)],
       electorate,
-      method: construirMetodo(input.metodo, input.configuracion, { seedCommitment }),
+      method: construirMetodo(input.metodo, input.configuracion, {
+        seedCommitment,
+        quienAbre: actor.memberId,
+      }),
       quorum: construirQuorum(input.metodo, circulo),
       window: {
         opensAt: at,
@@ -1270,9 +1320,19 @@ export async function listarDecisiones(deps: ServicioDeps): Promise<readonly Dec
 
 /** Lo que la interfaz manda como respuesta a una papeleta. */
 export interface RespuestaPapeleta {
-  readonly tipo: 'binary' | 'abstain' | 'consent' | 'score' | 'ranking' | 'grades';
+  readonly tipo: 'binary' | 'abstain' | 'consent' | 'score' | 'ranking' | 'grades' | 'advice';
   readonly aprueba?: boolean | undefined;
-  readonly postura?: 'consent' | 'concern' | 'object' | undefined;
+  /**
+   * La postura, que significa cosas distintas según el tipo y por eso lleva las dos uniones.
+   *
+   * En `consent` es la del acuerdo interno; en `advice`, el grueso del consejo. No se separan en dos
+   * campos porque esta interfaz refleja lo que llega por la red, y allá viajan discriminados por
+   * `tipo` — `payloadDePapeleta` los separa en cuanto los mira, que es donde corresponde.
+   */
+  readonly postura?:
+    'consent' | 'concern' | 'object' | 'a-favor' | 'en-contra' | 'matiz' | undefined;
+  /** El consejo escrito. Sólo en `advice`, y obligatorio ahí. */
+  readonly razones?: string | undefined;
   readonly objecion?:
     | {
         readonly argumento: string;
@@ -1308,8 +1368,38 @@ export function payloadDePapeleta(
       return { kind: 'abstain' };
     case 'binary':
       return { kind: 'binary', approve: respuesta.aprueba === true };
+    case 'advice': {
+      // El largo mínimo lo comprueba dos veces: el esquema al entrar y `validateBallot` al escribir.
+      // No es redundancia perezosa — el esquema protege la frontera y el motor protege el historial,
+      // y quien llame por otra puerta pasa igual por el segundo.
+      const postura = respuesta.postura;
+      if (postura !== 'a-favor' && postura !== 'en-contra' && postura !== 'matiz') {
+        throw new ServicioError(
+          'DATOS_INVALIDOS',
+          400,
+          'un consejo dice a favor, en contra o con matices',
+        );
+      }
+      if (respuesta.razones === undefined) {
+        throw new ServicioError(
+          'DATOS_INVALIDOS',
+          400,
+          'un consejo se explica: faltan las razones',
+        );
+      }
+      return { kind: 'advice', stance: postura, reasoning: respuesta.razones };
+    }
     case 'consent': {
       const postura = respuesta.postura ?? 'consent';
+      // Las posturas de consejo no valen acá: `tipo` las discrimina en la red, pero esta interfaz
+      // comparte el campo, así que se comprueba en vez de confiar en que nadie mande la de al lado.
+      if (postura === 'a-favor' || postura === 'en-contra' || postura === 'matiz') {
+        throw new ServicioError(
+          'DATOS_INVALIDOS',
+          400,
+          'ésa es una postura de consejo, y esto es una papeleta de acuerdo interno',
+        );
+      }
       if (postura !== 'object') return { kind: 'consent', stance: postura };
       const objecion = respuesta.objecion;
       if (objecion === undefined) {

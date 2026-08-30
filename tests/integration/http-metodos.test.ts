@@ -1,7 +1,7 @@
 /**
- * El catálogo de los nueve métodos, expuesto por HTTP, contra PostgreSQL real.
+ * El catálogo de los diez métodos, expuesto por HTTP, contra PostgreSQL real.
  *
- * El motor (`@koinonia/domain`) ya implementa los nueve; este incremento cierra la frontera para
+ * El motor (`@koinonia/domain`) ya implementa los diez; este incremento cierra la frontera para
  * que la pantalla los pueda elegir desde un único `GET /metodos` y armar la papeleta correcta
  * según la forma declarada por el catálogo.
  *
@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () => {
-  it('sirve los nueve métodos con nombre, descripción, papeleta y delegación', async () => {
+  it('sirve los diez métodos con nombre, descripción, papeleta y delegación', async () => {
     const e = listo(env);
     const sesion = await entrar(e, FACILITADORA);
     const res = await e.app.inject({
@@ -47,7 +47,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
         delegacionPermitida: boolean;
       }>
     >();
-    expect(cuerpo).toHaveLength(9);
+    expect(cuerpo).toHaveLength(10);
 
     const ids = cuerpo.map((m) => m.id);
     expect(ids).toEqual([
@@ -60,6 +60,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
       'majority-judgment',
       'condorcet-schulze',
       'deliberative-sortition',
+      'advice-process',
     ]);
   });
 
@@ -70,12 +71,16 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
-  it('sólo consentimiento y sorteo declaran delegación prohibida', async () => {
+  it('consentimiento, sorteo y proceso de consejo declaran delegación prohibida', async () => {
     const e = listo(env);
     const res = await e.app.inject({ method: 'GET', url: '/metodos' });
     const cuerpo = res.json<Array<{ id: string; delegacionPermitida: boolean }>>();
     const sinDelegacion = cuerpo.filter((m) => !m.delegacionPermitida).map((m) => m.id);
-    expect(sinDelegacion.sort()).toEqual(['deliberative-sortition', 'sociocratic-consent'].sort());
+    // El proceso de consejo tampoco la admite: un consejo se da o no se da, no se presta; y quien
+    // decide, menos todavía — delegar la decisión sería otro método, no éste.
+    expect(sinDelegacion.sort()).toEqual(
+      ['advice-process', 'deliberative-sortition', 'sociocratic-consent'].sort(),
+    );
   });
 
   it('la papeleta coincide con la forma declarada en el catálogo', async () => {
@@ -92,6 +97,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
       'majority-judgment': 'menciones',
       'condorcet-schulze': 'ordenamiento',
       'deliberative-sortition': 'sorteo',
+      'advice-process': 'consejo',
     };
     for (const m of cuerpo) {
       expect(m.formasPapeleta[0]).toBe(esperado[m.id]);
@@ -191,7 +197,7 @@ describe.skipIf(!env.ok)(`catálogo de métodos por HTTP${skipNote(env)}`, () =>
  *
  * Antes probaba lo contrario: abría las cuatro por HTTP, votaba, cerraba, y comprobaba que el
  * desenlace saliera `approved`. Estaba escrito a sabiendas —su cabecera decía «el SERVIDOR nunca
- * tuvo ese candado: siempre aceptó abrir con cualquiera de los nueve»— y fijaba como conducta
+ * tuvo ese candado: siempre aceptó abrir con cualquiera de los que hubiera»— y fijaba como conducta
  * esperada un defecto de verdad, que un revisor reprodujo de punta a punta contra PostgreSQL real:
  * abrió una decisión de valoración por menciones saltándose la pantalla, los CUATRO votantes
  * mandaron la mención más baja —«rechazar»—, y el cierre devolvió `"desenlace":"approved"`.

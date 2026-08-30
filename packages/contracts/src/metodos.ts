@@ -53,6 +53,7 @@ export const ID_METODOS = [
   'majority-judgment',
   'condorcet-schulze',
   'deliberative-sortition',
+  'advice-process',
 ] as const;
 
 export type IdMetodo = (typeof ID_METODOS)[number];
@@ -71,6 +72,8 @@ export const formaPapeleta = z.enum([
   'consentimiento',
   /** Sin papeleta: el cierre es la muestra sorteada. */
   'sorteo',
+  /** Un consejo escrito, con postura. No es un voto: no se cuenta, se lee. */
+  'consejo',
 ]);
 export type FormaPapeleta = z.infer<typeof formaPapeleta>;
 
@@ -84,6 +87,28 @@ export type FormaPapeleta = z.infer<typeof formaPapeleta>;
  * la apertura. Lo que el cliente manda se valida con el mismo esquema que el servidor usa para
  * configurar, así que la única fuente de verdad sobre la forma de la configuración es esta entrada.
  */
+
+// ── Proceso de consejo ────────────────────────────────────────────────────────────────────────
+const configuracionConsejo = z
+  .object({
+    /**
+     * Quién decide. Si no se dice, decide quien abre la votación.
+     *
+     * Se admite nombrar a otra persona porque el caso normal del proceso de consejo es «esto le
+     * toca a quien lleva la biblioteca», y quien abre la votación puede ser un tercero que sólo
+     * está poniendo el procedimiento en marcha.
+     */
+    decide: z.string().length(32).optional(),
+    /**
+     * Cuántos consejos distintos hacen falta. Por defecto 3; el motor no admite menos de 2.
+     *
+     * Tres y no dos por lo mismo que el motor pide dos: con dos es fácil elegir a quiénes preguntar
+     * para que digan lo que uno ya quería oír. No es una garantía —nada acá lo es contra la mala
+     * fe— pero encarece la comedia.
+     */
+    consejosMinimos: z.number().int().min(2).max(50).optional(),
+  })
+  .strict();
 
 // ── Mayoria simple ────────────────────────────────────────────────────────────────────────────
 const configuracionMayoriaSimple = z
@@ -233,6 +258,7 @@ export const configuracionDeMetodo = z.discriminatedUnion('metodo', [
     .object({ metodo: z.literal('condorcet-schulze'), ...configuracionComparacionPares.shape })
     .strict(),
   z.object({ metodo: z.literal('deliberative-sortition'), ...configuracionSorteo.shape }).strict(),
+  z.object({ metodo: z.literal('advice-process'), ...configuracionConsejo.shape }).strict(),
 ]);
 export type ConfiguracionDeMetodo = z.infer<typeof configuracionDeMetodo>;
 
@@ -364,6 +390,19 @@ export const METODOS_DISPONIBLES: Readonly<Record<IdMetodo, MetodoDisponible>> =
     formasPapeleta: ['sorteo'],
     delegacionPermitida: false,
     configSchema: configuracionSorteo,
+  },
+  'advice-process': {
+    id: 'advice-process',
+    nombre: 'Proceso de consejo',
+    descripcion:
+      'No se vota: decide una sola persona, y sólo después de escuchar a otras. Quien decide está ' +
+      'obligada a haber recibido consejo de varias personas antes de que su decisión valga, y el ' +
+      'consejo NO la ata: puede resolver en contra de todo lo que le dijeron. Sirve para lo que una ' +
+      'asamblea no debería votar —qué herramienta usar, cómo redactar un aviso— donde votar ' +
+      'convierte una operación en plebiscito y decidir a puerta cerrada la convierte en privilegio.',
+    formasPapeleta: ['consejo', 'binaria'],
+    delegacionPermitida: false,
+    configSchema: configuracionConsejo,
   },
 };
 

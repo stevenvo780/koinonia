@@ -353,6 +353,8 @@ function decAdmissibility(source: JsonObject, path: string): ObjectionAdmissibil
 
 function encMethod(method: DecisionMethod): JsonObject {
   switch (method.kind) {
+    case 'advice-process':
+      return { kind: method.kind, decider: method.decider, minAdvisors: method.minAdvisors };
     case 'simple-majority':
       return {
         kind: method.kind,
@@ -444,10 +446,17 @@ function decMethod(source: JsonObject, path: string): DecisionMethod {
       'majority-judgment',
       'condorcet-schulze',
       'deliberative-sortition',
+      'advice-process',
     ] as const,
     `${path}.kind`,
   );
   switch (kind) {
+    case 'advice-process':
+      return {
+        kind,
+        decider: memberId(str(source, 'decider', path)),
+        minAdvisors: int(source, 'minAdvisors', path),
+      };
     case 'simple-majority':
       return {
         kind,
@@ -774,6 +783,8 @@ function encBallotPayload(payload: BallotPayload): JsonObject {
       return { kind: payload.kind };
     case 'binary':
       return { kind: payload.kind, approve: payload.approve };
+    case 'advice':
+      return { kind: payload.kind, stance: payload.stance, reasoning: payload.reasoning };
     case 'consent':
       return {
         kind: payload.kind,
@@ -866,7 +877,7 @@ function decGrades(source: readonly JsonValue[], path: string): readonly GradeEn
 function decBallotPayload(source: JsonObject, path: string): BallotPayload {
   const kind = oneOf(
     str(source, 'kind', path),
-    ['abstain', 'binary', 'consent', 'score', 'ranking', 'grades'] as const,
+    ['abstain', 'binary', 'consent', 'score', 'ranking', 'grades', 'advice'] as const,
     `${path}.kind`,
   );
   switch (kind) {
@@ -874,6 +885,16 @@ function decBallotPayload(source: JsonObject, path: string): BallotPayload {
       return { kind };
     case 'binary':
       return { kind, approve: bool(source, 'approve', path) };
+    case 'advice':
+      return {
+        kind,
+        stance: oneOf(
+          str(source, 'stance', path),
+          ['a-favor', 'en-contra', 'matiz'] as const,
+          `${path}.stance`,
+        ),
+        reasoning: str(source, 'reasoning', path),
+      };
     case 'consent': {
       const objection = optObj(source, 'objection', path);
       return {

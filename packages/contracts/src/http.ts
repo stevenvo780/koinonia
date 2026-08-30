@@ -631,6 +631,7 @@ export const metodo = z.enum([
   'majority-judgment',
   'condorcet-schulze',
   'deliberative-sortition',
+  'advice-process',
 ]);
 export type Metodo = z.infer<typeof metodo>;
 
@@ -730,6 +731,14 @@ export const configuracionDeMetodoHttp = z.discriminatedUnion('metodo', [
       tamanoDeMuestra: z.number().int().min(1).max(100).optional(),
     })
     .strict(),
+  z
+    .object({
+      metodo: z.literal('advice-process'),
+      /** Identificador de quien decide. Si falta, decide quien abre. */
+      decide: z.string().length(32).optional(),
+      consejosMinimos: z.number().int().min(2).max(50).optional(),
+    })
+    .strict(),
 ]);
 export type ConfiguracionDeMetodoHttp = z.infer<typeof configuracionDeMetodoHttp>;
 
@@ -805,6 +814,23 @@ export const emitirPapeleta = z.object({
   respuesta: z.discriminatedUnion('tipo', [
     z.object({ tipo: z.literal('binary'), aprueba: z.boolean() }),
     z.object({ tipo: z.literal('abstain') }),
+    /**
+     * Un consejo, en el proceso de consejo. No es un voto y no se cuenta como tal.
+     *
+     * `razones` es obligatorio y el mínimo lo fija el motor (`MIN_LARGO_DEL_CONSEJO`): un consejo
+     * sin razones es un voto disfrazado, y este método existe justamente porque hay decisiones que
+     * no se votan. Quien decide tiene que poder leer POR QUÉ — es lo único que puede cambiarle la
+     * cabeza, porque el consejo no la ata.
+     */
+    z.object({
+      tipo: z.literal('advice'),
+      postura: z.enum(['a-favor', 'en-contra', 'matiz']),
+      razones: z
+        .string()
+        .trim()
+        .min(40, 'Un consejo se explica: sin razones no es consejo, es un voto disfrazado.')
+        .max(4000),
+    }),
     z.object({
       tipo: z.literal('consent'),
       postura: posturaConsentimiento,
@@ -950,6 +976,25 @@ export const decisionDetalle = decisionResumen.extend({
    * quien abrió la votación mandó la suya propia (`configuracion.escala`, `metodos.ts`).
    */
   escalaDeMenciones: z.array(z.object({ id: z.string(), etiqueta: z.string() })).optional(),
+  /**
+   * Lo que hace falta saber en un proceso de consejo, y sólo está cuando el método es ése.
+   *
+   * `decidoYo` va calculado en el servidor y no se deduce en la pantalla comparando identificadores:
+   * la pantalla no tiene por qué manejar el identificador de nadie para saber qué formulario
+   * dibujar, y una comparación hecha allá es una que alguien puede falsear en su navegador — no
+   * para engañar al servidor, que revalida, sino para verse un formulario que después le rebota.
+   */
+  procesoDeConsejo: z
+    .object({
+      decidoYo: z.boolean(),
+      /** Cuántos consejos distintos hacen falta para que la decisión pueda tomarse. */
+      consejosMinimos: z.number().int().nonnegative(),
+      /** Cuántos van. Se cuenta gente distinta, no papeletas: cambiar de opinión no suma. */
+      consejosDados: z.number().int().nonnegative(),
+      /** Si ya aconsejé. Para no volver a pedirle lo mismo a quien ya lo hizo. */
+      yaAconseje: z.boolean(),
+    })
+    .optional(),
 });
 export type DecisionDetalle = z.infer<typeof decisionDetalle>;
 

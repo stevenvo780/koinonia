@@ -540,7 +540,28 @@ export function concentrationTable(report: ConcentrationReport): ProofTable {
 
 export type Outcome =
   | { readonly kind: 'approved'; readonly option?: OptionId }
-  | { readonly kind: 'rejected'; readonly reason: 'threshold-not-met' | 'objections-pending' }
+  | {
+      readonly kind: 'rejected';
+      /**
+       * `no-decision`: se cerró el plazo y quien tenía que decidir no decidió.
+       *
+       * Existe porque los otros dos motivos serían mentira en ese caso: no se quedó corto ningún
+       * umbral —el proceso de consejo no tiene— ni quedó ninguna objeción en pie. Lo que pasó es
+       * que nadie decidió, y la consecuencia real es la misma que un rechazo: no se adoptó nada.
+       * Decirlo con su propio nombre deja que la pantalla lo cuente distinto, que es lo que hace
+       * falta: «se venció sin decisión» no se arregla igual que «se rechazó».
+       */
+      /**
+       * `decided-against`: quien decide resolvió que no. Decidió; la respuesta fue negativa.
+       *
+       * Va separado de `no-decision` porque la diferencia le importa a quien lea el registro
+       * dentro de un año: «alguien lo pensó y dijo que no» y «se venció y nadie contestó» no son
+       * lo mismo, aunque el efecto sea idéntico. Confundirlos borra la única parte que este
+       * método deja por escrito: que hubo alguien responsable.
+       */
+      readonly reason:
+        'threshold-not-met' | 'objections-pending' | 'no-decision' | 'decided-against';
+    }
   | { readonly kind: 'no-quorum'; readonly achieved: Fraction; readonly required: Fraction }
   | { readonly kind: 'winner'; readonly option: OptionId; readonly tieBroken: boolean }
   | { readonly kind: 'sample'; readonly selected: readonly MemberId[] }

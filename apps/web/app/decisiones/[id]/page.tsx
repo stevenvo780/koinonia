@@ -255,6 +255,13 @@ export default function Decision(): ReactNode {
   // '' sólo dura hasta que la decisión carga: el efecto de más abajo la fija en la primera mención
   // de la escala apenas hay una escala que mirar, así que siempre hay una elegida para enviar.
   const [mencion, setMencion] = useState('');
+  /*
+   * El consejo. Arranca sin postura elegida a propósito, por lo mismo que la mención: preseleccionar
+   * «a favor» convertiría «no toqué nada» en «me pareció bien», y acá lo que se registra es lo que
+   * alguien piensa, no lo que el formulario traía puesto.
+   */
+  const [posturaConsejo, setPosturaConsejo] = useState('');
+  const [razonesConsejo, setRazonesConsejo] = useState('');
 
   const recargar = useCallback(() => {
     setError(undefined);
@@ -321,9 +328,15 @@ export default function Decision(): ReactNode {
                   // Hoy la decisión tiene una sola opción: el único orden posible es ésa.
                   orden: [decision.propuestaId],
                 }
-              : binario === 'abstengo'
-                ? { tipo: 'abstain' as const }
-                : { tipo: 'binary' as const, aprueba: binario === 'si' };
+              : formularioDeEsteMetodo === 'consejo' && decision.procesoDeConsejo?.decidoYo !== true
+                ? {
+                    tipo: 'advice' as const,
+                    postura: posturaConsejo as 'a-favor' | 'en-contra' | 'matiz',
+                    razones: razonesConsejo,
+                  }
+                : binario === 'abstengo'
+                  ? { tipo: 'abstain' as const }
+                  : { tipo: 'binary' as const, aprueba: binario === 'si' };
 
     const resultado = await ejecutar(
       'papeleta',
@@ -395,6 +408,17 @@ export default function Decision(): ReactNode {
    * que no le dice nada a nadie. Ver el bloque largo junto a los `useState` de la papeleta.
    */
   const faltaLaMencion = formulario === 'menciones' && mencion === '';
+  /**
+   * Si esta papeleta es un consejo y todavía le falta algo.
+   *
+   * Bloquear acá no reemplaza al servidor —`validateBallot` exige lo mismo y quien llame por otra
+   * puerta pasa por él igual—, pero ofrecer un botón que va a rebotar es peor que no ofrecerlo. El
+   * mínimo de 40 caracteres es el del motor (`MIN_LARGO_DEL_CONSEJO`), no un número de esta pantalla.
+   */
+  const faltaElConsejo =
+    formulario === 'consejo' &&
+    decision.procesoDeConsejo?.decidoYo !== true &&
+    (posturaConsejo === '' || razonesConsejo.trim().length < 40);
   const cerrada = decision.estado !== 'Open';
 
   return (
@@ -667,6 +691,97 @@ export default function Decision(): ReactNode {
               </>
             )}
 
+            {formulario === 'consejo' && decision.procesoDeConsejo !== undefined && (
+              <>
+                {decision.procesoDeConsejo.decidoYo ? (
+                  <>
+                    <p className="suave">
+                      Acá decidís vos. Van {decision.procesoDeConsejo.consejosDados} consejos de las{' '}
+                      {decision.procesoDeConsejo.consejosMinimos} personas que hacen falta escuchar.
+                      {decision.procesoDeConsejo.consejosDados <
+                      decision.procesoDeConsejo.consejosMinimos
+                        ? ' Todavía no podés cerrar: falta que te aconsejen.'
+                        : ' Ya podés decidir. El consejo no te ata: podés resolver en contra de lo' +
+                          ' que te dijeron, y eso está permitido.'}
+                    </p>
+                    <fieldset className="opciones">
+                      <legend>¿Qué resolvés?</legend>
+                      {(
+                        [
+                          ['si', 'Sí, se hace'],
+                          ['no', 'No se hace'],
+                        ] as const
+                      ).map(([valor, etiqueta]) => (
+                        <div className="opcion" key={valor}>
+                          <input
+                            type="radio"
+                            id={`resuelvo-${valor}`}
+                            name="resuelvo"
+                            checked={binario === valor}
+                            onChange={() => {
+                              setBinario(valor);
+                            }}
+                          />
+                          <label htmlFor={`resuelvo-${valor}`}>{etiqueta}</label>
+                        </div>
+                      ))}
+                    </fieldset>
+                  </>
+                ) : (
+                  <>
+                    <p className="suave">
+                      Acá no se vota: decide una persona, y sólo después de escuchar. Lo que vos
+                      dejás es un consejo — y lo que decida no te va a atar a vos ni vos a ella.
+                      {decision.procesoDeConsejo.yaAconseje
+                        ? ' Ya dejaste el tuyo; si lo mandás otra vez, vale el último.'
+                        : ''}
+                    </p>
+                    <fieldset className="opciones">
+                      <legend>¿Qué le decís?</legend>
+                      {(
+                        [
+                          ['a-favor', 'Me parece bien'],
+                          ['en-contra', 'Me parece mal'],
+                          ['matiz', 'Bien, pero con matices'],
+                        ] as const
+                      ).map(([valor, etiqueta]) => (
+                        <div className="opcion" key={valor}>
+                          <input
+                            type="radio"
+                            id={`consejo-${valor}`}
+                            name="consejo"
+                            checked={posturaConsejo === valor}
+                            onChange={() => {
+                              setPosturaConsejo(valor);
+                            }}
+                          />
+                          <label htmlFor={`consejo-${valor}`}>{etiqueta}</label>
+                        </div>
+                      ))}
+                    </fieldset>
+                    <div className="campo">
+                      <label htmlFor="razones-consejo">¿Por qué? Contá tus razones.</label>
+                      <span className="ayuda" id="ayuda-consejo">
+                        Mínimo 40 caracteres. Sin razones no es un consejo, es un voto disfrazado —
+                        y acá no se vota. Lo único que puede cambiarle la cabeza a quien decide es
+                        tu porqué.
+                      </span>
+                      <textarea
+                        id="razones-consejo"
+                        required
+                        minLength={40}
+                        aria-describedby="ayuda-consejo"
+                        value={razonesConsejo}
+                        onChange={(e) => {
+                          setRazonesConsejo(e.target.value);
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             {formulario === 'binaria' && (
               <fieldset className="opciones">
                 <legend>¿Estás de acuerdo con este texto?</legend>
@@ -802,12 +917,18 @@ export default function Decision(): ReactNode {
                 Elegí una mención para poder enviar tu respuesta.
               </p>
             )}
+            {faltaElConsejo && (
+              <p className="suave" id="falta-consejo">
+                Elegí qué le decís y escribí tus razones (mínimo 40 caracteres) para poder enviarlo.
+              </p>
+            )}
 
             <button
               className="boton"
               type="submit"
-              disabled={enCurso !== undefined || faltaLaMencion}
+              disabled={enCurso !== undefined || faltaLaMencion || faltaElConsejo}
               {...(faltaLaMencion ? { 'aria-describedby': 'falta-mencion' } : {})}
+              {...(faltaElConsejo ? { 'aria-describedby': 'falta-consejo' } : {})}
             >
               {enCurso === 'papeleta'
                 ? 'Enviando…'

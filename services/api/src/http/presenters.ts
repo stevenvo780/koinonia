@@ -218,22 +218,25 @@ export function propuestaDetalleDto(
  * (que el dominio no debería producir) cae al método por defecto para no romper la papeleta con
  * un identificador que el cliente no entiende.
  */
+/**
+ * El método de una decisión, para el contrato público.
+ *
+ * ═══ Por qué NO hay una lista escrita a mano ═══
+ *
+ * Acá había una: nueve comparaciones `kind === '…'` y, si ninguna casaba, `return 'simple-majority'`.
+ * Un respaldo silencioso. El día que el motor ganó un método nuevo, las decisiones de ese método
+ * empezaron a decir que eran de mayoría simple — sin error, sin aviso, con la pantalla dibujando el
+ * formulario equivocado. Se descubrió porque una prueba de punta a punta comparó lo que abrió con lo
+ * que le devolvieron; leyendo el código no se ve, porque el código está «bien».
+ *
+ * Ahora los dos tipos tienen que coincidir y lo comprueba el compilador: si el motor gana un método
+ * que el contrato no tiene, esto deja de compilar en vez de mentir en silencio. El único respaldo
+ * que queda es el que significa algo — una decisión en borrador todavía no tiene método elegido.
+ */
 function metodoDe(state: DecisionState): MetodoSoportado {
   const kind = state.config?.method.kind;
-  if (
-    kind === 'simple-majority' ||
-    kind === 'supermajority' ||
-    kind === 'unanimity' ||
-    kind === 'sociocratic-consent' ||
-    kind === 'score' ||
-    kind === 'irv' ||
-    kind === 'majority-judgment' ||
-    kind === 'condorcet-schulze' ||
-    kind === 'deliberative-sortition'
-  ) {
-    return kind;
-  }
-  return 'simple-majority';
+  if (kind === undefined) return 'simple-majority';
+  return kind;
 }
 
 export function decisionResumenDto(
@@ -357,6 +360,36 @@ export function escalaDeMencionesDto(
   return config.method.scale.grades.map((grado) => ({ id: grado.id, etiqueta: grado.label }));
 }
 
+/**
+ * Lo que la pantalla necesita saber en un proceso de consejo. `undefined` en cualquier otro método.
+ *
+ * Los consejos se cuentan por PERSONAS distintas y no por papeletas, igual que el escrutinio: quien
+ * cambia de parecer y vuelve a aconsejar no suma dos. Si acá se contaran papeletas, la pantalla
+ * diría «ya van tres» con dos personas y quien decide se encontraría con que no puede cerrar.
+ */
+function procesoDeConsejoDto(
+  state: DecisionState,
+  quien: MemberId | undefined,
+): DecisionDetalle['procesoDeConsejo'] {
+  const metodo = state.config?.method;
+  if (metodo?.kind !== 'advice-process') return undefined;
+
+  const consejeros = new Set<MemberId>();
+  let yaAconseje = false;
+  for (const papeleta of state.ballots) {
+    if (papeleta.payload.kind !== 'advice') continue;
+    consejeros.add(papeleta.voter);
+    if (papeleta.voter === quien) yaAconseje = true;
+  }
+
+  return {
+    decidoYo: quien !== undefined && quien === metodo.decider,
+    consejosMinimos: metodo.minAdvisors,
+    consejosDados: consejeros.size,
+    yaAconseje,
+  };
+}
+
 export function decisionDetalleDto(
   id: string,
   state: DecisionState,
@@ -369,6 +402,7 @@ export function decisionDetalleDto(
   const enPadron =
     quien !== undefined && (config?.electorate.members.some((m) => m.memberId === quien) ?? false);
   const escalaDeMenciones = escalaDeMencionesDto(config);
+  const procesoDeConsejo = procesoDeConsejoDto(state, quien);
   return {
     ...decisionResumenDto(id, state, titulo),
     cuerpoVersion: cuerpo,
@@ -377,6 +411,7 @@ export function decisionDetalleDto(
     yaVotaste: quien !== undefined && yaVotasteEnEstaRonda(state, quien),
     objeciones: [...objecionesEnPie(state)],
     ...(escalaDeMenciones === undefined ? {} : { escalaDeMenciones }),
+    ...(procesoDeConsejo === undefined ? {} : { procesoDeConsejo }),
     ...(enPadron
       ? {}
       : {

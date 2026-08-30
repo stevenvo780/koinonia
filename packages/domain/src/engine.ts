@@ -94,6 +94,7 @@ import {
   totalWeight,
   type WeightResolver,
 } from './tally/common.js';
+import { tallyAdviceProcess } from './tally/advice-process.js';
 import { type ObjectionRecord, tallyConsent } from './tally/consent.js';
 import { tallyCondorcetSchulze } from './tally/condorcet-schulze.js';
 import { tallyIrv } from './tally/irv.js';
@@ -1228,6 +1229,8 @@ async function runMethod(
       return tallyUnanimity(config, ballots);
     case 'sociocratic-consent':
       return tallyConsent(config, ballots, { round, objections });
+    case 'advice-process':
+      return tallyAdviceProcess(config, ballots);
     case 'score':
       return tallyScore(config, ballots);
     case 'irv':
@@ -1583,12 +1586,22 @@ function passesFor(
             : input.approve + input.reject;
       return den > 0 && input.approve === den;
     }
+    /*
+     * El proceso de consejo entra en la misma rama que los demás, y por su propio motivo: esta función existe
+     * para saber si un resultado ya es INEVITABLE contando los que faltan por votar. En el proceso
+     * de consejo nada es inevitable hasta que quien decide decida — puede resolver en contra de
+     * todos los consejos, que es el método funcionando, no fallando. Decir «ya está aprobada»
+     * porque todo el mundo aconsejó a favor sería exactamente la confusión que este método existe
+     * para deshacer.
+     */
+
     case 'sociocratic-consent':
     case 'score':
     case 'irv':
     case 'majority-judgment':
     case 'condorcet-schulze':
     case 'deliberative-sortition':
+    case 'advice-process':
       return false;
   }
 }
