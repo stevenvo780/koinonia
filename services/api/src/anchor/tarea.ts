@@ -86,6 +86,17 @@ export interface TareaDeAnclajeOptions {
 }
 
 export interface TareaDeAnclaje {
+  /**
+   * Los proveedores que entrarían en un corte nuevo, y los de una maduración.
+   *
+   * Están en la interfaz para poder comprobar la cadencia de los testigos —`correoCadaMs`— sin
+   * montar un ciclo entero contra una base real. La alternativa era sacar el freno a una función
+   * pura y probarlo ahí, que habría dejado sin comprobar lo único que de verdad importa: que la
+   * tarea la USE. Ese hueco —la pieza correcta, desconectada— ya mordió tres veces en este
+   * proyecto.
+   */
+  proveedoresDeCorte(): Promise<readonly AnchorProvider[]>;
+  proveedoresDeMaduracion(): Promise<readonly AnchorProvider[]>;
   /** Enciende los dos ritmos. Idempotente. */
   arrancar(): void;
   /** Apaga los temporizadores. Un ciclo en vuelo termina; no se corta a medias. */
@@ -277,9 +288,49 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
     }
   }
 
-  async function proveedores(client: PgClient): Promise<readonly AnchorProvider[]> {
-    if (options.providers !== undefined) return options.providers;
-    return proveedoresDesde(config, ahora, await cabecerasGuardadas(client));
+  /**
+   * Cuándo se le pidió por última vez la firma a los testigos de correo.
+   *
+   * Se mira `created_at` y no `updated_at`: `updated_at` se mueve también al madurar —al recoger un
+   * acuse—, y si se usara ése, un testigo que responde reiniciaría el reloj y volvería a recibir
+   * correo enseguida. Lo que hay que espaciar es el ENVÍO.
+   */
+  async function ultimoEnvioATestigos(client: PgClient): Promise<number | undefined> {
+    const { rows } = await client.query<{ cuando: string | null }>(
+      `SELECT max(created_at)::text AS cuando FROM governance.anchor_attempt
+        WHERE independence_class = 'human-witness'`,
+    );
+    const cuando = rows[0]?.cuando;
+    return cuando === null || cuando === undefined ? undefined : Date.parse(cuando);
+  }
+
+  /**
+   * Los proveedores de este ciclo.
+   *
+   * `nuevoCorte` distingue cortar de madurar, y es lo que decide si los testigos de correo entran.
+   * Al MADURAR entran siempre: hay acuses pendientes que recoger, y no recogerlos dejaría el
+   * anclaje colgado para siempre. Al CORTAR entran sólo si pasó `correoCadaMs` desde el último
+   * envío — ver el porqué largo junto a esa opción en `configuracion.ts`: con el corte horario y sin
+   * este freno, cada testigo recibía veinticuatro peticiones de firma al día.
+   *
+   * El freno se aplica DESPUÉS de `options.providers`, y a propósito: si sólo filtrara los que
+   * construye la configuración, una prueba que inyecta proveedores no ejercitaría nada y la cadencia
+   * quedaría probada en el vacío. La cadencia es de la tarea, no de dónde salga la lista.
+   */
+  async function proveedores(
+    client: PgClient,
+    nuevoCorte: boolean,
+  ): Promise<readonly AnchorProvider[]> {
+    const todos =
+      options.providers ?? proveedoresDesde(config, ahora, await cabecerasGuardadas(client));
+    if (!nuevoCorte) return todos;
+
+    const ultimo = await ultimoEnvioATestigos(client);
+    if (ultimo === undefined) return todos;
+    const desde = Date.parse(ahora()) - ultimo;
+    if (desde >= config.correoCadaMs) return todos;
+
+    return todos.filter((proveedor) => proveedor.meta.independenceClass !== 'human-witness');
   }
 
   async function ciclo(
@@ -287,7 +338,7 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
     poll: boolean,
   ): Promise<AnchorCycleResult | undefined> {
     return conCliente(async (client) => {
-      const activos = await proveedores(client);
+      const activos = await proveedores(client, !poll);
       const clases = new Map<string, IndependenceClass>(
         activos.map((proveedor) => [proveedor.meta.id, proveedor.meta.independenceClass]),
       );
@@ -393,6 +444,19 @@ export function crearTareaDeAnclaje(options: TareaDeAnclajeOptions): TareaDeAncl
   }
 
   return {
+    /**
+     * Los proveedores que entrarían en un CORTE nuevo, y en una MADURACIÓN.
+     *
+     * Están en la interfaz sólo para poder comprobar la cadencia de los testigos sin montar un
+     * ciclo entero contra una base real. Es la alternativa a probar el freno sobre una función pura
+     * aparte, que habría dejado sin comprobar lo único que importa: que la tarea LO USE.
+     */
+    proveedoresDeCorte(): Promise<readonly AnchorProvider[]> {
+      return conCliente((client) => proveedores(client, true));
+    },
+    proveedoresDeMaduracion(): Promise<readonly AnchorProvider[]> {
+      return conCliente((client) => proveedores(client, false));
+    },
     arrancar(): void {
       if (temporizadores.length > 0) return;
       if (!config.activo) {

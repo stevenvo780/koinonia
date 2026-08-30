@@ -96,6 +96,22 @@ export interface ConfiguracionDeAnclaje {
   readonly bloquesUrl: string;
   readonly git: ConfiguracionDeGit | undefined;
   readonly correo: ConfiguracionDeCorreo | undefined;
+  /**
+   * Cada cuánto se le pide a un testigo de carne y hueso que firme. **No** cada checkpoint.
+   *
+   * El corte de checkpoint es cada hora, y todos los proveedores corrían en cada corte. Para el
+   * anclaje por correo eso significa **veinticuatro correos al día a cada testigo**, cada uno
+   * pidiéndole dos órdenes en la consola y una respuesta. Nadie acepta eso, y por eso el padrón
+   * seguía vacío: el problema no era encontrar gente dispuesta, era que lo que se le pedía era
+   * inaceptable.
+   *
+   * Espaciarlo no debilita la garantía: los checkpoints encadenan, así que un testigo que firma el
+   * de hoy está atestiguando también todo lo anterior. Lo que cambia es cuán reciente es la última
+   * constancia firme —«lo ocurrido desde el último anclaje firme podría alterarse», que es
+   * exactamente lo que el verificador ya dice—. Un día de ventana a cambio de que la clase exista
+   * es un trato bueno; veinticuatro correos diarios a cambio de una clase que nadie sostiene, no.
+   */
+  readonly correoCadaMs: number;
   /** Por qué falta cada proveedor que falta. Se registra al arrancar: un hueco callado no existe. */
   readonly motivosDeAusencia: readonly string[];
 }
@@ -417,6 +433,7 @@ export function configuracionDeAnclajeDesdeEntorno(
   return {
     activo,
     checkpointCadaMs: entero(env, 'KOINONIA_ANCLAJE_CHECKPOINT_MINUTOS', 60) * 60_000,
+    correoCadaMs: entero(env, 'KOINONIA_ANCLAJE_CORREO_CADA_HORAS', 24) * 60 * 60_000,
     pollCadaMs: entero(env, 'KOINONIA_ANCLAJE_POLL_MINUTOS', 60) * 60_000,
     pendientesQueSeSiguen: entero(env, 'KOINONIA_ANCLAJE_PENDIENTES', 24),
     calendarios: usados,

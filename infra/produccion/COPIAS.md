@@ -278,6 +278,31 @@ de la VPS no es sólo un problema de logística — cualquier destino externo ti
 mínimo, el mismo nivel de acceso restringido y cifrado en tránsito/reposo que hoy sostiene la propia
 VPS. Eso es parte de por qué esta decisión no se tomó por defecto acá.
 
+### 8.1. Lo que SÍ se puede hacer hoy, sin credenciales de nadie
+
+Todo lo de arriba sigue en pie: el destino externo definitivo es una decisión con credenciales que
+esta documentación no puede tomar. Pero mientras tanto hay algo que reduce el riesgo de golpe y no
+depende de nadie más — **traerse la copia a una máquina propia**:
+
+```bash
+# La más reciente, verificando su huella al llegar.
+ssh root@167.114.118.213 'ls -t /opt/koinonia/copias/*.dump | head -1' \
+  | xargs -I{} scp root@167.114.118.213:{} .
+ssh root@167.114.118.213 'ls -t /opt/koinonia/copias/*.dump.sha256 | head -1' \
+  | xargs -I{} scp root@167.114.118.213:{} .
+sha256sum -c ./*.dump.sha256
+```
+
+Con eso, perder la VPS pasa de «se pierde todo» a «se pierde lo de hoy». No es un sistema de copias
+fuera de sitio y no hay que llamarlo así: es una persona acordándose. Pero una copia en otra máquina
+vale infinitamente más que ninguna, y cuesta un minuto.
+
+**Con la misma advertencia de arriba, y va en serio:** ese fichero lleva el padrón con datos
+personales. La máquina a la que lo traigas tiene que sostener el mismo cuidado que sostiene la VPS
+—disco cifrado, y no dejarlo en una carpeta compartida ni en un servicio de sincronización— o el
+remedio abre un agujero peor que el que cierra. Si no podés sostener eso, es mejor no bajarlo y
+apurar el destino externo.
+
 ## 9. Referencia rápida: qué NO hacer
 
 - No corras `restaurar-copia.sh --produccion` fuera de una terminal interactiva con una persona

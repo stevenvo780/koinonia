@@ -270,7 +270,15 @@ export default function ArquitecturaPantalla(): ReactNode {
           ya usa cualquiera que suba código. No hay que instalar nada nuestro ni tener servidor: te
           llega el resumen, lo firmás con tu llave, y desde ese momento tu firma es una de las que
           hacen falta para que una constancia sea firme. <strong>La llave se queda con vos</strong>;
-          si viviera acá, no contaría.
+          si viviera acá, no contaría. Son diez minutos para empezar y{' '}
+          <strong>un correo al día</strong> después; si un día no respondés, no se rompe nada.{' '}
+          <a
+            href="https://github.com/stevenvo780/koinonia/blob/main/docs/SER-TESTIGO.md"
+            rel="noreferrer"
+          >
+            Acá está el procedimiento entero
+          </a>
+          , escrito para quien lo va a hacer y no para quien administra.
         </li>
         <li>
           <strong>Levantá tu propia copia.</strong> Todo el programa es libre, con una licencia que

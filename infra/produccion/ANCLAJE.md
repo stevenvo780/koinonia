@@ -210,20 +210,57 @@ cuenta acuses de recibo de **dominios distintos** (mínimo configurable, por def
    el registro del orquestador). Sin DKIM el correo sale sin firmar y una parte previsible acaba en
    spam, que se parece mucho a un testigo que calla.
 
-### 7.3. Una brecha operativa que conviene conocer antes de decidir el resto
+### 7.3. La brecha operativa que había aquí, y cómo quedó cerrada (2026-08-30)
 
-El verificador independiente (`@koinonia/verificador`, `packages/verifier-cli`) necesita un paquete
-completo — eventos, checkpoints, cabeceras de Bitcoin, manifiesto — que produce `buildExport()`
-(`services/api/src/ledger/export.ts`). **Hoy esa función no está conectada a ninguna ruta HTTP.** La
-única exportación que expone el servidor, `GET /integridad/exportar`, usa `exportarTodo()`
-(`services/api/src/http/service.ts:3446`), que sólo trae la lista de eventos — sin checkpoints ni
-recibos de anclaje — y que el verificador **no puede leer** (le faltan los ficheros que exige su
-manifiesto). Hoy, `buildExport()` sólo se invoca desde las pruebas de integración
-(`tests/integration/anclaje-y-export.test.ts`, `http-deliberacion.test.ts`). Para que alguien de la
-veeduría pueda correr el verificador contra producción sin acceso directo a la base, hace falta o (a)
-exponer `buildExport()` en una ruta HTTP nueva, o (b) un script que lo invoque directamente contra
-`DATABASE_URL` de producción y escriba el paquete a disco. Ninguna de las dos existe todavía; es
-trabajo de código, fuera del alcance de este encargo, y queda anotado aquí para no perderlo.
+Esta sección decía que el verificador independiente necesita un paquete completo que produce
+`buildExport()`, y que **esa función no estaba conectada a ninguna ruta HTTP**: la única exportación
+del servidor, `GET /integridad/exportar`, devuelve otra cosa que el verificador no puede leer.
+Terminaba diciendo que hacía falta o exponerla en una ruta nueva o escribir un guion, que ninguna de
+las dos existía, y que quedaba anotado «para no perderlo».
+
+Se hizo la primera: **`GET /integridad/paquete.tar.gz`**. No pide sesión —si comprobar el historial
+exigiera cuenta, quien administra decidiría quién puede auditarlo—, y el botón de la pantalla de
+comprobación apunta ahí. `tests/integration/descarga-verificable.test.ts` recorre el camino entero y
+real: ruta HTTP, fichero en disco, `tar -xzf` del sistema, `directorySource`, `verificarExport`.
+
+Comprobado contra producción, como lo haría cualquiera:
+
+```
+$ curl -s -O -J https://koinonia-udea.stevenvallejo.com/api/integridad/paquete.tar.gz
+$ tar -xzf historial-koinonia.tar.gz -C x
+$ node packages/verifier-cli/dist/cli.js x
+  ✓ 2337 registros: escritura canónica y resúmenes correctos
+  ✓ 124 sellos recalculados desde cero
+  ✓ 123 tramos de continuidad verificados
+  ✗ falta la confirmación externa
+  ÁMBAR — Las cuentas cuadran; falta la confirmación externa.
+```
+
+El ámbar es correcto y hay que dejarlo dicho: sólo está activa la clase `blockchain`, y el quórum
+son dos clases distintas. Ver §7.4.
+
+### 7.4. Cada cuánto se le escribe a un testigo, y por qué era el verdadero freno
+
+Hasta el 2026-08-30, TODOS los proveedores corrían en cada corte de checkpoint. El corte es horario,
+así que a cada testigo de correo le habrían llegado **veinticuatro peticiones de firma al día** —y
+cada una no es un aviso, es trabajo: dos órdenes en la consola y una respuesta firmada.
+
+Eso, y no la falta de voluntarios, es la razón por la que el padrón seguía vacío. La pantalla de
+arquitectura decía «falta gente, no programa»; era verdad a medias, porque faltaba gente a la que se
+le estaba pidiendo algo inaceptable.
+
+Ahora el envío a testigos tiene su propia cadencia, `KOINONIA_ANCLAJE_CORREO_CADA_HORAS`, por
+defecto **24**. No debilita la garantía: los checkpoints encadenan, así que quien firma el de hoy
+atestigua también todo lo anterior; lo que cambia es cuán reciente es la última constancia firme, que
+es exactamente la salvedad que el verificador ya dice en voz alta.
+
+La **maduración** —recoger los acuses que ya mandaron— sigue corriendo en cada vuelta, y eso importa:
+si el freno se aplicara también ahí, un acuse llegado dentro de la ventana no se recogería nunca y el
+anclaje se quedaría en «pendiente» para siempre. `services/api/test/anchor-cadencia-testigos.test.ts`
+lo fija, y se comprobó rompiéndolo.
+
+Para invitar a alguien a ser testigo hay un procedimiento escrito, pensado para quien lo va a hacer y
+no para quien administra: `docs/SER-TESTIGO.md`.
 
 ## 8. Cómo encenderlo
 
