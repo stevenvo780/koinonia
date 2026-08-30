@@ -33,7 +33,11 @@ async function reenviar(request: NextRequest, ruta: string[]): Promise<NextRespo
   if (auth !== null) cabeceras.set('authorization', auth);
   const tipo = request.headers.get('content-type');
   if (tipo !== null) cabeceras.set('content-type', tipo);
-  cabeceras.set('accept', 'application/json');
+  // Se reenvía lo que pidió quien llama, y sólo se pone JSON por defecto si no pidió nada. Estaba
+  // fijado a `application/json` para todo, que era mentirle a la API sobre lo que se espera: hoy no
+  // la mira, pero el día que la mire, una descarga de historial pediría JSON y recibiría otra cosa.
+  const acepta = request.headers.get('accept');
+  cabeceras.set('accept', acepta ?? 'application/json');
 
   let cuerpo: string | undefined;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -49,7 +53,22 @@ async function reenviar(request: NextRequest, ruta: string[]): Promise<NextRespo
       cache: 'no-store',
     });
 
-    const salida = new NextResponse(await respuesta.text(), {
+    /*
+     * El cuerpo se copia como BYTES, no como texto.
+     *
+     * Acá decía `await respuesta.text()`, que decodifica como UTF-8 y sustituye por el carácter de
+     * reemplazo todo byte que no forme una secuencia válida. Con JSON no se nota nunca. Con un
+     * binario lo destruye: la descarga del historial verificable —un `.tar.gz`— llegaba con su
+     * `1f 8b 08` convertido en `1f ef bf bd 08`, y `tar` contestaba «not in gzip format».
+     *
+     * Costó encontrarlo porque la prueba de integración usa `app.inject` contra la API y no pasa por
+     * acá: las dos mitades verdes y el defecto justo en la costura. Lo cazó bajarse el fichero de
+     * producción y abrirlo, que es lo que iba a hacer la persona.
+     *
+     * Y estaba escrito arriba, en la cabecera de este mismo fichero: «no transforma nada, devuelve
+     * la respuesta tal cual». Lo que fallaba no era la intención, era esta línea.
+     */
+    const salida = new NextResponse(await respuesta.arrayBuffer(), {
       status: respuesta.status,
       headers: {
         'content-type': respuesta.headers.get('content-type') ?? 'application/json',

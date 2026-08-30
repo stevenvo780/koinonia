@@ -283,3 +283,38 @@ test('la frase que sostiene la pantalla está, verbatim, en los tres estados', a
     );
   }
 });
+
+test('la descarga del historial llega entera por el camino del navegador, no sólo por la API', async ({
+  page,
+}) => {
+  /*
+   * ═══ Por qué este caso pasa por `page.request` y no por la API directa ═══
+   *
+   * Porque el defecto vivía exactamente ahí, y por eso sobrevivió a todo lo demás.
+   *
+   * La cookie de sesión tiene que ser de primera parte, así que el navegador no habla con la API:
+   * habla con `/api/...` del propio sitio, y `apps/web/app/api/[...ruta]/route.ts` reenvía. Ese
+   * proxy copiaba el cuerpo con `await respuesta.text()` —un decodificado UTF-8— y sustituía por el
+   * carácter de reemplazo todo byte que no formara una secuencia válida. Con JSON no se nota nunca.
+   * Con el `.tar.gz` del historial verificable, el `1f 8b 08` de la cabecera gzip llegaba como
+   * `1f ef bf bd 08` y `tar` contestaba «not in gzip format».
+   *
+   * La prueba de integración de esa descarga usa `app.inject` contra la API y NO pasa por el proxy;
+   * los ayudantes de este directorio hablan con `entorno().apiUrl`, que tampoco. Las dos mitades en
+   * verde y el defecto justo en la costura: lo único que lo caza es pedirlo por donde lo pide una
+   * persona.
+   *
+   * Se comprueban los bytes y no «que descargue algo»: cualquier cuerpo no vacío pasaría eso, y el
+   * cuerpo corrupto pesaba 1,8 MB.
+   */
+  const respuesta = await page.request.get('/api/integridad/paquete.tar.gz');
+  expect(respuesta.status()).toBe(200);
+  expect(respuesta.headers()['content-type']).toBe('application/gzip');
+
+  const cuerpo = await respuesta.body();
+  expect(cuerpo.length).toBeGreaterThan(0);
+
+  // La firma de gzip: 0x1f 0x8b, y 0x08 por «deflate». Es el byte 0x8b el que el decodificado a
+  // texto destruía, por ser el primero que no forma una secuencia UTF-8 válida.
+  expect([cuerpo[0], cuerpo[1], cuerpo[2]]).toEqual([0x1f, 0x8b, 0x08]);
+});
