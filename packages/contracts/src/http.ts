@@ -2367,7 +2367,18 @@ export const hechoDelHistorial = z.object({
 export type HechoDelHistorial = z.infer<typeof hechoDelHistorial>;
 
 export const historial = z.object({
+  /** Cuántas cosas hay escritas en total, incluido el sellado automático. */
   total: z.number().int().nonnegative(),
+  /**
+   * De ésas, cuántas se listan: todo salvo el sellado automático.
+   *
+   * Va separado de `total` porque el sellado escribe unos siete hechos por hora, para siempre, y
+   * llegó a ser el 99,6 % de lo escrito. Enseñar sólo `total` hacía creer que el grupo había hecho
+   * miles de cosas cuando había hecho cinco.
+   */
+  enLaLista: z.number().int().nonnegative(),
+  /** Y cuántas son del sellado automático, que se cuenta pero no se lista una por una. */
+  delSellado: z.number().int().nonnegative(),
   desde: instantMs.optional(),
   hasta: instantMs.optional(),
   /** Los últimos hechos, del más reciente al más viejo. */

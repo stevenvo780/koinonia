@@ -60,14 +60,14 @@ export default function Entrar(): ReactNode {
       setCorreoEnviado(correo);
     } else if (resultado.estado === 'fallo') {
       setError(resultado.error);
-      enfocarTrasPintar(() => campo.current?.focus());
+      enfocarTrasPintar(() => campo.current);
     }
   }
 
   function volverAlFormulario(): void {
     setEnviado(undefined);
     setError(undefined);
-    enfocarTrasPintar(() => campo.current?.focus());
+    enfocarTrasPintar(() => campo.current);
   }
 
   return (

@@ -228,12 +228,11 @@ export default function DetalleIniciativa(): ReactNode {
     if (ejecutadaPara === 'cargando') return false;
 
     const enfocarResultado = (): void => {
-      enfocarTrasPintar(() => {
-        (destinoFoco === undefined
+      enfocarTrasPintar(() =>
+        destinoFoco === undefined
           ? resultadoAccionRef.current
-          : document.getElementById(destinoFoco)
-        )?.focus();
-      });
+          : document.getElementById(destinoFoco),
+      );
     };
 
     // El cerrojo síncrono y la clave de idempotencia los pone `useAccionUnica`. Lo que queda acá
@@ -1025,9 +1024,7 @@ function TareaVisible({
       } else {
         setResumenAbierto((actual) => ({ ...actual, [identificador]: contenido }));
       }
-      enfocarTrasPintar(() => {
-        document.getElementById(`privado-${tipo}-${identificador}`)?.focus();
-      });
+      enfocarTrasPintar(() => document.getElementById(`privado-${tipo}-${identificador}`));
     } catch (fallo: unknown) {
       if (!controlador.signal.aborted) setErrorPrivado(fallo);
     } finally {
@@ -1050,9 +1047,7 @@ function TareaVisible({
         return resto;
       });
     }
-    enfocarTrasPintar(() => {
-      document.getElementById(`abrir-${tipo}-${identificador}`)?.focus();
-    });
+    enfocarTrasPintar(() => document.getElementById(`abrir-${tipo}-${identificador}`));
   }
 
   return (

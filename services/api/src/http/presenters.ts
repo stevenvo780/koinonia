@@ -1313,7 +1313,14 @@ const SOBRE_QUE: Readonly<Record<string, string>> = {
   decision: 'Una votación',
   deliberation: 'Una conversación',
   initiative: 'Lo que se está haciendo',
-  spine: 'La plataforma',
+  /*
+   * `'spine'` estaba escrito acá y NUNCA casaba: el tipo de agregado real es `'#ledger'`
+   * (`SPINE_AGGREGATE_TYPE`, en `packages/crypto/src/chain.ts`). La entrada era letra muerta y
+   * todos esos hechos caían al `?? 'La plataforma'` de abajo — que daba el mismo texto, y por eso
+   * nadie lo notó nunca. Se escriben las dos claves de verdad.
+   */
+  '#ledger': 'El registro mismo',
+  '#anclaje': 'El sellado externo',
 };
 
 /**
@@ -1323,7 +1330,7 @@ const SOBRE_QUE: Readonly<Record<string, string>> = {
  * «papeleta emitida», es «alguien respondió». Un nombre interno traducido a golpe de expresión
  * regular sigue siendo un nombre interno con espacios.
  */
-const QUE_PASO: Readonly<Record<string, string>> = {
+export const QUE_PASO: Readonly<Record<string, string>> = {
   LedgerAbierto: 'Se abrió el historial',
   AgregadoAbierto: 'Empezó a registrarse algo nuevo',
   CheckpointEmitido: 'Se selló el historial hasta acá',
@@ -1362,11 +1369,40 @@ const QUE_PASO: Readonly<Record<string, string>> = {
   TaskChangesRequested: 'Se pidieron cambios en una entrega',
   TaskReviewAccepted: 'Se aceptó una entrega',
   TaskReoffered: 'Una tarea pasó a otra persona',
+  /*
+   * Estos diez faltaban, y no eran casos raros: objeciones, anulaciones y prórrogas son de lo más
+   * cargado que puede pasar en una votación, y todos salían en pantalla como «Quedó registrado
+   * algo». El respaldo genérico existe para el hecho que alguien añada mañana, no para tapar diez
+   * que ya existen hoy. La prueba de más abajo —«ningún tipo que el motor sepa escribir se queda
+   * sin frase»— es lo que impide que la tabla vuelva a quedarse atrás en silencio.
+   */
+  ObjectionRaised: 'Alguien objetó',
+  ObjectionAdmitted: 'Se admitió una objeción',
+  ObjectionDismissed: 'Se desestimó una objeción',
+  ObjectionWithdrawn: 'Alguien retiró su objeción',
+  BallotVoided: 'Se anuló una respuesta',
+  DecisionRejected: 'Una votación no salió aprobada',
+  DecisionAnnulled: 'Se anuló una votación',
+  ResultComputed: 'Se contó el resultado',
+  WindowExtended: 'Se alargó el plazo para responder',
+  SeedRevealed: 'Se destapó el azar con el que se sorteó',
+  /*
+   * El sellado automático. No se lista en la pantalla del historial —`verHistorial` lo cuenta
+   * aparte y explica por qué—, pero SÍ tiene nombre acá: el mismo presentador sirve a quien mire
+   * un hecho concreto, y «Quedó registrado algo» sobre un tipo que sí conocemos no es prudencia,
+   * es no haberlo escrito.
+   */
+  AnclajeIntentado: 'Se mandó el resumen a un testigo de fuera',
+  AnclajeConfirmado: 'Un testigo de fuera confirmó el resumen',
+  AnclajeFallido: 'Un testigo de fuera no pudo confirmar el resumen',
+  AnclajeEstadoPublicado: 'Se publicó cómo va la confirmación de fuera',
 };
 
 export function historialDto(leido: HistorialLeido): Historial {
   return {
     total: leido.total,
+    enLaLista: leido.enLaLista,
+    delSellado: leido.delSellado,
     ...(leido.desde === undefined ? {} : { desde: leido.desde }),
     ...(leido.hasta === undefined ? {} : { hasta: leido.hasta }),
     hechos: leido.hechos.map((hecho) => {

@@ -57,11 +57,13 @@ function Dibujo(): ReactNode {
         <title id="dib-t">Cómo se reparte el testimonio</title>
         <desc id="dib-d">
           En el centro, este servidor, que cada cierto tiempo publica un resumen de todo lo que
-          pasó. Ese resumen sale hacia cuatro tipos de testigo independientes entre sí: un registro
-          público mundial, dos copias del proyecto en sitios distintos, personas con buzón propio, y
-          registros de terceros. Para que una constancia se dé por firme hacen falta dos testigos de
-          tipos distintos. Aparte, y sin hablar con el servidor, cualquiera puede descargar la
-          historia entera y volver a calcularla en su propia máquina.
+          pasó. El diseño manda ese resumen a cuatro tipos de testigo independientes entre sí: un
+          registro público mundial, dos copias del proyecto en sitios distintos, personas con buzón
+          propio, y registros de terceros. Hoy sólo funciona el primero; los otros tres esperan a
+          que haya gente que ponga su llave. Para que una constancia se dé por firme hacen falta dos
+          testigos de tipos distintos, así que hoy ninguna lo está. Aparte, y sin hablar con el
+          servidor, cualquiera puede descargar la historia entera y volver a calcularla en su propia
+          máquina.
         </desc>
 
         {/*
@@ -175,34 +177,49 @@ export default function ArquitecturaPantalla(): ReactNode {
       </p>
 
       <p>
-        Ese resumen se manda afuera, a testigos que no dependen de mí. Y hay cuatro tipos, elegidos
-        justamente porque fallan de maneras distintas:
+        Ese resumen se manda afuera, a testigos que no dependen de mí. El diseño tiene cuatro tipos,
+        elegidos justamente porque fallan de maneras distintas. Abajo, junto a cada uno, dice si hoy
+        está funcionando: <strong>hoy funciona uno solo</strong>, y más abajo está el porqué.
       </p>
 
       <Dibujo />
 
       <dl className="tipos-testigo">
-        <dt>Un registro público mundial</dt>
+        <dt>
+          Un registro público mundial <em className="anda">— funcionando</em>
+        </dt>
         <dd>
           El resumen queda sellado en un registro que no es de nadie y que no se puede reescribir.
-          Para desmentirlo habría que rehacer ese registro entero.
+          Para desmentirlo habría que rehacer ese registro entero. Es el único que anda hoy, y por
+          sí solo no alcanza: hace falta un segundo tipo.
         </dd>
 
-        <dt>Dos copias del proyecto en sitios distintos</dt>
+        <dt>
+          Dos copias del proyecto en sitios distintos <em className="no-anda">— apagado</em>
+        </dt>
         <dd>
           El resumen se publica firmado en dos alojamientos independientes. Para desmentirlo habría
-          que entrar en los dos y cuadrar la mentira en ambos.
+          que entrar en los dos y cuadrar la mentira en ambos. Está apagado porque no hay todavía un
+          listado de quién puede firmar por la veeduría, y un listado vacío admitiría cualquier
+          firma — incluida la mía, que es justo lo que esto tiene que impedir.
         </dd>
 
-        <dt>Personas con su propio buzón</dt>
+        <dt>
+          Personas con su propio buzón <em className="no-anda">— apagado</em>
+        </dt>
         <dd>
           El resumen llega por correo a varias personas de dominios distintos, que responden
           firmando con <strong>su</strong> propia llave. Para desmentirlo habría que conseguir que
-          todas pierdan o entreguen su buzón.
+          todas pierdan o entreguen su buzón. Está apagado porque nadie ha puesto su llave todavía.
         </dd>
 
-        <dt>Registros de terceros</dt>
-        <dd>Servicios ajenos que anotan, con fecha, que recibieron ese resumen.</dd>
+        <dt>
+          Registros de terceros <em className="no-anda">— apagado</em>
+        </dt>
+        <dd>
+          Servicios ajenos que anotan, con fecha, que recibieron ese resumen. Todavía no hay ninguno
+          dado de alta.
+        </dd>
       </dl>
 
       <h2>La regla que lo sostiene, y que es código</h2>
@@ -273,10 +290,17 @@ export default function ArquitecturaPantalla(): ReactNode {
 
       <ul>
         <li>
-          <strong>Falta gente, no programa.</strong> El tipo de testigo que son las personas está
-          construido, pero el listado de quiénes son está vacío: nadie ha puesto todavía su llave.
-          Hasta que haya ese listado, ese tipo de testigo no aporta nada — y por eso el estado
-          público es honesto en vez de verde.
+          <strong>Falta gente, no programa.</strong> Tres de los cuatro tipos de testigo están
+          construidos y apagados, y por el mismo motivo: no hay listado de quién puede firmar. El de
+          las personas espera llaves; el de las copias del proyecto espera el listado de la
+          veeduría; el de registros de terceros, que se dé alguno de alta. Un listado vacío no se
+          rellena solo y tampoco se puede dar por bueno: admitiría cualquier firma, incluida la mía,
+          que es exactamente lo que esto existe para impedir.
+          <br />
+          Consecuencia, dicha sin rodeos: como hacen falta <strong>dos</strong> tipos distintos y
+          hoy anda uno, <strong>ninguna constancia está firme todavía</strong>. La herramienta
+          independiente lo dice en ámbar, y eso no es un fallo: es la única respuesta honesta hasta
+          que alguien más ponga su llave.
         </li>
         <li>
           <strong>La ejecución todavía no está repartida.</strong> Hoy el programa corre en una sola

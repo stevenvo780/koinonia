@@ -210,6 +210,8 @@ describe('contrato del historial', () => {
   it('una línea del historial no tiene dónde poner quién lo hizo', () => {
     const parsed = historial.parse({
       total: 3,
+      enLaLista: 3,
+      delSellado: 0,
       hechos: [
         { numero: 3, cuando: 1_800_000_000_000, que: 'Alguien respondió', sobre: 'Una votación' },
       ],
@@ -227,6 +229,8 @@ describe('contrato del historial', () => {
     expect(() =>
       historial.parse({
         total: 1,
+        enLaLista: 1,
+        delSellado: 0,
         hechos: [{ numero: 0, cuando: 1, que: 'q', sobre: 's' }],
         hayMas: false,
       }),

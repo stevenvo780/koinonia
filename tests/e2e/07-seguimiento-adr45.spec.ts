@@ -358,6 +358,20 @@ test('un cambio de cuenta invalida datos privados y una respuesta tardía no los
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await sesionDestinataria;
   await page.goto(`/iniciativas/${iniciativaId}`);
+  /*
+   * Se espera a que la red calle ANTES de abrir la evidencia, y no es cautela de más.
+   *
+   * `bringToFront()` dispara un `focus` de verdad en la ventana, y el marco revalida la sesión con
+   * eso (`/api/auth/estado`). Si esa revalidación llega DESPUÉS de que la evidencia se abra, el
+   * repintado recrea el `<div role="status">` y se lleva por delante el foco que la pantalla acababa
+   * de ponerle. El resultado es una prueba intermitente: se la vio pasar 5 de 5 en una corrida y
+   * fallar en la siguiente, con el elemento presente —resuelto 23 veces— pero «inactive».
+   *
+   * Lo que se prueba es que la pantalla LLEVA el foco al contenido recién abierto; una carrera con
+   * la revalidación de sesión no es eso, y taparla bajando la aserción a un `poll` habría dejado de
+   * probar justamente lo que importa.
+   */
+  await page.waitForLoadState('networkidle');
   tarjeta = page.getByRole('article', { name: TITULO_TAREA });
   const abrir = tarjeta.getByRole('button', { name: 'Abrir evidencia' });
   await abrir.click();
@@ -627,4 +641,53 @@ test('la supresión sólo se solicita para una misma, con confirmación y sesió
   } finally {
     await api.dispose();
   }
+});
+
+/**
+ * El fallo simétrico del salto de foco: no que el fotograma falte, sino que se adelante.
+ *
+ * `apps/web/lib/foco.ts` pide el fotograma Y un plazo de respaldo, porque
+ * `requestAnimationFrame` no llega nunca en una pestaña que no repinta. La primera versión de eso
+ * se cerraba con un cerrojo incondicional, y abrió el fallo contrario: si el fotograma llega ANTES
+ * de que React haya confirmado el repintado, el elemento todavía no está en el documento, la
+ * búsqueda devuelve `null`, el cerrojo se echa igual, y el plazo —que sí habría funcionado— ya no
+ * hace nada. Foco perdido, en silencio.
+ *
+ * Se manifestaba justo acá, y de forma intermitente: la prueba de arriba pasaba 5 de 5 en una
+ * corrida y fallaba en la siguiente, con el `<div role="status">` presente —resuelto 23 veces— y
+ * «inactive» los diez segundos enteros. Tres corridas completas lo confirmaron antes de mirar el
+ * código.
+ *
+ * ═══ Por qué el guardián vive acá y no en el escenario 16 ═══
+ *
+ * Porque es el ÚNICO sitio del producto donde el elemento que recibe el foco lo crea el mismo
+ * cambio de estado que dispara el salto. En los otros catorce sitios el destino ya existe en el
+ * documento —un campo del formulario, un aviso de resultado, el campo de un diálogo que se dibuja
+ * siempre—, así que la búsqueda nunca devuelve `null` y el reintento no se ejercita.
+ *
+ * Lo comprobé: puse este mismo caso en el escenario 16, sobre `/entrar`, y con el defecto
+ * reintroducido **pasaba igual**. Una prueba que no cae cuando el defecto vuelve no es un guardián,
+ * así que se movió a donde sí cae.
+ */
+const FOTOGRAMA_DEMASIADO_PRONTO = `
+  window.requestAnimationFrame = (fn) => { queueMicrotask(fn); return 1; };
+  window.cancelAnimationFrame = () => undefined;
+`;
+
+test('abrir una evidencia lleva el foco a su contenido aunque el fotograma se adelante', async ({
+  page,
+}) => {
+  // Comprobado rompiéndolo: devolviendo a `apps/web/lib/foco.ts` el cerrojo incondicional
+  // (`hecho = true` antes de mirar si había destino), este caso se pone rojo con el foco quieto en
+  // el botón. Restaurado.
+  await page.addInitScript(FOTOGRAMA_DEMASIADO_PRONTO);
+  await ponerSesionEnNavegador(page, destinataria);
+  await page.goto(`/iniciativas/${iniciativaId}`);
+  // Que el adelanto esté puesto de verdad: sin esto la prueba pasaría con el camino normal.
+  expect(await page.evaluate(() => window.requestAnimationFrame(() => undefined))).toBe(1);
+
+  const tarjeta = page.getByRole('article', { name: TITULO_TAREA });
+  await tarjeta.getByRole('button', { name: 'Abrir evidencia' }).click();
+
+  await expect(tarjeta.getByRole('status').filter({ hasText: NOTA_RESTRINGIDA })).toBeFocused();
 });

@@ -8,10 +8,10 @@
  */
 
 import { forbiddenTermsIn } from '@koinonia/contracts';
-import { memberId } from '@koinonia/domain';
+import { DECISION_EVENT_TYPES, memberId } from '@koinonia/domain';
 import { describe, expect, it } from 'vitest';
 
-import { consensoDto, historialDto, normasDto } from '../src/http/presenters.js';
+import { consensoDto, historialDto, normasDto, QUE_PASO } from '../src/http/presenters.js';
 import { verNormas, type ConsensoCalculado, type HistorialLeido } from '../src/http/service.js';
 
 const SIN_DATOS = {
@@ -106,8 +106,16 @@ describe('consenso: «no hay grupos claros» conserva la promesa del producto', 
 });
 
 describe('historial: un índice, no un volcado', () => {
-  function leido(hechos: HistorialLeido['hechos']): HistorialLeido {
-    return { total: hechos.length, desde: 1, hasta: 2, hechos, hayMas: false };
+  function leido(hechos: HistorialLeido['hechos'], delSellado = 0): HistorialLeido {
+    return {
+      total: hechos.length + delSellado,
+      enLaLista: hechos.length,
+      delSellado,
+      desde: 1,
+      hasta: 2,
+      hechos,
+      hayMas: false,
+    };
   }
 
   it('traduce cada hecho a una frase y nunca enseña el nombre interno', () => {
@@ -126,6 +134,83 @@ describe('historial: un índice, no un volcado', () => {
     expect(dto.hechos[0]?.sobre).toBe('Una votación');
     expect(dto.hechos[0]?.enlace).toBe(`/decisiones/${'d'.repeat(32)}`);
     expect(JSON.stringify(dto)).not.toContain('BallotCast');
+  });
+
+  it('separa el sellado automático de lo demás, y da las dos cifras', () => {
+    /*
+     * La pantalla enseñaba los últimos 60 hechos en crudo y salían 52 líneas iguales que decían
+     * «Quedó registrado algo», porque la tarea de anclaje escribe ~7 por hora en el mismo historial
+     * y llegó a ser el 99,6 % de lo escrito. Las dos cifras van separadas para que la pantalla
+     * pueda decir «una cosa anotada» sin esconder que hay 2312 sellos más: contarlos aparte no es
+     * lo mismo que ocultarlos, y la diferencia es lo que esta prueba fija.
+     */
+    const dto = historialDto(
+      leido(
+        [
+          {
+            numero: 3,
+            cuando: 1_800_000_000_000,
+            tipo: 'ProblemOpened',
+            tipoDeAgregado: 'problem',
+            agregado: 'p'.repeat(32),
+          },
+        ],
+        2312,
+      ),
+    );
+
+    expect(dto.enLaLista).toBe(1);
+    expect(dto.delSellado).toBe(2312);
+    expect(dto.total).toBe(2313);
+    // Y lo que se lista es lo de la gente, no el sellado.
+    expect(dto.hechos).toHaveLength(1);
+    expect(dto.hechos[0]?.que).toBe('Alguien escribió un problema');
+  });
+
+  it('el sellado automático tiene nombre propio: no cae en «quedó registrado algo»', () => {
+    // No se lista en esa pantalla, pero el mismo presentador sirve a quien mire un hecho suelto, y
+    // un tipo que sí conocemos tiene que decirse. Antes los cuatro caían al genérico.
+    for (const [tipo, frase] of [
+      ['AnclajeIntentado', 'Se mandó el resumen a un testigo de fuera'],
+      ['AnclajeConfirmado', 'Un testigo de fuera confirmó el resumen'],
+      ['AnclajeFallido', 'Un testigo de fuera no pudo confirmar el resumen'],
+      ['AnclajeEstadoPublicado', 'Se publicó cómo va la confirmación de fuera'],
+    ] as const) {
+      const dto = historialDto(
+        leido([
+          {
+            numero: 1,
+            cuando: 1_800_000_000_000,
+            tipo,
+            tipoDeAgregado: '#anclaje',
+            agregado: 'a'.repeat(32),
+          },
+        ]),
+      );
+      expect(dto.hechos[0]?.que, tipo).toBe(frase);
+      expect(dto.hechos[0]?.sobre, tipo).toBe('El sellado externo');
+    }
+  });
+
+  it('ningún hecho de una votación se queda sin frase: la tabla no puede ir por detrás del motor', () => {
+    /*
+     * El respaldo `?? 'Quedó registrado algo'` existe para el hecho que alguien añada mañana. Se
+     * había convertido en otra cosa: DIEZ tipos que el motor ya sabía escribir salían así en
+     * pantalla, y entre ellos lo más cargado que puede pasar en una votación —que alguien objete,
+     * que se anule, que se alargue el plazo—. Nadie lo notó porque el respaldo es una frase
+     * perfectamente correcta.
+     *
+     * Esto se ata a `DECISION_EVENT_TYPES`, que es la lista del dominio, y no a una copia: el día
+     * que el motor aprenda un hecho nuevo, esta prueba se pone roja y obliga a decidir cómo se dice
+     * en castellano, en vez de que la pantalla empiece a decir «algo» sin que nadie se entere.
+     */
+    const sinFrase = DECISION_EVENT_TYPES.filter((tipo) => QUE_PASO[tipo] === undefined);
+    expect(sinFrase).toEqual([]);
+
+    // Y ninguna frase puede ser el nombre interno con espacios: eso sigue siendo jerga.
+    for (const tipo of DECISION_EVENT_TYPES) {
+      expect(QUE_PASO[tipo], tipo).not.toContain(tipo);
+    }
   });
 
   it('un tipo que la tabla no conoce se dice en castellano, no se escupe crudo', () => {

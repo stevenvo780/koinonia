@@ -790,6 +790,45 @@ describe.skipIf(!env.ok)(`las rutas de las pantallas nuevas${skipNote(env)}`, ()
     expect(cuerpo.hechos.some((h) => h.sobre === 'Una votación')).toBe(true);
   });
 
+  it('el sellado automático no ahoga lo que hizo la gente, y se cuenta aparte', async () => {
+    /*
+     * En producción esta pantalla llegó a ser inservible: de 60 líneas, 52 decían «Quedó registrado
+     * algo» y 8 «Se selló el historial hasta acá». Ni una de una persona. La causa es que la tarea
+     * de anclaje escribe unos siete hechos por hora en el MISMO historial, para siempre — 2309 de
+     * 2317 cuando se midió—, así que lo que escribe alguien sale de la ventana en unas ocho horas y
+     * no vuelve. El único problema real de producción ya estaba fuera de la vista.
+     *
+     * Contra la base de esta prueba el sellado casi no ha corrido, así que el número no sirve de
+     * aserción; lo que sí se puede exigir, y es lo que falla si alguien quita el filtro, es que NO
+     * aparezca ningún expediente de la máquina entre lo listado.
+     */
+    const respuesta = await e.app.inject({ method: 'GET', url: '/historial' });
+    const cuerpo = respuesta.json<{
+      total: number;
+      enLaLista: number;
+      delSellado: number;
+      hechos: { que: string; sobre: string }[];
+    }>();
+
+    // Las dos cifras son coherentes y `total` sigue diciendo la verdad entera.
+    expect(cuerpo.enLaLista + cuerpo.delSellado).toBe(cuerpo.total);
+    expect(cuerpo.enLaLista).toBeGreaterThan(0);
+
+    // Ni un hecho del sellado en la lista: ni los del anclaje, ni los sellos periódicos.
+    for (const hecho of cuerpo.hechos) {
+      expect(hecho.sobre, hecho.que).not.toBe('El sellado externo');
+      expect(hecho.que, hecho.sobre).not.toBe('Se selló el historial hasta acá');
+    }
+
+    // Y «Se abrió el historial» SÍ se lista: es un hecho de verdad, pasa una vez, y es lo único
+    // que hay escrito el primer día. Excluirlo dejaba la pantalla del estreno diciendo que no ha
+    // pasado nada cuando el registro acaba de nacer.
+    expect(cuerpo.hechos.some((h) => h.sobre === 'El registro mismo')).toBe(true);
+
+    // Y ni una línea de relleno: si algo se lista, esta pantalla sabe decir qué fue.
+    expect(cuerpo.hechos.some((h) => h.que === 'Quedó registrado algo')).toBe(false);
+  });
+
   it('el historial NO dice quién hizo cada cosa: eso rompería la autoría sellada', async () => {
     const respuesta = await peticion(gente[0]!, { method: 'GET', url: '/historial' });
     const texto = respuesta.body;

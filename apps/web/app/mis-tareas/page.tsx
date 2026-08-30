@@ -278,7 +278,7 @@ export default function MisTareas(): ReactNode {
       setErrorAccion(
         new Error('Escribí horas entre 0 y 168 y minutos entre 0 y 59, sin decimales.'),
       );
-      enfocarTrasPintar(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current);
       if (guardadoGeneracionRef.current === generacion) {
         guardandoRef.current = false;
         setGuardando(false);
@@ -288,7 +288,7 @@ export default function MisTareas(): ReactNode {
     const total = horasNumero * 60 + minutosNumero;
     if (total > MAXIMO_SEMANAL) {
       setErrorAccion(new Error('La capacidad no puede superar las 168 horas de una semana.'));
-      enfocarTrasPintar(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current);
       if (guardadoGeneracionRef.current === generacion) {
         guardandoRef.current = false;
         setGuardando(false);
@@ -307,7 +307,7 @@ export default function MisTareas(): ReactNode {
       borradorCapacidadDeRef.current = miembroId;
       adoptarCapacidad(miembroId, actualizada);
       setConfirmacion('Tu capacidad semanal quedó guardada de forma privada.');
-      enfocarTrasPintar(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current);
     } catch (fallo: unknown) {
       if (miembroActualRef.current !== miembroId || guardadoGeneracionRef.current !== generacion)
         return;
@@ -326,7 +326,7 @@ export default function MisTareas(): ReactNode {
       } else {
         setErrorAccion(fallo);
       }
-      enfocarTrasPintar(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current);
     } finally {
       if (guardadoGeneracionRef.current === generacion) {
         guardandoRef.current = false;
@@ -346,7 +346,7 @@ export default function MisTareas(): ReactNode {
     if (miembroId === undefined) return;
     const ruta = `/iniciativas/${input.iniciativaId}/tareas/${input.tarea.id}/${input.sufijo}`;
     const enfocarTarea = (): void => {
-      enfocarTrasPintar(() => document.getElementById(`mi-tarea-${input.tarea.id}`)?.focus());
+      enfocarTrasPintar(() => document.getElementById(`mi-tarea-${input.tarea.id}`));
     };
 
     // El cerrojo síncrono, la clave estable y jubilar lo que quedó en vuelo los pone

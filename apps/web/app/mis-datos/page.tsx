@@ -167,7 +167,7 @@ export default function MisDatos(): ReactNode {
       setAplicada(resultado.valor);
     } else if (resultado.estado === 'fallo') {
       setError(resultado.error);
-      enfocarTrasPintar(() => campoDeValor.current?.focus());
+      enfocarTrasPintar(() => campoDeValor.current);
     }
   }
 
@@ -176,7 +176,7 @@ export default function MisDatos(): ReactNode {
     setError(undefined);
     setValorNuevo('');
     setValorConfirmado('');
-    enfocarTrasPintar(() => campoDeValor.current?.focus());
+    enfocarTrasPintar(() => campoDeValor.current);
   }
 
   if (cargando) {

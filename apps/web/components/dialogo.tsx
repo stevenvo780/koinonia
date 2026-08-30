@@ -77,7 +77,7 @@ export function DialogoTexto({
       }
       // Al abrir, el foco va al campo: quien no ve la pantalla tiene que aterrizar en lo que se
       // le está pidiendo, no en el título ni en el botón de cancelar.
-      enfocarTrasPintar(() => campo.current?.focus());
+      enfocarTrasPintar(() => campo.current);
     } else {
       // Al cerrar se vacía. Dejar el motivo escrito dentro de un diálogo oculto lo conserva en el
       // documento sin que nadie lo vea ni pueda borrarlo, y lo reaparece en la siguiente apertura

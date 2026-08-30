@@ -58,7 +58,7 @@ export default function HistorialPantalla(): ReactNode {
       <ErrorVisible error={error} />
       {historial === undefined && error === undefined && <Esqueleto que="el historial" />}
 
-      {historial !== undefined && historial.total === 0 && (
+      {historial !== undefined && historial.enLaLista === 0 && (
         <div className="vacio" role="status">
           <p>
             Todavía no pasó nada. El historial se llena solo, a medida que la comunidad escribe
@@ -71,11 +71,12 @@ export default function HistorialPantalla(): ReactNode {
         </div>
       )}
 
-      {historial !== undefined && historial.total > 0 && (
+      {historial !== undefined && historial.enLaLista > 0 && (
         <section aria-labelledby="hechos-titulo">
           <h2 id="hechos-titulo">Lo último que pasó</h2>
           <p className="suave">
-            Van {historial.total} {historial.total === 1 ? 'cosa escrita' : 'cosas escritas'}
+            Van {historial.enLaLista}{' '}
+            {historial.enLaLista === 1 ? 'cosa anotada' : 'cosas anotadas'}
             {historial.desde !== undefined ? (
               <> desde el {cerrarFrase(cuando(historial.desde))}</>
             ) : (
@@ -83,6 +84,15 @@ export default function HistorialPantalla(): ReactNode {
             )}{' '}
             Acá abajo están las más recientes, de la última a la primera.
           </p>
+          {historial.delSellado > 0 && (
+            <p className="suave">
+              Además hay {historial.delSellado} anotaciones del sellado automático, que no se listan
+              acá para que no tapen lo que hizo la gente: son unas siete por hora, siempre, y llegan
+              a ser el 99 % de lo escrito. No se esconden ni se borran —van enteras en{' '}
+              <Link href="/verificar">la copia que se descarga</Link>, que es donde sirven, porque
+              es lo que la herramienta independiente recalcula.
+            </p>
+          )}
           <p className="suave">
             Esta lista <strong>no dice quién hizo cada cosa</strong>: mientras una conversación
             tiene la autoría oculta, decirlo acá la destaparía por el costado.

@@ -3615,3 +3615,27 @@ main h4 {
   font-family: var(--serifa);
   font-size: 1.0625rem;
 }
+
+/*
+ * El estado de cada tipo de testigo, junto a su nombre.
+ *
+ * Va en el propio `<dt>` y no en una leyenda aparte porque la pregunta que trae quien lee esa lista
+ * es «¿esto funciona?», y una leyenda obliga a cruzar dos sitios para contestarla. El color no es lo
+ * único que lo dice —la palabra «funcionando» o «apagado» está escrita—: quien no distingue estos
+ * dos tonos lee lo mismo que los demás.
+ */
+.tipos-testigo .anda,
+.tipos-testigo .no-anda {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.tipos-testigo .anda {
+  color: var(--acento-hondo);
+}
+
+.tipos-testigo .no-anda {
+  color: var(--tinta-suave);
+}

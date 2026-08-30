@@ -214,6 +214,8 @@ import { loadDecisionLog, persistDecisionLogWithin } from '../decision/repositor
 import { DECISION_AGGREGATE_TYPE } from '../decision/codec.js';
 import { lockLedgerWithin, readAll, readAppendRequestWithin } from '../ledger/event-store.js';
 
+import { ANCHOR_AGGREGATE_TYPE } from '@koinonia/anchor';
+
 import { IdempotencyConflictError, type AppendResult } from '../ledger/types.js';
 import { verifyLedger, type LedgerVerification } from '../ledger/verify.js';
 import {
@@ -4774,11 +4776,36 @@ export interface HechoLeido {
 }
 
 export interface HistorialLeido {
+  /** Cuántas cosas hay escritas EN TOTAL, incluido el sellado automático. */
   readonly total: number;
+  /** De ésas, cuántas se listan: todo salvo el sellado automático. */
+  readonly enLaLista: number;
+  /** Y cuántas son del sellado automático, que se cuenta pero no se lista una por una. */
+  readonly delSellado: number;
   readonly desde: number | undefined;
   readonly hasta: number | undefined;
   readonly hechos: readonly HechoLeido[];
   readonly hayMas: boolean;
+}
+
+/**
+ * El sellado automático: lo que la máquina escribe sola, cada hora, para siempre.
+ *
+ * Son dos cosas y no una: TODO el expediente de anclaje —los intentos, las confirmaciones y los
+ * fallos de cada testigo de fuera— y, del expediente de la espina, los sellos periódicos. Medido en
+ * producción: 2187 del primero y 122 del segundo, o sea 2309 de 2317.
+ *
+ * Lo que NO entra acá, y por eso esto no es «todo lo interno»: «Se abrió el historial» y «Empezó a
+ * registrarse algo nuevo». Ésos pasan una vez, son hechos de verdad del registro del grupo, y el
+ * primero es el que hace que la pantalla del primer día tenga algo que enseñar en vez de parecer
+ * rota. El primer corte que escribí se los llevaba por delante y se notó enseguida: una prueba de
+ * navegador que llevaba tiempo pasando dejó de encontrar la lista, porque contra una base recién
+ * creada lo único escrito es justamente «Se abrió el historial».
+ *
+ * Ver `verHistorial` para qué hace este corte y por qué NO es una censura.
+ */
+function esDelSellado(tipoDeAgregado: string, tipo: string): boolean {
+  return tipoDeAgregado === ANCHOR_AGGREGATE_TYPE || tipo === 'CheckpointEmitido';
 }
 
 /**
@@ -4793,6 +4820,26 @@ export interface HistorialLeido {
  * lo que hace falta para ver que no falta ninguno y que nada se movió de sitio.
  *
  * Tampoco sale el contenido. Un historial legible no es un volcado: es un índice.
+ *
+ * ═══ Por qué el sellado automático se cuenta y no se lista ═══
+ *
+ * Esta pantalla enseñaba los últimos 60 hechos EN CRUDO, y el resultado era inservible: 52 de esas
+ * 60 líneas decían «Quedó registrado algo · La plataforma» y las 8 restantes «Se selló el historial
+ * hasta acá». Ni una sola línea con algo que hubiera hecho una persona.
+ *
+ * La causa no es la pantalla: es que la tarea de anclaje escribe ~7 hechos por hora en el MISMO
+ * historial, para siempre. Cuando se midió, 2309 de 2317 eran suyos. Con una ventana de 60, lo que
+ * escribe alguien desaparece de la vista en unas ocho horas y no vuelve nunca — y ya había pasado:
+ * el único problema que había escrito una persona en producción, el número 2173, quedaba fuera
+ * mientras la pantalla no bajaba del 2260. Quien entra el jueves a ver la constancia de lo que
+ * escribió el martes, no la encuentra, y lo que ve parece una aplicación rota repitiendo un
+ * mensaje de relleno.
+ *
+ * Así que se listan los actos de personas y el sellado se CUENTA aparte, con su cifra a la vista.
+ * No es filtrar para que quede bonito, y la diferencia importa: nada se oculta ni se borra, el
+ * sellado sigue entero en la descarga verificable —que es donde sirve, porque es lo que el
+ * verificador recalcula— y esta pantalla dice cuántos hay. Un historial legible es un índice de lo
+ * que hizo el colectivo, no el registro de actividad de un proceso automático.
  */
 export async function verHistorial(
   deps: ServicioDeps,
@@ -4802,12 +4849,19 @@ export async function verHistorial(
   authorize(actor, 'ledger:read', { kind: 'ledger' });
   return conCliente(deps.pool, async (client) => {
     const eventos = await readAll(client);
-    const ordenados = [...eventos].reverse();
+    const enLaLista = eventos.filter(
+      (e) => !esDelSellado(e.event.aggregateType, e.event.eventType),
+    );
+    const ordenados = [...enLaLista].reverse();
     const recortados = ordenados.slice(0, opciones.cuantos);
+    // El rango de fechas es el del historial ENTERO, no el de lo que se lista: dice desde cuándo
+    // hay registro, y eso empieza cuando se abrió el historial.
     const primero = eventos[0];
     const ultimo = eventos[eventos.length - 1];
     return {
       total: eventos.length,
+      enLaLista: enLaLista.length,
+      delSellado: eventos.length - enLaLista.length,
       desde: primero === undefined ? undefined : Date.parse(primero.event.occurredAt),
       hasta: ultimo === undefined ? undefined : Date.parse(ultimo.event.occurredAt),
       hechos: recortados.map((e) => ({
@@ -4819,7 +4873,7 @@ export async function verHistorial(
         tipoDeAgregado: e.event.aggregateType,
         agregado: e.event.aggregateId,
       })),
-      hayMas: eventos.length > recortados.length,
+      hayMas: enLaLista.length > recortados.length,
     };
   });
 }

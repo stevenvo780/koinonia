@@ -277,11 +277,11 @@ export function SeccionEvaluacion({
       setInforme(resultado.valor);
       setNoAbierta(false);
       setMensaje(confirmacion);
-      enfocarTrasPintar(() => resultadoRef.current?.focus());
+      enfocarTrasPintar(() => resultadoRef.current);
       return true;
     }
     setErrorAccion(mensajeSeguro(resultado.error));
-    enfocarTrasPintar(() => resultadoRef.current?.focus());
+    enfocarTrasPintar(() => resultadoRef.current);
     return false;
   }
 
