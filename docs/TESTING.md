@@ -26,6 +26,31 @@ generador distingue estas dos ramas?» y «¿cuántos casos son exactamente?».
 
 ---
 
+## 0bis. Dónde corre esto hoy: NO en GitHub
+
+Conviene saberlo antes de leer el resto, porque cambia qué garantiza cada cosa de acá.
+
+`.github/workflows/ci.yml` está escrito y no ha ejecutado ni un paso desde hace semanas: la cuenta
+tiene la facturación bloqueada, y cada trabajo muere en tres segundos con «The job was not started
+because your account is locked due to a billing issue». Cuarenta y ocho corridas, cero verdes, cero
+pasos. Se comprueba con `gh run view <id>` — no hay pasos que mirar, no es que fallen.
+
+O sea que **lo que impide que algo roto llegue a `main` es lo que se corra en la máquina de quien
+empuja**, y nada más. Mientras eso siga así, hay un gancho de `pre-push` en `.githooks/pre-push` que
+corre lo mismo que el trabajo principal de CI —tipos, estilo, pureza del dominio y la suite—:
+
+```bash
+git config core.hooksPath .githooks    # una vez por clon; git NO lo hereda al clonar
+```
+
+Lo que ese gancho **no** es: no es CI. Corre en una sola máquina, con las dependencias de esa
+máquina, y se salta con `git push --no-verify`. Si no hay Docker levantado, avisa y corre sólo lo
+que no necesita PostgreSQL — lo dice, no lo esconde. Lo único que resuelve es que el camino fácil,
+`git push`, sea también el que comprueba, en vez de depender de acordarse.
+
+Cuando la facturación se desbloquee, esto no estorba: CI vuelve a ser la autoridad y el gancho pasa
+a ser una red de seguridad más rápida que además corre antes de gastar minutos de máquina ajena.
+
 ## 1. Definición de «terminado»
 
 Es la condición de merge, y cada punto es verificable:

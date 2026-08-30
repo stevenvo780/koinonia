@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# La verificación que GitHub Actions no está corriendo.
+#
+# POR QUÉ EXISTE: `.github/workflows/ci.yml` está bien escrito y lleva 48 corridas sin ejecutar ni
+# un paso. La cuenta tiene la facturación bloqueada, así que cada trabajo muere en tres segundos con
+# «The job was not started because your account is locked due to a billing issue». O sea que desde
+# hace semanas NADA comprueba el código antes de que llegue a `main`, y el repositorio es público.
+#
+# Esto no reemplaza a CI y no hay que fingir que sí: corre en una sola máquina, con las dependencias
+# de esa máquina, y quien tenga prisa lo salta con `--no-verify`. Lo que hace es que el camino fácil
+# —`git push`— sea también el que comprueba, en vez de depender de acordarse.
+#
+# QUÉ corre: lo mismo que el trabajo `typecheck · lint · test · build` de ci.yml, salvo el build de
+# la interfaz (que tarda y no puede correr a la vez que un servidor de desarrollo, ver DESPLIEGUE.md).
+# Las pruebas de integración levantan PostgreSQL con testcontainers; si Docker no está, se dice y se
+# sigue en vez de bloquear un push por algo que no es del código.
+#
+# CÓMO SE ENCIENDE:  git config core.hooksPath .githooks
+# CÓMO SE SALTA:     git push --no-verify   (y quedás vos a cargo de lo que rompas)
+
+set -uo pipefail
+
+decir() { printf '\n\033[1m[antes de empujar]\033[0m %s\n' "$1"; }
+
+if [[ "${KOINONIA_SIN_VERIFICAR:-}" == "1" ]]; then
+  decir 'saltado por KOINONIA_SIN_VERIFICAR=1.'
+  exit 0
+fi
+
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+export TESTCONTAINERS_RYUK_DISABLED=true
+
+fallo=0
+paso() {
+  decir "$1…"
+  if ! eval "$2"; then
+    printf '\n\033[31m✗ %s\033[0m\n' "$1"
+    fallo=1
+  fi
+}
+
+paso 'tipos' 'pnpm run typecheck'
+paso 'estilo y pureza del dominio' 'pnpm run lint'
+
+if docker info >/dev/null 2>&1; then
+  paso 'pruebas' 'pnpm run test'
+else
+  decir 'sin Docker: las pruebas de integración necesitan PostgreSQL y se saltan.'
+  decir 'Se corre sólo lo que no lo necesita — NO es la suite entera.'
+  paso 'pruebas sin base' 'pnpm vitest run packages services/api/test tests/unit'
+fi
+
+if ((fallo)); then
+  printf '\n\033[31mNo se empuja.\033[0m Arreglá lo de arriba, o `git push --no-verify` si sabés lo que hacés.\n\n'
+  exit 1
+fi
+
+decir 'todo en verde. Empujando.'
+exit 0

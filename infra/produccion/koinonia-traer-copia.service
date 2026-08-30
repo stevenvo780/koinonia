@@ -1,0 +1,16 @@
+# Trae la copia de Koinonía desde la VPS a ESTA máquina. Unidad de USUARIO, no de sistema:
+# corre con tu cuenta y tu clave SSH, sin root y sin credenciales nuevas.
+#
+# Instalación (ver COPIAS.md §8.1). No se instala sola a propósito: bajar el volcado pone datos
+# personales en esta máquina, y esa decisión es de quien la usa, no de un guion.
+[Unit]
+Description=Traer la copia de seguridad de Koinonía desde la VPS
+Documentation=file:///%h/koinonia/infra/produccion/COPIAS.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+# La ruta se ajusta al clonar en otro sitio.
+ExecStart=%h/Documentos/repos/koinonia/infra/produccion/traer-copia.sh
+# Sin reintentos automáticos: si falla, el fallo se ve en `systemctl --user status` y mañana
+# vuelve a intentarlo. Reintentar en bucle contra un servidor caído no ayuda a nadie.

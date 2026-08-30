@@ -1,0 +1,14 @@
+# Una vez al día, después de que la VPS haya hecho la suya (02:45 UTC).
+[Unit]
+Description=Traer la copia de Koinonía a diario
+
+[Timer]
+# 09:00 locales: la copia de la VPS de esa madrugada ya existe con holgura.
+OnCalendar=*-*-* 09:00:00
+# Si la máquina estaba apagada a esa hora, se corre al encenderla. Un portátil que se abre a las
+# once no puede quedarse sin copia por no haber estado despierto.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

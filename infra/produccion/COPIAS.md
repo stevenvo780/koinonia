@@ -293,9 +293,34 @@ ssh root@167.114.118.213 'ls -t /opt/koinonia/copias/*.dump.sha256 | head -1' \
 sha256sum -c ./*.dump.sha256
 ```
 
-Con eso, perder la VPS pasa de «se pierde todo» a «se pierde lo de hoy». No es un sistema de copias
-fuera de sitio y no hay que llamarlo así: es una persona acordándose. Pero una copia en otra máquina
-vale infinitamente más que ninguna, y cuesta un minuto.
+Con eso, perder la VPS pasa de «se pierde todo» a «se pierde lo de hoy».
+
+Y para que no dependa de que alguien se acuerde, está `traer-copia.sh` en esta misma carpeta: trae
+la más reciente, **comprueba su huella acá** —lo que puede corromperse es el viaje, así que
+comprobarla en el servidor no diría nada—, borra lo descargado si no cuadra, y rota conservando 7.
+Corre dos veces seguidas sin traer nada la segunda.
+
+```bash
+./infra/produccion/traer-copia.sh          # a ~/copias-koinonia
+KOINONIA_COPIA_LOCAL=/otro/sitio ./infra/produccion/traer-copia.sh
+```
+
+A diario, con una unidad de **usuario** —tu cuenta, tu clave SSH, sin root ni credenciales nuevas—:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp infra/produccion/koinonia-traer-copia.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now koinonia-traer-copia.timer
+systemctl --user start koinonia-traer-copia.service   # una corrida ahora, para verla funcionar
+```
+
+Sigue sin ser un sistema de copias fuera de sitio, y no hay que llamarlo así: es una máquina más,
+que puede estar apagada. Un NAS o un S3 es lo que corresponde y sigue pendiente, arriba está por
+qué. Pero una copia en otra máquina vale infinitamente más que ninguna.
+
+**No se instala sola, y es a propósito:** bajar el volcado pone datos personales en esta máquina, y
+esa decisión es de quien la usa.
 
 **Con la misma advertencia de arriba, y va en serio:** ese fichero lleva el padrón con datos
 personales. La máquina a la que lo traigas tiene que sostener el mismo cuidado que sostiene la VPS
