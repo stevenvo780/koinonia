@@ -336,3 +336,5 @@ export {
 
 // `server.ts` NO se reexporta desde aquí: contiene el arranque y leer variables de entorno no es
 // asunto de la librería. El ejecutable es `dist/bin.js`.
+
+export { crearTareaDeRetencion, type TareaDeRetencion } from './jobs/retencion.js';

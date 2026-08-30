@@ -25,6 +25,7 @@ import { configuracionDeAnclajeDesdeEntorno } from './anchor/configuracion.js';
 import type { ModoTls } from './anchor/smtp.js';
 import { nodeConnect } from './anchor/socket.js';
 import { crearTareaDeAnclaje } from './anchor/tarea.js';
+import { crearTareaDeRetencion } from './jobs/retencion.js';
 import { createPool, type PgPool } from './db/client.js';
 import { migrate } from './db/migrate.js';
 import { APP_ROLE, inspectLedgerPrivileges, setAppRolePassword } from './db/roles.js';
@@ -470,14 +471,24 @@ export async function main(): Promise<void> {
     ahora: () => new Date(systemClock.now()).toISOString(),
   });
 
+  /*
+   * Retención: barrer lo que el ADR-0055 promete no guardar para siempre.
+   *
+   * Las tres funciones de purga llevaban semanas escritas, probadas y desplegadas sin que NADIE las
+   * llamara. La promesa existía como código y no como conducta; esta línea es la diferencia.
+   */
+  const retencion = crearTareaDeRetencion({ pool, clock: systemClock });
+
   await app.listen({ port: puerto, host: '0.0.0.0' });
   anclaje.arrancar();
+  retencion.arrancar();
 
   // El cierre ordenado importa aquí más que en otros sitios: un ciclo a medias deja recibos
   // guardados sin su evento en el ledger, y el ledger es lo autoritativo.
   for (const senal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(senal, () => {
       anclaje.detener();
+      retencion.detener();
       void anclaje
         .reposo()
         .then(() => app.close())

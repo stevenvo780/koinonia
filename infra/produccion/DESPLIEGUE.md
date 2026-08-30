@@ -201,6 +201,22 @@ docker logs koinonia-web --tail 50 | grep -i error   # sin errores de conexión 
 
 Si el paso 3 falla pero el 2 no, el problema está en Caddy (§6), no en los contenedores.
 
+## 5ter. Después de desplegar: que el enlace de `infra` siga en pie
+
+`/opt/koinonia/infra` es un **enlace** a `/opt/koinonia/repo/infra`, así que los guiones que corren
+por `timer` —la copia de seguridad y, el día que haga falta, la restauración— son siempre los del
+commit desplegado. Antes eran una copia aparte y se pudrió sin que nadie lo notara: el guion de
+restauración del servidor llevaba siete días atrasado y dejaba una base **sin roles ni privilegios**,
+imprimiendo `verificación OK`. Ver `COPIAS.md`, primer recuadro, para la historia entera.
+
+```bash
+ssh root@167.114.118.213 'readlink /opt/koinonia/infra && md5sum /opt/koinonia/infra/produccion/restaurar-copia.sh'
+md5sum infra/produccion/restaurar-copia.sh
+```
+
+Tiene que decir `/opt/koinonia/repo/infra` y las dos huellas tienen que coincidir. Si no coinciden,
+alguien deshizo el enlace y hay dos copias otra vez.
+
 ## 5bis. Después de desplegar: mirar el anclaje
 
 Desde el 2026-08-26 la tarea de anclaje hace **una pasada de maduración al arrancar**, así que ya

@@ -45,12 +45,25 @@
  * Por eso ahora recibe **dónde** enfocar y no **qué hacer**: quien llama devuelve el elemento —o
  * `null` si todavía no existe— y esta función decide. Así puede distinguir «ya está hecho» de «no
  * había nada que enfocar», que con una acción opaca era imposible, y sólo se da por satisfecha
- * cuando de verdad enfocó algo. Si el fotograma llega temprano, el plazo lo reintenta; si el
- * fotograma no llega, el plazo lo hace igual. Los dos fallos, cerrados.
+ * cuando de verdad enfocó algo. Si el fotograma llega temprano, los plazos lo reintentan; si el
+ * fotograma no llega, los plazos lo hacen igual. Los dos fallos, cerrados.
  */
 
-/** Cuánto se espera al fotograma antes de enfocar igual. Ver el porqué del número arriba. */
-const PLAZO_SIN_FOTOGRAMA_MS = 120;
+/**
+ * Cuándo se vuelve a intentar, en milisegundos desde la llamada, si el fotograma no bastó.
+ *
+ * Eran 120 ms y un solo disparo. Bajo carga —la corrida completa de navegador, con la máquina
+ * ocupada— React a veces tarda más que eso en confirmar el repintado, y entonces ese único intento
+ * caía en un documento que aún no tenía el elemento y el foco se perdía igual. Se vio en
+ * `07-seguimiento-adr45`: el fichero pasaba 6 de 6 aislado, tres veces seguidas, y fallaba dentro
+ * de la suite entera.
+ *
+ * Tres intentos y no un plazo largo único: el primero cubre el caso normal sin que se note, y los
+ * otros dos la máquina cargada. El techo son 800 ms — imperceptible para quien mira, y bien por
+ * debajo de lo que tarda alguien en mover el foco a otra parte, que es el único daño que podría
+ * hacer un salto tardío. Si a los 800 ms el elemento sigue sin existir, es que no va a existir.
+ */
+const REINTENTOS_MS = [120, 360, 800];
 
 /**
  * Enfoca lo que `buscar` devuelva, en cuanto React haya repintado — y también si el repintado no
@@ -74,5 +87,5 @@ export function enfocarTrasPintar(buscar: () => HTMLElement | null | undefined):
     destino.focus();
   };
   window.requestAnimationFrame(unaVez);
-  setTimeout(unaVez, PLAZO_SIN_FOTOGRAMA_MS);
+  for (const plazo of REINTENTOS_MS) setTimeout(unaVez, plazo);
 }

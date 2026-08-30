@@ -23,10 +23,10 @@
  * Se prueba sobre `/entrar` porque es la única pantalla que ejercita los dos sentidos del mecanismo
  * sin necesitar cuenta: el foco tras un rechazo y el foco al volver al formulario.
  *
- * Comprobado rompiéndolo: poniéndole al `setTimeout` de respaldo de `apps/web/lib/foco.ts` un plazo
- * inalcanzable —600 s en vez de 120 ms; borrarlo del todo no sirve como comprobación, porque deja
- * la constante sin usar y lo que falla es la construcción, no la prueba—, los dos casos se ponen en
- * rojo con el foco quieto donde estaba. Restaurado.
+ * Comprobado rompiéndolo: poniéndole a los reintentos de `apps/web/lib/foco.ts` plazos
+ * inalcanzables —`[600_000]` en vez de `[120, 360, 800]`; vaciar la lista del todo no sirve como
+ * comprobación, porque deja la constante sin usar y lo que falla es la construcción, no la
+ * prueba—, los dos casos se ponen en rojo con el foco quieto donde estaba. Restaurado.
  */
 
 import { expect, test } from '@playwright/test';

@@ -73,6 +73,43 @@ respaldo real. `pg_dump` toma un snapshot MVCC lógico y consistente sin detener
 
 Nadie corrió esto en la VPS todavía — son los pasos exactos para hacerlo, y cómo deshacerlos.
 
+> [!IMPORTANT]
+> **`/opt/koinonia/infra` es un ENLACE a `/opt/koinonia/repo/infra`, desde el 2026-08-30.** No se
+> copian ficheros a mano. La instrucción de más abajo hacía lo contrario y se deja escrita, tachada,
+> porque conviene saber por qué se dio la vuelta.
+>
+> El razonamiento original era bueno: `/opt/koinonia/repo/` se reescribe con `--delete` en cada
+> despliegue, y eso no parece sitio para algo que un `timer` de systemd invoca por ruta fija. Lo que
+> no previó es el otro fallo, que es el que pasó de verdad: **dos copias del mismo guion que nadie
+> mantiene iguales**. El de restauración se arregló en el repositorio el 2026-08-29 —para que dejara
+> de perder los permisos de `koinonia_app` sobre `governance.event`— y la copia del servidor se
+> quedó como estaba, siete días. Una auditoría lo encontró corriendo los dos contra el volcado real:
+>
+> - el del repositorio deja la base usable y dice `privilegios OK`;
+> - el del servidor deja una base **sin los roles `koinonia_ddl` y `koinonia_app` y sin ni un
+>   privilegio** —la aplicación no podría ni conectarse— y aun así imprime `verificación OK`.
+>
+> Una copia de seguridad que no restaura no es una copia de seguridad, y el modo en que fallaba era
+> el peor: en silencio y con un mensaje de éxito. El riesgo del enlace es real pero menor y ruidoso
+> —si el árbol perdiera esos ficheros, el `timer` fallaría a la vista—; el de las dos copias es
+> callado y sólo se descubre el día que hace falta restaurar. Se elige el ruidoso.
+>
+> `rsync` escribe cada fichero en un temporal y lo renombra, así que un guion nunca queda a medias
+> ni desaparece durante un despliegue: los cinco ficheros están en el repositorio, y `--delete` sólo
+> borra lo que ya no está en el origen.
+>
+> Comprobación después de cualquier despliegue, y va en `DESPLIEGUE.md` §5:
+>
+> ```bash
+> ssh root@167.114.118.213 'readlink /opt/koinonia/infra && md5sum /opt/koinonia/infra/produccion/restaurar-copia.sh'
+> ```
+>
+> Tiene que decir `/opt/koinonia/repo/infra` y la misma huella que `md5sum
+infra/produccion/restaurar-copia.sh` en el repositorio. Si difieren, el enlace se deshizo.
+
+<details>
+<summary>La instalación original, de cuando eran dos copias (ya no se hace así)</summary>
+
 ```bash
 # 1. Llevar estos cinco ficheros a una ubicación ESTABLE, separada del árbol que trae el
 #    rsync de build (/opt/koinonia/repo/ se reescribe con --delete en cada build — ver
@@ -101,6 +138,11 @@ ssh root@167.114.118.213 '
   systemctl daemon-reload
 '
 
+```
+
+</details>
+
+```bash
 # 3. Una corrida manual ANTES de confiarle esto al timer — que la primera copia real
 #    del sistema no sea a las 02:45 sin nadie mirando.
 ssh root@167.114.118.213 'systemctl start koinonia-copia.service && systemctl status koinonia-copia.service'
