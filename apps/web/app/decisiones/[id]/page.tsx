@@ -493,10 +493,10 @@ export default function Decision(): ReactNode {
         <ErrorVisible error={errorEnvio} />
         {enviado && (
           <Aviso tipo="bien" titulo="Quedó registrado">
-            Tu respuesta quedó registrada; por tu propio secreto de voto, esta pantalla no repite
-            cuál elegiste, ni ahora ni si volvés más tarde. Podés cambiarla hasta que cierre:
-            cambiar de opinión después de leer a los demás es una virtud, no una trampa. Vale la
-            última.
+            Tu respuesta quedó registrada. Esta pantalla no la repite —ni ahora ni si volvés más
+            tarde— para no dejarla a la vista de quien mire por encima de tu hombro; eso no la hace
+            secreta, y arriba dice quién puede verla. Podés cambiarla hasta que cierre: cambiar de
+            opinión después de leer a los demás es una virtud, no una trampa. Vale la última.
           </Aviso>
         )}
 
@@ -534,6 +534,30 @@ export default function Decision(): ReactNode {
             }
             alDesestimar={recargar}
           />
+        )}
+
+        {!cerrada && decision.puedoDecidir && formulario !== 'sin-papeleta' && (
+          <Aviso tipo="atencion" titulo="Antes de responder: tu voto no es secreto">
+            <p>
+              Toda votación de esta plataforma es <strong>a mano alzada</strong>. Queda escrito qué
+              respondiste y quién sos, y cualquiera que se descargue la copia de lo que pasó acá
+              —que se descarga sin permiso de nadie, y así tiene que ser para poder comprobarla—
+              puede leer las dos cosas juntas.
+            </p>
+            <p>
+              No aparece tu nombre, sino el código que te identifica acá; pero es siempre el mismo
+              en todo lo que hacés, así que en un instituto de este tamaño no cuesta atarlo a una
+              persona. Damos por hecho que se puede.
+            </p>
+            <p>
+              <strong>
+                Si el tema es delicado, o creés que alguien podría presionarte por lo que votes,
+                decilo antes de votar: hay cosas que todavía deben decidirse en papel.
+              </strong>{' '}
+              El motor se niega a abrir una votación prometiendo secreto justamente para no prometer
+              lo que hoy no puede cumplir.
+            </p>
+          </Aviso>
         )}
 
         {!cerrada && decision.puedoDecidir && formulario !== 'sin-papeleta' && (
@@ -767,8 +791,9 @@ export default function Decision(): ReactNode {
 
             {decision.yaVotaste && !enviado && (
               <p className="suave">
-                Ya respondiste esta votación. Por tu propio secreto de voto no repetimos acá cuál
-                elegiste; si mandás otra, vale la última.
+                Ya respondiste esta votación. No repetimos acá cuál elegiste —para no dejarlo a la
+                vista de quien pase—, que no es lo mismo que sea secreto: arriba dice quién puede
+                verlo. Si mandás otra, vale la última.
               </p>
             )}
 
