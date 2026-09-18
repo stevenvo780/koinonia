@@ -660,7 +660,7 @@ comentario que explique por qué lo son**; sin comentario, la exclusión no pasa
 | `replay` de un log de 1 000 eventos | < 150 ms (p95) | **✓ 2,5 ms (p95)**, log de 1 002 — §11.3 |
 | Verificación completa del ledger, 100 000 eventos | < 60 s | 5 000 reales en 0,39 s; **100 000 no se corrió**, extrapolación ≈ 7,8 s (§11.3) |
 | `POST /ballots` con 100 usuarios concurrentes | p95 < 400 ms, p99 < 1 s, 0 errores | ver pico de cierre abajo — el problema no es la latencia |
-| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos | **✗ NO SE CUMPLE — hallazgo crítico, sigue abierto, §11.2** |
+| Pico de cierre: 300 papeletas en los últimos 60 s | 0 rechazos por *timeout*; `seq` sin huecos | **✓ 300/300 aceptadas, 0 rechazos, 0 fantasma; `participacion.emitidas` = 300 y 304 eventos sin huecos de `seq`** — arreglado, §11.2 |
 | Pantalla de votación en Slow 3G | LCP < 2,5 s · INP < 200 ms · CLS < 0,1 | no medido esta sesión (fuera del alcance de `tests/carga`) |
 | Bundle inicial de `apps/web` | < 250 kB comprimido | no medido esta sesión |
 
