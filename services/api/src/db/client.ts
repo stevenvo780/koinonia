@@ -38,6 +38,42 @@ export interface PoolOptions {
   readonly connectionString: string;
   readonly max?: number;
   readonly applicationName?: string;
+  /**
+   * Plazo para ABRIR la conexión, en milisegundos. Por defecto
+   * {@link PLAZO_DE_CONEXION_POR_DEFECTO_MS}. Ver {@link plazoDeConexion}: el `0` está prohibido a
+   * propósito.
+   */
+  readonly connectionTimeoutMillis?: number;
+}
+
+/**
+ * Diez segundos para abrir la conexión: la convención del resto de los servicios.
+ *
+ * Es holgado a propósito. Una base sana en la misma red responde en milisegundos, y una conexión
+ * legítimamente lenta —TLS, una base fría, un vecino ruidoso— tiene margen de sobra. Lo que este
+ * plazo corta no es la lentitud: es la espera que no termina nunca.
+ */
+export const PLAZO_DE_CONEXION_POR_DEFECTO_MS = 10_000;
+
+/**
+ * Valida el plazo de conexión, y **rechaza el `0`**.
+ *
+ * En `node-postgres` `connectionTimeoutMillis = 0` no significa «sin espera»: significa **esperar
+ * para siempre**, que es justo el defecto que este módulo existe para no tener. Un `0` llegado de
+ * una variable de entorno mal puesta reintroduciría la avería con aspecto de configuración
+ * deliberada, así que falla al construir el pool —cuando alguien está mirando— y no en la primera
+ * petición que se cuelgue.
+ */
+export function plazoDeConexion(valor: number | undefined): number {
+  if (valor === undefined) return PLAZO_DE_CONEXION_POR_DEFECTO_MS;
+  if (typeof valor !== 'number' || !Number.isFinite(valor) || valor <= 0) {
+    throw new RangeError(
+      `connectionTimeoutMillis: se esperaba un número finito de milisegundos mayor que cero y llegó ` +
+        `${JSON.stringify(valor)}. Ojo con el 0: en node-postgres NO es «sin espera», es «esperar ` +
+        `para siempre», y una conexión que no vuelve deja la petición colgada sin error y sin log.`,
+    );
+  }
+  return valor;
 }
 
 export function createPool(options: PoolOptions): PgPool {
@@ -48,6 +84,19 @@ export function createPool(options: PoolOptions): PgPool {
     // El ledger no tolera esperas indefinidas en el punto de serialización global de escrituras:
     // más vale un error accionable que una petición colgada.
     statement_timeout: 30_000,
+    // ═══ Y este plazo es OTRA cosa, aunque las dos líneas se parezcan ═══
+    //
+    // `statement_timeout` acota la CONSULTA: sólo actúa cuando ya hay conexión y el servidor está
+    // ejecutando algo. `idleTimeoutMillis` acota el ocio del pool. Ninguno de los dos acota el
+    // ABRIR la conexión, y ahí el defecto del driver es `connectionTimeoutMillis = 0`, que en pg
+    // significa esperar indefinidamente.
+    //
+    // POR QUÉ IMPORTA AQUÍ MÁS QUE EN OTROS SITIOS: el pool se usa por petición, así que un connect
+    // que no vuelve no impide arrancar. El servicio levanta, sirve, y *una* petición se queda
+    // esperando sin error, sin registro y sin 5xx. Quien vota ve una pantalla que no carga y desde
+    // fuera no se ve absolutamente nada. Un fallo rápido y con mensaje es peor experiencia y mucho
+    // mejor sistema.
+    connectionTimeoutMillis: plazoDeConexion(options.connectionTimeoutMillis),
   });
 }
 
